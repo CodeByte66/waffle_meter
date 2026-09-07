@@ -191,6 +191,19 @@ public sealed record OperatingData(
         : Code is >= 110_000_000 and <= 199_999_999 ? Code / 10_000_000 : 0;
 }
 
+/// <summary>스킬 시전 1회(0x3802). <see cref="TimestampMs"/>는 <b>절대</b> 캡처 시각이라 전투 창으로 잘라 쓴다
+/// (초당 버킷이 절대 초를 쓰는 것과 같은 이유 — 리포트의 BattleStart 재앵커링에 흔들리지 않는다).</summary>
+public sealed record SkillCast(int SkillCode, long TimestampMs, bool StartsCooldown = false);
+
+/// <summary>표시용 시전 한 줄: 이름까지 붙인 <see cref="SkillCast"/>.
+/// <para>이름을 Data 계층에서 붙이는 이유는, 정본이 <c>skills.json</c>(<c>DataManager.Skill</c>)뿐이고 표시
+/// 계층은 <c>DpsCalculator</c>만 들고 있기 때문이다. 게다가 0x3802는 특화 접미가 붙은 <b>원본</b> 코드를 싣는데,
+/// 무조건 base로 접으면 8종이 엉뚱한 이름이 된다(11010047 격파의 맹타 → 절단의 맹타, 11000100 긴급 회피 →
+/// 검성 무기 장착 …). 그래서 원본 우선, 없을 때만 base 폴백이다.</para></summary>
+/// <param name="StartsCooldown">이 발동이 쿨타임을 실제로 돌렸는가. 서버가 보낸 사실이며, 표시 계층은
+/// 이걸 "확실히 나간 시전"의 표식으로만 쓴다 — 없다고 해서 안 나간 것은 아니다(쿨 없는 스킬이 다수다).</param>
+public sealed record SkillCastRow(int Code, string Name, long TimestampMs, bool StartsCooldown = false);
+
 /// <summary>Target/boss info (Kotlin MobInfo).</summary>
 public sealed class MobInfo
 {
@@ -302,6 +315,12 @@ public sealed class DpsReport
     /// graph keeps the intervals. Empty while the battle is in progress (the detail recomputes live via
     /// <see cref="DpsCalculator.GetBuffIntervals"/> against the intact repo).</summary>
     public Dictionary<int, List<BuffTimeline>> BuffIntervals { get; set; } = new();
+
+    /// <summary>얼려 둔 시전 타임라인(uid -> 시각 오름차순). 저장 리포트는 <c>Packets = null</c> 이고 시전
+    /// 저장소는 저장 직후 잘리므로, 여기 얼려 두지 않으면 <b>기록 재생에서 타임라인 탭이 통째로 빈다</b> —
+    /// <see cref="SkillDetailsSnapshot"/>·<see cref="DpsSeries"/>가 정확히 같은 사유로 추가된 필드다.
+    /// 진행 중 전투에서는 비어 있고, 그때 상세창은 계산기로 라이브 조회한다.</summary>
+    public Dictionary<int, List<SkillCastRow>> SkillCasts { get; set; } = new();
 
     /// <summary>Frozen nDPS/rDPS per contributor, computed at save time from the frozen buff rates + skill
     /// snapshot (see <see cref="DpsCalculator.GetDpsMetrics"/>). Frozen for the same reason

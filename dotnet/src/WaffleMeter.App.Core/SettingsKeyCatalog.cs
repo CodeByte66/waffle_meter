@@ -121,6 +121,11 @@ public static class SettingsKeyCatalog
         // 관측된 버프 카탈로그. 받는 쪽의 픽커가 '소스가 본 버프'까지 보여줘야 hidden/voice 선택이 말이 된다.
         new("buffUi.observed", F, "버프 오버레이", "관측된 버프 목록"),
 
+        // 전투 상세창의 표시 선택. 오버레이의 buffUi.* 와 별개다 — 프리셋이 건드리는 값과 섞으면
+        // 버프 프리셋을 바꿀 때 상세창 필터까지 따라 뒤집힌다.
+        new("detail.showPartyBuffs", F, "전투 상세", "버프 업타임에 남이 준 버프 표시"),
+        new("detail.timelineCooldownOnly", F, "전투 상세", "스킬 타임라인에 쿨 시작만 표시"),
+
         new("cooldownUi.show", F, "스킬 쿨타임", "쿨타임 오버레이 표시"),
         new("cooldownUi.iconSize", FD, "스킬 쿨타임", "아이콘 크기"),
         new("cooldownUi.textColor", FD, "스킬 쿨타임", "남은시간 글씨 색상"),

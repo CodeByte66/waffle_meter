@@ -7,7 +7,11 @@ namespace WaffleMeter.App.Core.Tests;
 
 public class BattleHistoryTests
 {
-    private static (int, DpsReport) Battle(int index, string mob, bool boss, long start, long end, params double[] amounts)
+    private static (int, DpsReport) Battle(int index, string mob, bool boss, long start, long end, params double[] amounts) =>
+        Battle(index, mob, boss, start, end, isDummy: false, amounts);
+
+    private static (int, DpsReport) Battle(
+        int index, string mob, bool boss, long start, long end, bool isDummy, params double[] amounts)
     {
         var info = new Dictionary<int, DpsInformation>();
         for (int i = 0; i < amounts.Length; i++)
@@ -19,9 +23,39 @@ public class BattleHistoryTests
         {
             BattleStart = start,
             BattleEnd = end,
-            Target = new MobInfo(index + 1, new Mob(100 + index, mob, boss)),
+            Target = new MobInfo(index + 1, new Mob(100 + index, mob, boss, isDummy)),
             Information = info,
         });
+    }
+
+    [Fact]
+    public void Build_marks_dummy_runs()
+    {
+        // 저장 스냅샷이 Mob 레코드를 그대로 실어 가므로 별도 필드 없이 이 플래그 하나로 갈린다.
+        var battles = new[]
+        {
+            Battle(0, "보스", true, 1000, 31_000, 500),
+            Battle(1, "훈련용 허수아비", false, 100_000, 160_000, isDummy: true, 900),
+        };
+
+        var items = BattleHistory.Build(battles);
+
+        Assert.True(items.Single(i => i.MobName == "훈련용 허수아비").IsDummy);
+        Assert.False(items.Single(i => i.MobName == "보스").IsDummy);
+    }
+
+    [Fact]
+    public void Filter_splits_the_two_history_tabs()
+    {
+        var items = BattleHistory.Build(new[]
+        {
+            Battle(0, "보스", true, 1000, 31_000, 500),
+            Battle(1, "훈련용 허수아비", false, 100_000, 160_000, isDummy: true, 900),
+            Battle(2, "훈련용 허수아비", false, 200_000, 260_000, isDummy: true, 800),
+        });
+
+        Assert.Single(BattleHistory.Filter(items, BattleHistory.Tab.Battle));
+        Assert.Equal(2, BattleHistory.Filter(items, BattleHistory.Tab.Dummy).Count);
     }
 
     [Fact]

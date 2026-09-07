@@ -33,14 +33,21 @@ public sealed record DetailSkillGroup(DetailSkillRow Merged, IReadOnlyList<Detai
 /// 레벨 개념이 없는 버프이거나 적용 패킷이 레벨을 안 실은 경우)이고, 그때 표시 계층은 칸을 비운다.
 /// 시너지 버프의 효과량이 레벨 선형이라(노련한 반격 = 5.4% + 0.4%/레벨) 가동률만으로는 기여를 못 읽는다.</param>
 public sealed record DetailBuffRow(
-    int Code, string Name, double Rate, string Description, int? Count = null, int Level = 0);
+    int Code, string Name, double Rate, string Description, int? Count = null, int Level = 0,
+    /// <summary>이 버프를 <b>나에게 걸어 준 다른 사람</b>의 이름(내가 올린 버프면 null). 「남이 준 버프」 섹션의
+    /// 행만 채워지며, 표시 계층은 이 값을 그 행의 부제로 쓴다 — 섹션 이름을 40줄 반복하는 것보다
+    /// "누가 줬나"가 그 행에서 유일하게 새로운 정보이기 때문이다.</summary>
+    string? CasterName = null);
 
 /// <summary>A count-based row pinned to the BOTTOM of the 내 버프 section: an effect that fires on a condition
 /// with an internal cooldown, where "how many times" is the only meaningful number. Currently 회생의 계약's
 /// 생명력 10% 이하 긴급 회복 (1분 재발동 제한). Meter-only — it is never part of the stats/web payload.</summary>
 public sealed record DetailProcRow(int Code, string Name, int Count, string Description);
 
-public sealed record DetailBuffSection(string Label, IReadOnlyList<DetailBuffRow> Rows);
+/// <param name="FromOtherPlayers">참이면 이 섹션은 <b>남이 나에게 걸어 준</b> 버프다. 표시 계층이 체크박스 하나로
+/// 통째로 켜고 끄므로, 한국어 라벨 문자열이 아니라 이 플래그로 가려야 라벨을 고쳐도 필터가 안 깨진다.</param>
+public sealed record DetailBuffSection(
+    string Label, IReadOnlyList<DetailBuffRow> Rows, bool FromOtherPlayers = false);
 
 /// <summary>버프를 걷어낸/얹은 초당 피해량. 전투 상세 상단 타일에 그대로 올라간다.</summary>
 /// <param name="Ndps">남이 걸어준 버프 몫을 나눠 걷어낸 값. 내 버프는 남아 있다 — 그건 내 플레이다.</param>
@@ -122,7 +129,11 @@ public sealed record DetailModel(
         DetailProcRow? proc = null,
         DetailMetrics? metrics = null,
         // 넘겨준 사람 이름표(시너지 base 코드 -> 시전자 이름). 스킬 행에 "(밀피)" 처럼 붙는다.
-        IReadOnlyDictionary<int, string>? grantedBy = null)
+        IReadOnlyDictionary<int, string>? grantedBy = null,
+        // 시전자 uid -> 이름. 「남이 준 버프」 섹션의 행 부제를 채운다. 못 찾은 uid는 "플레이어 {uid}"로 떨어진다.
+        IReadOnlyDictionary<int, string>? casterNames = null,
+        // 소환수 엔티티 -> 주인 uid. 피해 경로(ResolveActor)와 같은 규칙으로 접은 뒤에 "남이 걸었나"를 따진다.
+        Func<int, int>? resolveActor = null)
     {
         var raws = new List<Raw>();
         foreach (KeyValuePair<string, AnalyzedSkill> entry in skills)
@@ -191,7 +202,7 @@ public sealed record DetailModel(
             totalHits,
             combatMs,
             groups,
-            BuildOwnBuffs(ownBuffs, uid, job, proc),
+            BuildOwnBuffs(ownBuffs, uid, job, proc, casterNames, resolveActor),
             BuildDebuffs(bossDebuffs, uid),
             metrics);
     }
@@ -328,23 +339,38 @@ public sealed record DetailModel(
     }
 
     /// <summary>
-    /// The buffs this player put up themselves — their own class buffs, then consumables (scrolls/potions).
-    /// Buffs another player cast on them are excluded: the window answers "what did I keep running?", and a
-    /// chanter's 진언 sitting at 90% on everyone tells the reader nothing about this player.
+    /// The buffs on this player, in three sections: their own class buffs, then consumables (scrolls/potions),
+    /// then — last, and hidden unless the reader asks for it — the ones another player cast on them.
+    /// <para>「남이 준 버프」는 기본적으로 접혀 있다. 기본 화면이 답하는 질문은 여전히 "내가 뭘 유지했나"이고,
+    /// 호법성의 진언이 전원에게 90%로 떠 있다는 사실은 그 질문에 아무 답도 주지 않는다(v2.6.4에서 이 섹션을
+    /// 통째로 걷어낸 이유다). 다만 서포터의 기여를 읽고 싶을 때가 있어 옵트인으로 되살렸다.</para>
+    /// <para>섹션 순서에서 <b>맨 뒤</b>인 것은 의도다 — 공대에서 이 섹션은 수십 줄이라, 중간에 끼우면 몇 줄
+    /// 안 되는 「그 외」(소모품)가 그 아래로 밀려 사라진다. 맨 뒤면 체크박스를 켜도 기존 표는 그대로 있고
+    /// 새 행이 뒤에 붙기만 한다.</para>
     /// </summary>
     private static IReadOnlyList<DetailBuffSection> BuildOwnBuffs(
-        IReadOnlyList<OperatingData> buffs, int uid, JobClass? job, DetailProcRow? proc)
+        IReadOnlyList<OperatingData> buffs, int uid, JobClass? job, DetailProcRow? proc,
+        IReadOnlyDictionary<int, string>? casterNames, Func<int, int>? resolveActor)
     {
         int jobPrefix = job != null ? JobClassInfo.BasicSkillCode(job.Value) / 1_000_000 : -1;
         var mine = new List<DetailBuffRow>();
         var other = new List<DetailBuffRow>();
+        var granted = new List<DetailBuffRow>();
 
         // Every row here landed on this player, so every row is a buff or a self-state — a player skill's debuff
         // goes on its target, never on its caster. Debuffs live in the boss's list (BuildDebuffs).
         foreach (OperatingData b in buffs)
         {
-            if (b.ActorId != uid)
+            // 소환수가 주인에게 건 버프는 "남이 준 것"이 아니다 — 피해 경로가 소환수 딜을 주인에게 접는 것과
+            // 같은 규칙으로 먼저 접는다. 접지 않으면 정령성/치유성이 <b>혼자</b> 사냥해도 「남이 준 버프」가
+            // 생기고, 그 행의 부제는 이름을 찾을 길이 없어 "플레이어 4713261" 같은 원시 엔티티 id 가 된다
+            // (소환수 id 는 Contributors 에도 파티 스냅샷에도 절대 없다).
+            int actor = resolveActor?.Invoke(b.ActorId) ?? b.ActorId;
+            if (actor != uid)
             {
+                // ⚠️ 접고 나서도 ActorId 에는 파티 검증이 없다. 그래서 이 섹션의 이름은 「파티원 버프」가 아니라
+                // 「남이 준 버프」다 — 비파티원이 걸어 준 것도 여기로 들어올 수 있고, 파티원이라 우기면 거짓말이 된다.
+                granted.Add(ToBuffRow(b, CasterNameOf(actor, casterNames)));
                 continue;
             }
 
@@ -365,15 +391,23 @@ public sealed record DetailModel(
         AddSection(sections, "내 버프", mine,
             proc is null ? null : new DetailBuffRow(proc.Code, proc.Name, 0.0, proc.Description, proc.Count));
         AddSection(sections, "그 외", other);
+        AddSection(sections, "남이 준 버프", granted, fromOtherPlayers: true);
         return sections;
     }
+
+    /// <summary>시전자 uid -> 표시 이름. 못 찾으면 창 제목과 같은 규칙으로 "플레이어 {uid}" 를 쓴다 — 이름을
+    /// 못 붙였다고 행을 버리면 저장된 전투에서 피해를 안 낸 서포터의 버프가 통째로 사라진다.</summary>
+    private static string CasterNameOf(int actorId, IReadOnlyDictionary<int, string>? names) =>
+        names != null && names.TryGetValue(actorId, out string? n) && !string.IsNullOrWhiteSpace(n)
+            ? n
+            : $"플레이어 {actorId}";
 
     /// <summary>The boss debuffs THIS player applied. One unlabelled section — every row has the same caster.</summary>
     private static IReadOnlyList<DetailBuffSection> BuildDebuffs(IReadOnlyList<OperatingData> debuffs, int uid)
     {
         var rows = debuffs
             .Where(d => d.ActorId == uid)
-            .Select(ToBuffRow)
+            .Select(d => ToBuffRow(d))
             .OrderByDescending(r => r.Rate)
             .ToList();
 
@@ -383,7 +417,8 @@ public sealed record DetailModel(
     }
 
     private static void AddSection(
-        List<DetailBuffSection> sections, string label, List<DetailBuffRow> rows, DetailBuffRow? tail = null)
+        List<DetailBuffSection> sections, string label, List<DetailBuffRow> rows, DetailBuffRow? tail = null,
+        bool fromOtherPlayers = false)
     {
         List<DetailBuffRow> ordered = rows.OrderByDescending(r => r.Rate).ToList();
         if (tail != null)
@@ -396,12 +431,12 @@ public sealed record DetailModel(
             return;
         }
 
-        sections.Add(new DetailBuffSection(label, ordered));
+        sections.Add(new DetailBuffSection(label, ordered, fromOtherPlayers));
     }
 
-    private static DetailBuffRow ToBuffRow(OperatingData b) =>
+    private static DetailBuffRow ToBuffRow(OperatingData b, string? casterName = null) =>
         new(b.Code, b.Name, Math.Clamp(b.OperatingRate, 0.0, 100.0), ReadableBuffText(b.Effect, b.Summary),
-            Level: b.Level);
+            Level: b.Level, CasterName: casterName);
 
     private static int Normalize(int code) =>
         code is >= 11_000_000 and <= 19_999_999 ? code / 10_000 * 10_000 : code;

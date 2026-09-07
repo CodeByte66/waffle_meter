@@ -44,6 +44,34 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- 탭 알약 2개(전투 / 허수아비). RadioButton 이라 상호배타가 컨트롤에서 보장된다 —
+             상세창의 Pill TabItem 과 같은 색 규칙을 쓴다. -->
+        <Style x:Key="HistoryTab" TargetType="RadioButton">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="p" CornerRadius="6" Margin="0,0,6,0" Padding="11,5"
+                                Background="Transparent" BorderThickness="1" BorderBrush="Transparent">
+                            <ContentPresenter x:Name="c" VerticalAlignment="Center"
+                                              TextElement.Foreground="{DynamicResource Skin.MutedFg}"
+                                              TextElement.FontSize="11.5" TextElement.FontWeight="SemiBold"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="p" Property="Background" Value="{DynamicResource Skin.RowHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="p" Property="Background" Value="{DynamicResource Skin.TabSelectedBg}"/>
+                                <Setter TargetName="p" Property="BorderBrush" Value="{DynamicResource Skin.Accent}"/>
+                                <Setter TargetName="c" Property="TextElement.Foreground" Value="{DynamicResource Skin.Fg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
     <Border CornerRadius="6" BorderThickness="1"
             Background="{DynamicResource Skin.PanelBg}"
@@ -54,6 +82,7 @@
         </Border.Effect>
         <Grid>
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
@@ -68,9 +97,17 @@
                 </Grid>
             </Border>
 
+            <!-- 탭: 전투 / 허수아비 -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="10,8,10,2">
+                <RadioButton Style="{StaticResource HistoryTab}" GroupName="HistoryTabs" Content="전투"
+                             IsChecked="{Binding IsBattleTab, Mode=TwoWay}"/>
+                <RadioButton Style="{StaticResource HistoryTab}" GroupName="HistoryTabs" Content="허수아비"
+                             IsChecked="{Binding IsDummyTab, Mode=TwoWay}"/>
+            </StackPanel>
+
             <!-- Body -->
-            <Grid Grid.Row="1">
-                <TextBlock Text="전투 기록이 없습니다" Foreground="{DynamicResource Skin.MutedFg}" FontSize="12"
+            <Grid Grid.Row="2">
+                <TextBlock Text="{Binding EmptyText}" Foreground="{DynamicResource Skin.MutedFg}" FontSize="12"
                            HorizontalAlignment="Center" Margin="0,26" Visibility="{Binding EmptyVisibility}"/>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,4">
                     <ItemsControl ItemsSource="{Binding Rows}">

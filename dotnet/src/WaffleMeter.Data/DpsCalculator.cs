@@ -20,7 +20,6 @@ public sealed class DpsCalculator
 
     private int _currentTarget;
     private long _currentBattleRevision;
-    private bool _recentTargetWasDummy;
 
     private DpsReport _recentData = new();
     private bool _recentDataSaved;
@@ -376,6 +375,20 @@ public sealed class DpsCalculator
                 : null;
         }
 
+        // 허수아비 런은 측정 창이 곧 결과다. 여기서 "마지막 데미지 패킷"으로 끝을 다시 잡으면 1:00 짜리
+        // 런이 59.4초로 굳고(마지막 몇 백 ms 는 그냥 안 때린 시간이다) DPS 분모도 그만큼 짧아져,
+        // 같은 조건으로 두 번 돌린 결과를 서로 비교할 수 없게 된다. 컷이 찍어 둔 고정 종료가 있으면 그걸 쓴다.
+        // ⚠️ 세 가지를 전부 확인한 뒤에만 덮어쓴다:
+        //   ① 이 리포트가 정말 허수아비 전투인가 — 아니면 보스 전투의 종료 시각이 허수아비 값으로 덮인다.
+        //   ② 스탬프가 시작보다 뒤인가.
+        //   ③ 스탬프가 <b>집계된 마지막 피해보다 뒤인가</b> — 앞이면 분자는 전체인데 분모만 짧아져 DPS 가 부푼다.
+        // 보스 전투에서는 ①에서 이미 걸린다.
+        long dummyFixedEnd = _dm.DummyFixedBattleEnd;
+        if (targetInfo?.Mob.IsDummy == true && dummyFixedEnd > battleStart && dummyFixedEnd >= _cachedBattleEnd)
+        {
+            battleEnd = dummyFixedEnd;
+        }
+
         var report = new DpsReport
         {
             Contributors = FreezeContributors(),
@@ -427,16 +440,14 @@ public sealed class DpsCalculator
         int storageTarget = _dm.CurrentTarget();
         long storageBattleRevision = _dm.CurrentBattleRevision();
         int previousTarget = _currentTarget;
-        // Key off the PREVIOUS target: at an end-of-battle transition CurrentTarget is already -1, so reading the
-        // LIVE target here would report false and the "don't save a dummy run to history" guard (below) would not
-        // fire. IsMobDummy(previousTarget) is what makes the mid-battle and end-of-battle save-skips actually work.
-        bool prevTargetDummy = _dm.IsMobDummy(previousTarget);
         bool targetChanged = storageTarget != previousTarget;
         bool battleRestartedWithSameTarget =
             storageTarget > 0 && previousTarget > 0 && storageBattleRevision != _currentBattleRevision;
         bool isNewBattleEnd = storageTarget == -1 && storageTarget != previousTarget;
 
-        if ((targetChanged || battleRestartedWithSameTarget) && !prevTargetDummy
+        // 허수아비 런도 저장한다(전투 기록의 '허수아비' 탭이 이걸 읽는다). 예전에는 여기와 아래 종료 전이,
+        // 둘 다 !prevTargetDummy 로 막고 있었다.
+        if ((targetChanged || battleRestartedWithSameTarget)
             && storageTarget != -1 && previousTarget > 0 && !_recentData.IsEmpty())
         {
             ProcessPendingPacketsBefore(previousTarget, ActivePacketCutoff());
@@ -452,7 +463,6 @@ public sealed class DpsCalculator
 
         _currentTarget = storageTarget;
         _currentBattleRevision = storageBattleRevision;
-        _recentTargetWasDummy = prevTargetDummy;
 
         if (_currentTarget == -1)
         {
@@ -473,7 +483,7 @@ public sealed class DpsCalculator
             }
 
             _dm.FlushPacket();
-            if (isNewBattleEnd && !_recentData.IsEmpty() && !_recentTargetWasDummy)
+            if (isNewBattleEnd && !_recentData.IsEmpty())
             {
                 SaveRecentBattleLog();
                 _recentDataSaved = true;
@@ -937,6 +947,36 @@ public sealed class DpsCalculator
         return series;
     }
 
+    /// <summary>[start, end] 창의 이 플레이어 스킬 시전들, 시각 오름차순(이름 포함). 저장된 전투는
+    /// <see cref="DpsReport.SkillCasts"/>를 대신 읽는다.
+    /// <para>창을 <see cref="PreemptivePacketWindowMs"/>만큼 앞으로 넓힌다 — 피해 파이프라인이
+    /// <see cref="ActivePacketCutoff"/>로 같은 여유를 주는 것과 같은 이유다. 전투 시작 앵커는 첫 피해보다
+    /// 앞으로 당겨지지 않으므로(<see cref="StartAnchor"/>), 오프너 시전은 <b>상시</b> BattleStart 보다 앞선다.
+    /// 그 여유가 없으면 모든 전투의 첫 스킬이 목록에서 빠진다.</para></summary>
+    /// <summary>소환수 엔티티면 주인 uid, 아니면 그대로. 상세창의 버프 분류가 피해 경로와 같은 규칙을 쓰도록
+    /// 내보낸다 — 표시 계층은 <see cref="DataManager"/>를 들고 있지 않다.</summary>
+    public int ResolveSummonOwner(int actorId) => _dm.ResolveSummonOwner(actorId);
+
+    public IReadOnlyList<SkillCastRow> GetSkillCasts(int uid, long start, long end)
+    {
+        if (end <= start) return [];
+        long from = start > PreemptivePacketWindowMs ? start - PreemptivePacketWindowMs : 0L;
+        return _dm.BattleSkillCasts(uid, from, end);
+    }
+
+    private Dictionary<int, List<SkillCastRow>> BuildSkillCasts(DpsReport data)
+    {
+        var result = new Dictionary<int, List<SkillCastRow>>();
+        if (data.BattleEnd <= data.BattleStart) return result;
+        foreach (User user in data.Contributors)
+        {
+            IReadOnlyList<SkillCastRow> casts = GetSkillCasts(user.Id, data.BattleStart, data.BattleEnd);
+            if (casts.Count > 0) result[user.Id] = casts.ToList();
+        }
+
+        return result;
+    }
+
     private Dictionary<int, long[]> BuildDpsSeries(DpsReport data)
     {
         var result = new Dictionary<int, long[]>();
@@ -1180,6 +1220,8 @@ public sealed class DpsCalculator
         // the still-live _cachedDpsBuckets (cleared only when the next battle starts).
         Dictionary<int, long[]> dpsSeries = BuildDpsSeries(_recentData);
         Dictionary<int, List<BuffTimeline>> buffIntervals = BuildBuffIntervals(_recentData);
+        // 시전 타임라인도 같은 이유로 여기서 — SaveBattleLog 가 시전 저장소도 함께 자른다.
+        Dictionary<int, List<SkillCastRow>> skillCasts = BuildSkillCasts(_recentData);
 
         _recentSkillDetails = skillDetails;
         _recentBuffRates = buffRates;
@@ -1191,6 +1233,7 @@ public sealed class DpsCalculator
         _recentData.BossBuffRates = bossBuffRates;
         _recentData.DpsSeries = dpsSeries;
         _recentData.BuffIntervals = buffIntervals;
+        _recentData.SkillCasts = skillCasts;
         // Freeze AFTER the rates above are on the report: BuildDpsMetrics reads THOSE (plus the skill table
         // passed in) rather than the buff repository, which SaveBattleLog is about to prune. The skill table
         // is handed over explicitly instead of being parked on _recentData.SkillDetailsSnapshot — that field
@@ -1215,7 +1258,7 @@ public sealed class DpsCalculator
 
     public void ResetDataStorage()
     {
-        if (!_recentData.IsEmpty() && !_recentDataSaved && !_dm.IsCurrentTargetDummy())
+        if (!_recentData.IsEmpty() && !_recentDataSaved)
         {
             SaveRecentBattleLog();
             _recentDataSaved = true;

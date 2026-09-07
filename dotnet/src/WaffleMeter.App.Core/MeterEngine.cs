@@ -203,6 +203,15 @@ public sealed class MeterEngine : IDisposable
                 ReportUpdated?.Invoke(_services.GetReport());
             }
 
+            // 허수아비를 때리기 시작한 그 순간 행이 뜨게 한다. 리포트 주기는 기본 500ms 라 첫 타격과 첫
+            // 행 사이에 눈에 띄는 공백이 생긴다 — 짧은 측정에서는 그 공백이 곧 "안 잡힌다"로 읽힌다.
+            // 주기 타이머도 함께 당겨 두어 바로 다음 틱이 두 번 연속 발행하지 않게 한다.
+            if (_services.Data.ConsumeDummyBattleOpened())
+            {
+                lastReport = stopwatch.ElapsedMilliseconds;
+                ReportUpdated?.Invoke(_services.GetReport());
+            }
+
             if (stopwatch.ElapsedMilliseconds - lastReport >= _reportIntervalMs)
             {
                 lastReport = stopwatch.ElapsedMilliseconds;

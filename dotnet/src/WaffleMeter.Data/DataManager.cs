@@ -68,6 +68,7 @@ public sealed class DataManager : ICaptureGameData
     private readonly MobHpRepository _mobHpRepository = new();
     private readonly SummonRepository _summonRepository = new();
     private readonly UseBuffRepository _useBuffRepository = new();
+    private readonly SkillCastRepository _skillCastRepository = new();
     private readonly BattleLogRepository _battleLogRepository = new();
     private readonly SkillRepository _skillRepository = new();
     private readonly BuffRepository _buffRepository = new();
@@ -123,6 +124,35 @@ public sealed class DataManager : ICaptureGameData
     private volatile bool _dummyTestMode;
     private volatile int _dummyDurationSec = 60;
     private bool _dummyCutoff; // consumer-thread only: latched once the duration hard cut has fired
+
+    // 허수아비 측정 창은 시계 두 개를 <b>따로</b> 들고 간다. 섞으면 파이프 지연 L 만큼 컷이 일찍 터져
+    // 마지막 L ms 의 타격이 분자에서 빠지는데 분모(고정 60,000ms)는 그대로라 DPS 가 조용히 낮게 나온다.
+    //  · _dummyWindowStartPacketMs = 첫 타격의 패킷 시각. 리포트 창(BattleStart)과 고정 종료 스탬프의 기준.
+    //  · _dummyWindowStartClockMs  = 그때의 소비자 시각. 타격이 멎어도 컷을 <i>발화</i>시키는 틱 판정에만 쓴다.
+    // 각 뺄셈의 양변이 언제나 같은 시계다.
+    private long _dummyWindowStartPacketMs;
+    private long _dummyWindowStartClockMs;
+
+    /// <summary>이 런에 적용되는 측정 길이(ms). <b>창을 열 때 잠근다</b> — 매번 설정을 다시 읽으면, 런 도중에
+    /// 측정 시간을 줄였을 때 컷이 <i>이미 지나간</i> 시각을 종료로 찍는다. 그러면 분자(누적 피해)는 그대로인데
+    /// 분모만 짧아져 DPS 가 통째로 부풀고, 그 값이 기록에 그대로 남는다. 바뀐 설정은 다음 런부터 적용된다
+    /// (설정 문구 "첫 타격부터 설정한 시간만큼"과도 그쪽이 맞다).</summary>
+    private long _dummyWindowDurationMs;
+
+    /// <summary>이 런에서 마지막으로 <b>채택된</b> 타격의 패킷 시각. 컷 스탬프가 이보다 앞서지 못하게 막는
+    /// 바닥이다 — 스탬프가 실제 집계된 피해보다 앞서면 분자와 분모가 서로 다른 창이 된다.</summary>
+    private long _lastAcceptedDummyHitPacketMs;
+
+    /// <summary>컷이 찍은 고정 종료 시각(패킷 시계). 0 = 허수아비 고정 창이 없다(보스 전투 포함).</summary>
+    private long _dummyFixedEnd;
+
+    // 허수아비 창이 방금 열렸다는 1회성 신호. 소비자 루프가 이걸 보고 리포트를 즉시 한 번 발행해,
+    // 첫 타격과 첫 행 사이의 리포트 주기(기본 500ms)만큼의 공백을 없앤다. 읽는 쪽도 소비자 스레드다.
+    private bool _dummyBattleOpened;
+
+    // 컷 이후 드롭된 타격까지 포함해 "마지막으로 허수아비를 때린 순간"(소비자 시계). 재무장 판정 전용이라
+    // FlushPacket 에서 0으로 지우면 안 된다 — 0 이면 Clock() - 0 이 거대해져 다음 틱에 즉시 재무장된다.
+    private long _lastDummyHitObservedMs;
     private readonly Dictionary<int, long> _officialLookupAttempts = new();
     // Latest full party/raid roster snapshot (0x9702 packet): each member's (nickname, server) + when it
     // arrived. Matched to known uids on demand for the pre-combat party preview (see PartyRoster).
@@ -165,6 +195,23 @@ public sealed class DataManager : ICaptureGameData
     /// <summary>허수아비 test mode: when on, hitting a training dummy (<see cref="Mob.IsDummy"/>) drives a live
     /// battle; when off, dummy hits register no combat. Set live from the UI/hotkey; read on the consumer thread.</summary>
     public bool DummyTestMode { get => _dummyTestMode; set => _dummyTestMode = value; }
+
+    /// <summary>허수아비 런이 컷으로 얼려 둔 종료 시각(패킷 시계), 없으면 0. 리포트를 캐시에서 다시 지을 때
+    /// "마지막 타격"이 아니라 이 값을 종료로 쓰라는 신호다 — 그래야 전투 시간이 설정한 그대로(1:00) 나온다.
+    /// 보스 전투에서는 언제나 0이라 그쪽 계산식은 손대지 않는다.</summary>
+    public long DummyFixedBattleEnd => _dummyFixedEnd;
+
+    /// <summary>허수아비 전투가 방금 열렸으면 true 를 한 번 돌려주고 신호를 내린다. 소비자 스레드 전용.</summary>
+    public bool ConsumeDummyBattleOpened()
+    {
+        if (!_dummyBattleOpened)
+        {
+            return false;
+        }
+
+        _dummyBattleOpened = false;
+        return true;
+    }
 
     /// <summary>Dummy test run length in seconds; the live battle is hard-cut at this duration. Clamped to &gt; 0
     /// (falls back to 60s).</summary>
@@ -265,6 +312,49 @@ public sealed class DataManager : ICaptureGameData
     }
 
     public bool IsBuffBlacklisted(int code) => _buffBlacklist.Contains(code);
+
+    private readonly HashSet<int> _passiveSkills = [];
+    private readonly HashSet<int> _activeSkillOverrides = [];
+
+    /// <summary>스킬 분류 자산을 적재한다(<c>skill_class.json</c>, 클라 <c>Skill.dat</c>의 SkillType).
+    /// 없으면 아무 것도 걸러지지 않고 예전 동작 그대로다.</summary>
+    public void LoadSkillClass(IEnumerable<int> passive, IEnumerable<int> activeOverrides)
+    {
+        foreach (int c in passive)
+        {
+            _passiveSkills.Add(c);
+        }
+
+        foreach (int c in activeOverrides)
+        {
+            _activeSkillOverrides.Add(c);
+        }
+    }
+
+    /// <summary>이 스킬 코드가 <b>패시브</b>인가 — 즉 사용자가 누른 게 아니라 저절로 터진 것인가.
+    /// <para>0x3802 는 시전과 패시브 프록을 같은 채널로 보낸다. 실측(2026-08-31 5인 코퍼스, 직업 밴드
+    /// 32,951 시전): 패시브 판정이 20.1%이고 그중 <b>72.8%가 직전 시전과 0ms 간격</b>(프록 신호)인 반면,
+    /// 눌러서 쓰는 핵심 스킬은 1.8~8.2%였다 — 클라의 분류가 행동으로도 확증된다.</para>
+    /// <para>판정 순서가 중요하다. ①<see cref="_activeSkillOverrides"/>가 최우선 — 자기 타입은 Active 인데
+    /// base 가 Passive 인 코드가 104개 있고(각 직업 긴급 회피 등), 그냥 접으면 통째로 사라진다. 이름 해석이
+    /// 같은 함정을 갖는 것과 같은 이유다(11000100 긴급 회피 → base 검성 무기 장착). ②그 다음 코드 자신,
+    /// ③마지막으로 base — 0x3802 는 특화·랭크 변종 코드를 싣고(14720007), 변종 자신의 타입은 판정이 아니라
+    /// <c>System</c>이라 base 로 접어야 답이 나온다. 어디에도 없으면 <b>남긴다</b>(모르는 것을 숨기지 않는다).</para></summary>
+    public bool IsPassiveSkill(int code)
+    {
+        if (_activeSkillOverrides.Contains(code))
+        {
+            return false;
+        }
+
+        if (_passiveSkills.Contains(code))
+        {
+            return true;
+        }
+
+        int baseCode = code is >= 11_000_000 and <= 19_999_999 ? code / 10_000 * 10_000 : code;
+        return baseCode != code && _passiveSkills.Contains(baseCode);
+    }
 
     // ---- player stat sheet (0x364A / 0x3649) ----
     private readonly PlayerStatStore _playerStats = new();
@@ -701,6 +791,21 @@ public sealed class DataManager : ICaptureGameData
 
     public void SaveSummon(int summonId, int summonerId) => _summonRepository.Save(summonId, summonerId);
     public int? SummonerId(int summonId) => _summonRepository.Get(summonId);
+
+    /// <summary>소환수 엔티티면 주인 uid, 아니면 받은 그대로.
+    /// <para><b>재사용 방어가 핵심이다.</b> 소환수 맵은 전투를 넘어 살아남고(비우는 건 <see cref="HardReset"/>
+    /// 뿐이다) 엔티티 id 는 서버가 재발급한다. 그래서 낡은 <c>summonId→owner</c> 항목이, 그 id 를 물려받은
+    /// <b>다른 플레이어</b>의 것을 통째로 옛 주인에게 끌어올 수 있다. 이미 아는 플레이어면 접지 않는다 —
+    /// 피해 경로의 <c>ResolveActor</c>가 같은 이유로 같은 가드를 들고 있다.</para></summary>
+    public int ResolveSummonOwner(int actorId)
+    {
+        if (actorId <= 0 || User(actorId) != null)
+        {
+            return actorId;
+        }
+
+        return SummonerId(actorId) ?? actorId;
+    }
 
     // ---- user ----
 
@@ -1682,6 +1787,29 @@ public sealed class DataManager : ICaptureGameData
 
     public void SaveUseBuff(int uid, UseBuff useBuff) => _useBuffRepository.Save(uid, useBuff);
 
+    /// <summary>스킬 시전 1회를 액터별로 적재한다(0x3802). <b>self 게이트를 재사용하지 않는다</b> —
+    /// 상세창은 클릭한 아무 행이나 그리므로 본인만 담으면 파티원 행에서 타임라인이 빈다. 필드에서 지나가는
+    /// 비파티원의 시전까지 쌓일 수 있지만, 창 질의(<see cref="BattleSkillCasts"/>)와 저장 시 동결이 전투
+    /// 참가자만 남기고, 저장소 자체도 액터당 상한 + 전투 저장 시 정리로 묶여 있다.</summary>
+    public void SaveSkillCast(int actorId, int skillCode, long arrivedAt, bool startsCooldown = false)
+    {
+        if (actorId <= 0)
+        {
+            return;
+        }
+
+        // 열려 있는 전투 창은 보존 정리에서 뺀다 — 10분을 넘기는 전투에서 정리가 진행 중인 그 전투의
+        // 앞부분을 지우면, 얼려 둔 타임라인이 이미 잘린 채로 저장된다. 조회 쪽이 주는 여유와 같은 폭을 준다.
+        long battleStart = CurrentBattleStart();
+        long keepFrom = battleStart > 0 ? battleStart - PreemptiveCastWindowMs : long.MaxValue;
+        _skillCastRepository.Save(actorId, new SkillCast(skillCode, arrivedAt, startsCooldown), keepFrom);
+    }
+
+    /// <summary>시전 조회·보존이 전투 시작보다 앞서 허용하는 여유. 피해 파이프라인의
+    /// <c>PreemptivePacketWindowMs</c>와 같은 값이어야 오프너 시전이 조회에는 잡히는데 정리에는 지워지는
+    /// 어긋남이 안 생긴다.</summary>
+    private const long PreemptiveCastWindowMs = 1000L;
+
     public void SaveUseBuff(int uid, int skillCode, long buffStart, long buffEnd, long duration, int actorId) =>
         SaveUseBuff(uid, skillCode, buffStart, buffEnd, duration, actorId, 0);
 
@@ -2438,6 +2566,115 @@ public sealed class DataManager : ICaptureGameData
 
     public List<UseBuff> BattleBuff(int uid, long start, long end) => _useBuffRepository.FindOverlapping(uid, start, end);
 
+    /// <summary>[start, end] 창에 든 이 플레이어의 시전들, 시각 오름차순. 이름까지 붙여 돌려준다.
+    /// <para><b>소환수 시전을 주인에게 접는다</b> — 피해 경로가 <c>ResolveActor</c>로 하는 것과 같은 규칙이다.
+    /// 접지 않으면 정령성 상세에서 소환수 스킬이 통째로 사라진다(그 엔티티 id 는 참가자 목록에 없다).</para></summary>
+    public List<SkillCastRow> BattleSkillCasts(int uid, long start, long end)
+    {
+        if (uid <= 0 || end < start)
+        {
+            return [];
+        }
+
+        List<SkillCast> casts = _skillCastRepository.FindInWindow(uid, start, end);
+        // 살아 있는 딕셔너리를 그대로 열거하지 않는다 — 이 메서드는 행 클릭 시 UI 스레드에서도 불린다.
+        foreach (KeyValuePair<int, int> summon in _summonRepository.GetAll().ToList())
+        {
+            // ResolveSummonOwner 와 같은 가드: 그 엔티티 id 를 물려받은 실제 플레이어의 시전을
+            // 옛 주인의 타임라인으로 끌어오지 않는다.
+            if (summon.Value == uid && summon.Key != uid && ResolveSummonOwner(summon.Key) == uid)
+            {
+                casts.AddRange(_skillCastRepository.FindInWindow(summon.Key, start, end));
+            }
+        }
+
+        int band = User(uid)?.Job is { } job ? JobClassInfo.BasicSkillCode(job) / 1_000_000 : 0;
+        var rows = new List<SkillCastRow>(casts.Count);
+        var seen = new HashSet<(string Name, long At)>();
+        foreach (SkillCast c in casts.OrderBy(c => c.TimestampMs).ThenBy(c => c.SkillCode))
+        {
+            if (!IsOwnCast(c.SkillCode, band))
+            {
+                continue;
+            }
+
+            string name = SkillCastName(c.SkillCode);
+
+            // 한 번의 시전이 같은 ms 에 프레임을 여러 개 낸다 — 실측(5인 파티 코퍼스 44,178건)에서 완전 중복
+            // 1,067건이 나왔고 전량이 딱 두 스킬이었다: 살기 파열(같은 코드가 최대 5번)과 불꽃 작살(최대 4번).
+            // 둘 다 한 스킬이 여러 코드/여러 프레임으로 나가는 것으로 이미 알려진 스킬이다. 세면 횟수가 부풀고
+            // 간격에 0ms 가 섞여 통계가 망가지므로, (이름, 시각)이 같으면 한 번으로 센다.
+            // ⚠️ 같은 ms 에 쿨을 돌린 프레임과 아닌 프레임이 함께 오면 <b>돌린 쪽</b>을 남긴다 — 그게 그 시각에
+            // 대해 아는 더 강한 사실이고, 버리면 표식이 조용히 사라진다.
+            if (!seen.Add((name, c.TimestampMs)))
+            {
+                if (c.StartsCooldown)
+                {
+                    int at = rows.FindLastIndex(r => r.Name == name && r.TimestampMs == c.TimestampMs);
+                    if (at >= 0 && !rows[at].StartsCooldown)
+                    {
+                        rows[at] = rows[at] with { Code = c.SkillCode, StartsCooldown = true };
+                    }
+                }
+
+                continue;
+            }
+
+            rows.Add(new SkillCastRow(c.SkillCode, name, c.TimestampMs, c.StartsCooldown));
+        }
+
+        return rows;
+    }
+
+    /// <summary>이 프레임을 "이 사람이 <b>누른</b> 스킬"로 셀 수 있나.
+    /// <para>0x3802 는 시전만 싣지 않는다. 실측(5인 파티, 직업 밴드 44,178건): 검성의 <b>흡혈의 검 착취</b>
+    /// (11340028)가 <b>수혜자를 actor 로</b> 파티원 전원에게 브로드캐스트된다 — 궁성 751회, 마도성 508회,
+    /// 치유성 587회. 검성 본인은 밴드 밖 프레임이 0건이었다. 즉 남의 목록에 있는 흡혈의 검은 "그 사람이 쓴 것"이
+    /// 아니라 그 사람에게 <i>터진 것</i>이다. <see cref="PartySynergyCatalog"/>가 같은 현상을 피해 채널에서
+    /// 이미 문서화하고 있다("arrive as REAL DAMAGE PACKETS on each party member, carrying the granting
+    /// class's skill code").</para>
+    /// <para>그래서 두 가지를 건다. ① <b>직업 밴드</b> — 남의 직업 스킬이 내 목록에 있을 이유가 없다(DPS 그래프
+    /// 레인이 쓰는 규칙과 같다). ② <b>측정형 grant 코드</b> — 이건 시전자 본인 밴드라 ①로 안 걸리는데, 시전자
+    /// 목록에도 프록이 그대로 쌓인다. 대가로 검성은 흡혈의 검을 "누른" 기록을 잃는다(20초마다 한 번). 그쪽이
+    /// 수백 줄의 유령 행보다 정직하다 — 그 버프의 가동률은 버프 업타임 탭이 이미 정확히 보여 준다.</para>
+    /// <para>직업을 아직 모르면(<paramref name="jobBand"/> 0) ①을 걸지 않는다 — 그래프 레인과 같은 폴백이다.</para></summary>
+    private bool IsOwnCast(int skillCode, int jobBand)
+    {
+        int baseCode = skillCode is >= 11_000_000 and <= 19_999_999 ? skillCode / 10_000 * 10_000 : skillCode;
+        if (PartySynergyCatalog.IsMeasuredGrant(baseCode))
+        {
+            return false;
+        }
+
+        // 패시브·자동 발동은 "사용한 스킬"이 아니다 — 액티브(스티그마 포함)만 남긴다.
+        if (IsPassiveSkill(skillCode))
+        {
+            return false;
+        }
+
+        return jobBand <= 0 || skillCode / 1_000_000 == jobBand;
+    }
+
+    /// <summary>시전 코드의 표시 이름. 0x3802는 특화 접미가 붙은 <b>원본</b> 코드를 싣는다(실측: 직업 밴드
+    /// 시전의 52%만 skills.json 과 정확히 일치, 나머지는 base 접기로 잡힌다). 그래서 원본을 먼저 보고,
+    /// 없을 때만 base 로 접는다 — 무조건 접으면 8종이 다른 스킬 이름으로 표시된다
+    /// (11010047 격파의 맹타 → 절단의 맹타, 11000100 긴급 회피 → 검성 무기 장착 …).</summary>
+    private string SkillCastName(int code)
+    {
+        if (Skill(code)?.Name is { Length: > 0 } exact)
+        {
+            return exact;
+        }
+
+        int baseCode = code is >= 11_000_000 and <= 19_999_999 ? code / 10_000 * 10_000 : code;
+        if (baseCode != code && Skill(baseCode)?.Name is { Length: > 0 } folded)
+        {
+            return folded;
+        }
+
+        return code.ToString();
+    }
+
     // ---- packet store ----
 
     public List<ParsedDamagePacket>? BattleData(int targetId) => targetId <= 0 ? null : _packetRepository.Get(targetId);
@@ -2452,6 +2689,10 @@ public sealed class DataManager : ICaptureGameData
         _packetRepository.FlushBattleTime();
         _activeBattleMobCode = null;
         _lastDummyHitTime = 0;
+        // 고정 종료는 그 창에만 속한다. 남겨 두면 다음 <b>보스</b> 전투의 종료 스탬프로 새어 나간다.
+        ClearDummyWindow();
+        _dummyWindowDurationMs = 0;
+        _lastAcceptedDummyHitPacketMs = 0;
     }
 
     public void SaveDamage(ParsedDamagePacket pdp, long epoch)
@@ -2476,7 +2717,7 @@ public sealed class DataManager : ICaptureGameData
         // Training-dummy test mode: a hit on a dummy drives (and is gated by) the dummy battle machine. Drop it —
         // never record — when test mode is off or the duration cut has fired, so an idle/finished dummy shows no
         // combat and post-cut damage can't inflate the frozen result. Non-dummy targets take the plain path.
-        if (pdp.TargetId > 0 && IsMobDummy(pdp.TargetId) && !AcceptDummyHit(pdp.TargetId))
+        if (pdp.TargetId > 0 && IsMobDummy(pdp.TargetId) && !AcceptDummyHit(pdp))
         {
             return;
         }
@@ -2491,7 +2732,6 @@ public sealed class DataManager : ICaptureGameData
     private void SaveCurrentTarget(int targetId) => _packetRepository.CurrentTarget(targetId);
     public long CurrentBattleStart() => _packetRepository.CurrentBattleStart();
     public long CurrentBattleEnd() => _packetRepository.CurrentBattleEnd();
-    private void SaveCurrentBattleStart() => _packetRepository.SaveCurrentBattleStart(Clock());
     private void SaveCurrentBattleEnd(long time) => _packetRepository.SaveCurrentBattleEnd(time);
 
     public bool IsMobDummy(int mobId)
@@ -2508,31 +2748,68 @@ public sealed class DataManager : ICaptureGameData
     /// is dropped and never counted — when the dummy test mode is off, or the chosen duration has elapsed (the
     /// hard cut). The first accepted hit opens the battle window; a hit at/after the duration ends the run and
     /// latches <see cref="_dummyCutoff"/> so every later hit is ignored until a reset clears it.</summary>
-    private bool AcceptDummyHit(int mobId)
+    private bool AcceptDummyHit(ParsedDamagePacket pdp)
     {
+        long clockNow = Clock();
+        // 채택하든 드롭하든 "방금 허수아비를 때렸다"는 사실은 남긴다 — 컷 뒤 재무장이 이 값으로 정숙 구간을 잰다.
+        // 그래서 이 줄은 아래 조기 반환들보다 반드시 위에 있어야 한다.
+        _lastDummyHitObservedMs = clockNow;
+
         if (!_dummyTestMode || _dummyCutoff) return false;
 
-        long now = Clock();
+        // 🔴 진행 중인 전투가 허수아비의 것이 아니면 손대지 않는다. 이 가드가 없으면, 보스와 싸우는 중에
+        // 허수아비로 분류된 프레임 하나가 (인스턴스 id 재사용이든, 옆에 선 허수아비든) 아래 컷 분기로 들어가
+        // <b>보스 전투의</b> CurrentBattleStart 를 기준으로 컷을 계산한다 — 그 보스 전투를 강제 종료시키고
+        // 종료 시각을 "보스 시작 + 측정 시간"으로 찍어, 실제로는 5분짜리였던 전투가 30초로 굳어 DPS 가
+        // 10배로 부푼 채 기록되고 업로드 후보가 된다.
+        if (CurrentTarget() > 0 && !IsCurrentTargetDummy())
+        {
+            return false;
+        }
+
         if (CurrentTarget() <= 0)
         {
             _battleRevision++; // a fresh battle id, so DpsCalculator resets its per-battle cache/sequence
-            SaveCurrentBattleStart();
-            SaveCurrentTarget(mobId);
-            _lastDummyHitTime = now;
+            // 창의 시작을 <b>패킷 시각</b>으로 찍는다. StartAnchor() 가 리포트 시작을
+            // max(첫 패킷 ts, CurrentBattleStart() - 250ms) 로 잡기 때문에, 여기서 처리 시각을 쓰면
+            // 파이프 지연이 250ms 를 넘는 순간 리포트 시작이 첫 타격보다 뒤로 밀린다.
+            _packetRepository.SaveCurrentBattleStart(pdp.Timestamp);
+            SaveCurrentTarget(pdp.TargetId);
+            _dummyWindowStartPacketMs = pdp.Timestamp;
+            _dummyWindowStartClockMs = clockNow;
+            _dummyWindowDurationMs = DummyDurationMs; // 이 런의 길이를 여기서 잠근다
+            _dummyFixedEnd = 0;
+            _dummyBattleOpened = true;
+            _lastDummyHitTime = clockNow;
+            _lastAcceptedDummyHitPacketMs = pdp.Timestamp;
             return true;
         }
 
-        long start = CurrentBattleStart();
-        if (start > 0 && now - start >= DummyDurationMs)
+        // 창의 기준은 공용 CurrentBattleStart 가 아니라 <b>이 런의 패킷 시계 앵커</b>다 — 양변이 같은 시계이고,
+        // 다른 전투의 시작 시각이 여기로 새어 들어올 수 없다.
+        if (_dummyWindowStartPacketMs > 0 && pdp.Timestamp - _dummyWindowStartPacketMs >= _dummyWindowDurationMs)
         {
-            SaveCurrentBattleEnd(start + DummyDurationMs); // freeze the run at exactly the chosen duration
-            SaveCurrentTarget(-1);
-            _dummyCutoff = true;
+            CutDummyRun(_dummyWindowStartPacketMs + _dummyWindowDurationMs);
             return false; // this hit is past the cut — drop it too
         }
 
-        _lastDummyHitTime = now;
+        _lastDummyHitTime = clockNow;
+        _lastAcceptedDummyHitPacketMs = pdp.Timestamp;
         return true;
+    }
+
+    /// <summary>컷 한 번 = 종료 스탬프 고정 + 타깃 해제 + 래치. 두 호출자(타격 경로·틱 경로)가 정확히 같은
+    /// 일을 하도록 한 자리에 모아 둔다 — 예전에는 두 곳에 복사돼 있어 한쪽만 고치기 쉬웠다.</summary>
+    private void CutDummyRun(long fixedEndPacketMs)
+    {
+        // 스탬프는 실제로 집계된 마지막 타격보다 앞설 수 없다. 앞서면 분자(누적 피해)는 그대로인데 분모만
+        // 짧아져 DPS 가 부푼다 — 창 길이를 잠근 지금은 도달 불가지만, 바닥을 남겨 두면 다음에 이 계산식을
+        // 건드리는 사람이 같은 사고를 반복하지 못한다.
+        _dummyFixedEnd = Math.Max(fixedEndPacketMs, _lastAcceptedDummyHitPacketMs);
+        fixedEndPacketMs = _dummyFixedEnd;
+        SaveCurrentBattleEnd(fixedEndPacketMs);
+        SaveCurrentTarget(-1);
+        _dummyCutoff = true;
     }
 
     /// <summary>Per-report-tick maintenance of a live dummy battle (called at the top of
@@ -2540,24 +2817,37 @@ public sealed class DataManager : ICaptureGameData
     /// promptly if test mode is switched off mid-run, and keeps the original 5s idle auto-end.</summary>
     public void TickDummyBattle()
     {
+        long now = Clock();
+
+        // 컷으로 끝난 런은 손을 멈추고 <see cref="DummyTimeoutMs"/> 만큼 조용해지면 스스로 재무장한다 —
+        // 그 다음 타격이 <b>별개의</b> 허수아비 전투를 연다. 예전에는 이 래치를 사람이 초기화 버튼으로만
+        // 풀 수 있어서, 연속 측정이 "때려도 미터가 안 뜬다"로 보였다.
+        // 정숙 구간이 필요한 이유: 만료 순간에도 대개 계속 때리고 있으므로, 0으로 두면 다음 패킷이 몇 ms 뒤에
+        // 새 전투를 열어 방금 나온 결과를 읽을 틈이 없다. 5초 유휴 자동 종료와 같은 상수를 공유한다.
+        // ⚠️ CurrentTarget() <= 0 조건은 "종료 전이가 이미 관측됐다"를 보장한다 — 그 전에 래치를 풀면
+        // 같은 틱 안에서 새 창이 열려 방금 런이 화면에서 사라진다.
+        if (_dummyCutoff && CurrentTarget() <= 0 && now - _lastDummyHitObservedMs > DummyTimeoutMs)
+        {
+            _dummyCutoff = false;
+        }
+
         int current = CurrentTarget();
         if (current <= 0 || !IsCurrentTargetDummy()) return;
 
-        long now = Clock();
         if (!_dummyTestMode)
         {
             SaveCurrentBattleEnd(now); // mode turned off mid-run — end now (no cutoff latch; re-enabling starts fresh)
             SaveCurrentTarget(-1);
             _lastDummyHitTime = 0;
+            _dummyFixedEnd = 0;
             return;
         }
 
-        long start = CurrentBattleStart();
-        if (start > 0 && now - start >= DummyDurationMs)
+        // 타격이 멎어도 컷은 제 시간에 터져야 한다. 판정은 <b>소비자 시계끼리</b>(창 시작 clock 대비 now),
+        // 스탬프는 <b>패킷 시계</b>로 — 두 시계를 뺄셈 하나 안에서 섞지 않는다.
+        if (_dummyWindowStartClockMs > 0 && now - _dummyWindowStartClockMs >= _dummyWindowDurationMs)
         {
-            SaveCurrentBattleEnd(start + DummyDurationMs);
-            SaveCurrentTarget(-1);
-            _dummyCutoff = true;
+            CutDummyRun(_dummyWindowStartPacketMs + _dummyWindowDurationMs);
             return;
         }
 
@@ -2566,12 +2856,30 @@ public sealed class DataManager : ICaptureGameData
             SaveCurrentBattleEnd(_lastDummyHitTime);
             SaveCurrentTarget(-1);
             _lastDummyHitTime = 0;
+            _dummyFixedEnd = 0;
         }
     }
 
     /// <summary>Clear the duration hard-cut latch so the next dummy hit opens a fresh window (used by the dummy
     /// DPS reset and the full/soft resets). The mode and chosen duration are intentionally NOT touched here.</summary>
-    public void ResetDummyCutoff() => _dummyCutoff = false;
+    public void ResetDummyCutoff()
+    {
+        _dummyCutoff = false;
+        ClearDummyWindow();
+    }
+
+    /// <summary>허수아비 측정 창에 딸린 상태를 전부 내려놓는다. 한 자리에 모아 둔 이유는 필드가 다섯 개라
+    /// 어느 한 곳에서 하나를 빠뜨리면 그 값이 다음 전투로 새기 때문이다(특히 고정 종료).
+    /// ⚠️ <c>_lastDummyHitObservedMs</c> 는 여기 넣지 마라 — 그건 창이 아니라 <b>재무장 타이머</b>의 기준점이고,
+    /// 0으로 만들면 <c>Clock() - 0</c> 이 거대해져 다음 틱에 즉시 재무장된다.</summary>
+    private void ClearDummyWindow()
+    {
+        _dummyFixedEnd = 0;
+        _dummyWindowStartPacketMs = 0;
+        _dummyWindowStartClockMs = 0;
+        _dummyWindowDurationMs = 0;
+        _lastAcceptedDummyHitPacketMs = 0;
+    }
 
     public void StartBattle(int mobId) => StartBattleAt(mobId, Clock());
 
@@ -2633,6 +2941,10 @@ public sealed class DataManager : ICaptureGameData
         _unresolvedStarts.Remove(mobId);
         _recentlyEndedBattles.Remove(mobId);
         _battleRevision++;
+        // 보스 전투의 시작. 허수아비의 고정 종료가 여기까지 살아남으면 그 값이 이 전투의 종료 스탬프로
+        // 새어 나간다(191M 오염과 같은 계열의 사고다). 창을 여는 자리에서 확실히 지운다.
+        // (FlushPacket 도 같은 일을 하지만, 이 경로가 그걸 반드시 거친다는 보장은 없다.)
+        ClearDummyWindow();
         _packetRepository.SaveCurrentBattleStart(startAt);
         SaveCurrentTarget(mobId);
         _activeBattleMobCode = mobCode;
@@ -2799,6 +3111,7 @@ public sealed class DataManager : ICaptureGameData
             PartyRosterSize = rosterFresh ? _partyRoster.Count : 0,
             DpsSeries = data.DpsSeries,          // frozen per-second damage series so the replayed DPS graph isn't empty
             BuffIntervals = data.BuffIntervals,  // frozen buff timeline (built pre-prune by the caller) for the graph's icon lane
+            SkillCasts = data.SkillCasts,        // frozen cast timeline (built pre-prune by the caller) for the 스킬 타임라인 탭
             DpsMetrics = data.DpsMetrics,        // frozen nDPS/rDPS — unrecomputable once the buff repo is pruned below
         };
 
@@ -2813,7 +3126,15 @@ public sealed class DataManager : ICaptureGameData
         };
 
         _battleLogRepository.Save(log);
-        _useBuffRepository.PruneBefore(data.BattleEnd + 1);
+        // 허수아비 런은 버프 저장소를 자르지 않는다. 자르면 런 하나가 끝날 때마다 그 시점 이전의 버프 이력이
+        // 통째로 날아가, 이어지는 <b>진짜</b> 전투의 가동률·nDPS/rDPS 가 미리 걸어 둔 장기 버프를 못 본다.
+        // 연습 30번이면 30번 잘린다. 허수아비가 기록에 남기 시작한 뒤로 실제로 발생 가능한 경로가 됐다.
+        if (snapshot.Target?.Mob.IsDummy != true)
+        {
+            _useBuffRepository.PruneBefore(data.BattleEnd + 1);
+            _skillCastRepository.PruneBefore(data.BattleEnd + 1);
+        }
+
         return log;
     }
 
@@ -2841,6 +3162,7 @@ public sealed class DataManager : ICaptureGameData
         _userRepository.Flush();
         _summonRepository.Flush();
         _useBuffRepository.Flush();
+        _skillCastRepository.Flush();
         _packetRepository.Flush();
         _recentlyEndedBattles.Clear();
         _activeBattleMobCode = null;

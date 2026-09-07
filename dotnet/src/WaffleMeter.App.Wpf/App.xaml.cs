@@ -1345,7 +1345,8 @@ public partial class App : Application
         };
 
         _detailViewModel = new DetailsViewModel(
-            source, uid, services.Calculator, name, _theme!, _settings!.FontFamily, tierLineOf: tierLineOf);
+            source, uid, services.Calculator, name, _theme!, _settings!.FontFamily, tierLineOf: tierLineOf,
+            settings: _settings);
         _detailUid = uid;
         _detailWindow = new DetailWindow { DataContext = _detailViewModel };
         _detailWindow.Closed += (s, _) =>

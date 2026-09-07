@@ -16,9 +16,13 @@ public class CooldownStartParsingTests
     private sealed class RecordingData : ICaptureGameData
     {
         public readonly List<(int SkillCode, long RemainingMs, long ArrivedAt, int ActorId, bool FromCast)> Saved = [];
+        public readonly List<(int ActorId, int SkillCode, long ArrivedAt, bool StartsCooldown)> Casts = [];
 
         public void SaveCooldown(int skillCode, long remainingMs, long arrivedAt, int actorId, bool fromCast = false)
             => Saved.Add((skillCode, remainingMs, arrivedAt, actorId, fromCast));
+
+        public void SaveSkillCast(int actorId, int skillCode, long arrivedAt, bool startsCooldown)
+            => Casts.Add((actorId, skillCode, arrivedAt, startsCooldown));
 
         // 아래는 인터페이스가 기본 구현을 주지 않는 멤버들 — 이 스펙과 무관하다.
         public Mob? GetMob(int code) => null;
@@ -93,5 +97,40 @@ public class CooldownStartParsingTests
         new StreamProcessor(data: data).OnPacketReceived(Frame("05 02 38 B2 3D"), 5_000);
 
         Assert.Empty(data.Saved);
+    }
+
+    /// <summary>스킬 타임라인의 원천. 같은 0x3802 프레임에서 쿨타임과 <b>따로</b> 갈라져 나온다.</summary>
+    [Fact]
+    public void A_plain_cast_frame_emits_both_a_cast_and_a_cooldown()
+    {
+        var data = new RecordingData();
+        new StreamProcessor(data: data).OnPacketReceived(Frame(BlessedBowCast), 5_000);
+
+        (int ActorId, int SkillCode, long ArrivedAt, bool StartsCooldown) cast = Assert.Single(data.Casts);
+        Assert.Equal(239, cast.ActorId);
+        Assert.Equal(14_220_050, cast.SkillCode);
+        Assert.Equal(5_000, cast.ArrivedAt);
+        Assert.True(cast.StartsCooldown); // 이 프레임은 쿨을 돌렸다 — 타임라인이 "확실히 나간 시전"으로 표시한다
+        Assert.Single(data.Saved);        // 쿨타임 경로는 그대로 동작한다
+    }
+
+    /// <summary>
+    /// 회귀 스펙의 핵심. <c>flag &amp; 0x0C</c> 가드는 "이 프레임에서 쿨타임을 읽으면 안 된다"는 뜻이지
+    /// "시전이 없었다"가 아니다 — 그 프레임들은 전부 충전형 스킬의 <b>진짜 시전</b>이다. 시전 방출이 그
+    /// 가드보다 앞에 있어야 타임라인이 그것들을 잃지 않는다.
+    /// </summary>
+    [Theory]
+    [InlineData(FocusedBlockCharge)]
+    [InlineData(FocusedBlockChargeFlag8)]
+    public void A_charge_frame_emits_the_cast_even_though_the_cooldown_is_correctly_dropped(string frame)
+    {
+        var data = new RecordingData();
+        new StreamProcessor(data: data).OnPacketReceived(Frame(frame), 7_000);
+
+        (int ActorId, int SkillCode, long ArrivedAt, bool StartsCooldown) cast = Assert.Single(data.Casts);
+        Assert.Equal(7858, cast.ActorId);
+        Assert.Equal(11_110_010, cast.SkillCode);
+        Assert.False(cast.StartsCooldown); // 충전형이라 돌릴 쿨이 없다 — 시전은 남되 표식은 안 붙는다
+        Assert.Empty(data.Saved);          // 쿨타임은 여전히 저장되지 않는다 (165건 오저장 가드 유지)
     }
 }

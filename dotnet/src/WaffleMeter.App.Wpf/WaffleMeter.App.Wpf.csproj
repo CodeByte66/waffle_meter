@@ -65,7 +65,8 @@
          embedded so they paint instantly on a software-rendered overlay. JoinIcons resolves them by
          pack URI. (Also pulls bossIcon/lock/logo — harmless, only the 8 class icons are referenced.) -->
     <Resource Include="..\..\Assets\JobIcons\*.png" Link="JobIcons\%(Filename)%(Extension)" />
-    <!-- 332 skill icons (filename = skill code) for the join-panel skill badges; embedded as resources. -->
+    <!-- 842 icons (filename = skill/abnormal code) for the join-panel skill badges and the buff-uptime
+         rows; embedded as resources. Regenerate the 소모품 subset with tools/consumable-icons-export.py. -->
     <Resource Include="..\..\Assets\SkillIcons\*.png" Link="SkillIcons\%(Filename)%(Extension)" />
     <!-- Small UI glyphs used by the footer resource badges (오드). Embedded so they paint instantly on the
          software-rendered overlay, same as the job icons. -->

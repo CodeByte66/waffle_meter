@@ -92,6 +92,19 @@ public interface ICaptureGameData
     /// correction that is already in flight never shows up as a flicker.</para></summary>
     void SaveCooldown(int skillCode, long remainingMs, long arrivedAt, int actorId, bool fromCast = false) { }
 
+    /// <summary>스킬 시전 1회(0x3802). <paramref name="actorId"/>는 시전자 엔티티 id(파티원 포함),
+    /// <paramref name="arrivedAt"/>는 캡처 시각(ms).
+    /// <para>⚠️ 쿨타임과 달리 <b>self 필터를 걸지 않는다</b> — 전투 상세창은 클릭한 아무 행이나 그리므로,
+    /// 본인만 저장하면 파티원 행에서 타임라인 탭이 통째로 빈다. 또 쿨타임 경로의 게이트들
+    /// (<c>flag &amp; 0x0C</c>, <c>remaining &lt;= 0</c>)보다 <b>앞에서</b> 방출된다: 실측 코퍼스에서 직업 밴드
+    /// 0x3802 프레임의 99.6%가 <c>remaining == 0</c>이라 쿨타임 경로는 그걸 전부 버리는데, 그 프레임들도
+    /// 전부 진짜 시전이다.</para>
+    /// <param name="startsCooldown">이 프레임이 <b>쿨타임을 실제로 돌렸는가</b>(꼬리 varint 의 잔여시간 &gt; 0).
+    /// 판단이 아니라 서버가 보낸 사실이다 — 같은 스킬의 여러 발동 중 어느 것이 "진짜 나간 시전"인지 가르는,
+    /// 와이어에 존재하는 유일한 신호다. 실측 17.5%.</param>
+    /// 기본 no-op(캡처 전용 모드).</summary>
+    void SaveSkillCast(int actorId, int skillCode, long arrivedAt, bool startsCooldown) { }
+
     /// <summary>엔티티 사망 브로드캐스트(0x8D04). 몹·파티원에게도 오므로 본인 여부 판정은 executor를 아는
     /// 데이터 계층이 한다. 기본 no-op(캡처 전용 모드).</summary>
     void SaveEntityDeath(int entityId, long arrivedAt) { }

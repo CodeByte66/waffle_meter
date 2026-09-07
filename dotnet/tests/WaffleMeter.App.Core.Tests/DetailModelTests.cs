@@ -180,22 +180,81 @@ public sealed class DetailModelTests
     }
 
     [Fact]
-    public void Own_buffs_keep_only_what_this_player_applied()
+    public void Own_buffs_are_split_by_who_applied_them()
     {
-        // The window answers "what did I keep running?", so a buff another player cast on me is dropped —
-        // a chanter's 진언 at 90% on everyone says nothing about this player.
         var own = new List<OperatingData>
         {
             new(110200500, "내버프", null, null, 95.5, 1),     // actor==uid, prefix 11 == GLADIATOR -> 내 버프
             new(150000000, "타직업버프", null, null, 40.0, 1),  // actor==uid, prefix 15 (소모품/타직업) -> 그 외
-            new(110200500, "파티버프", null, null, 50.0, 2),    // actor 2 != uid -> dropped
+            new(110200500, "파티버프", null, null, 50.0, 2),    // actor 2 != uid -> 남이 준 버프
         };
 
         DetailModel model = Compute(new(), own: own, job: JobClass.GLADIATOR);
 
-        Assert.Equal(new[] { "내 버프", "그 외" }, model.Buffs.Select(s => s.Label).ToArray());
+        // 남이 준 버프는 언제나 맨 뒤다 — 중간에 끼우면 몇 줄 안 되는 "그 외"(소모품)가 공대에서 수십 줄짜리
+        // 이 섹션 아래로 밀려 사라진다.
+        Assert.Equal(new[] { "내 버프", "그 외", "남이 준 버프" }, model.Buffs.Select(s => s.Label).ToArray());
         Assert.Equal(95.5, model.Buffs.Single(s => s.Label == "내 버프").Rows[0].Rate);
-        Assert.DoesNotContain(model.Buffs.SelectMany(s => s.Rows), r => r.Name == "파티버프");
+        Assert.Equal(
+            new[] { false, false, true },
+            model.Buffs.Select(s => s.FromOtherPlayers).ToArray());
+    }
+
+    [Fact]
+    public void A_buff_from_another_player_carries_that_players_name()
+    {
+        var own = new List<OperatingData>
+        {
+            new(110200500, "내버프", null, null, 95.5, 1),
+            new(117000100, "축복", null, null, 88.0, 7),
+            new(117000200, "이름모를자의버프", null, null, 12.0, 9),
+        };
+
+        DetailModel model = DetailModel.Compute(
+            new Dictionary<string, AnalyzedSkill>(), own, new List<OperatingData>(),
+            uid: 1, JobClass.GLADIATOR, contribution: 60.0, combatMs: 30000,
+            casterNames: new Dictionary<int, string> { [7] = "밀피" });
+
+        DetailBuffSection granted = model.Buffs.Single(s => s.FromOtherPlayers);
+        Assert.Equal("밀피", granted.Rows.Single(r => r.Name == "축복").CasterName);
+        // 이름을 못 찾아도 행을 버리지 않는다 — 버리면 저장된 전투에서 피해를 안 낸 서포터가 통째로 사라진다.
+        Assert.Equal("플레이어 9", granted.Rows.Single(r => r.Name == "이름모를자의버프").CasterName);
+        // 내가 올린 버프에는 이름표가 없다(그 행에서 시전자는 새 정보가 아니다).
+        Assert.Null(model.Buffs.Single(s => s.Label == "내 버프").Rows[0].CasterName);
+    }
+
+    [Fact]
+    public void A_summons_buff_on_its_owner_is_not_someone_elses()
+    {
+        // 소환수 엔티티 id 는 Contributors 에도 파티 스냅샷에도 절대 없다(피해가 주인에게 접히므로).
+        // 접지 않고 「남이 준 버프」로 보내면, 혼자 사냥한 정령성/치유성에게도 그 섹션이 생기고
+        // 행 부제가 "플레이어 4713261" 같은 원시 엔티티 id 로 뜬다.
+        var own = new List<OperatingData>
+        {
+            new(110200500, "내버프", null, null, 95.5, 1),
+            new(163000003, "소환수버프", null, null, 60.0, 9001), // actor = 소환수 엔티티
+        };
+
+        DetailModel model = DetailModel.Compute(
+            new Dictionary<string, AnalyzedSkill>(), own, new List<OperatingData>(),
+            uid: 1, JobClass.GLADIATOR, contribution: 60.0, combatMs: 30000,
+            resolveActor: id => id == 9001 ? 1 : id);
+
+        Assert.DoesNotContain(model.Buffs, s => s.FromOtherPlayers); // 솔로에는 체크박스가 뜨지 않는다
+        Assert.Contains(model.Buffs.SelectMany(s => s.Rows), r => r.Name == "소환수버프");
+        Assert.All(model.Buffs.SelectMany(s => s.Rows), r => Assert.Null(r.CasterName));
+    }
+
+    [Fact]
+    public void No_other_player_buffs_means_no_granted_section_at_all()
+    {
+        // 솔로 전투: 빈 섹션을 만들면 표시 계층이 "남이 준 버프 보기" 체크박스를 켜 두게 되고, 켜도 아무 일이
+        // 안 일어나는 컨트롤은 고장으로 읽힌다.
+        var own = new List<OperatingData> { new(110200500, "내버프", null, null, 95.5, 1) };
+
+        DetailModel model = Compute(new(), own: own, job: JobClass.GLADIATOR);
+
+        Assert.DoesNotContain(model.Buffs, s => s.FromOtherPlayers);
     }
 
     [Fact]
