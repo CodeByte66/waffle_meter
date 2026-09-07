@@ -23,7 +23,7 @@
          WinForms "configure DPI via API" advisory. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <!-- Version: CI passes WaffleVersion=x.y.z (vpk packVersion must match it). v2.0 = native WPF rewrite. -->
-    <WaffleVersion Condition="'$(WaffleVersion)' == ''">2.12.2-dev</WaffleVersion>
+    <WaffleVersion Condition="'$(WaffleVersion)' == ''">2.13.0-dev</WaffleVersion>
     <Version>$(WaffleVersion)</Version>
     <InformationalVersion>$(WaffleVersion)</InformationalVersion>
   </PropertyGroup>
