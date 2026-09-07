@@ -173,6 +173,28 @@ public static class ReferenceJson
         BuffValueCatalog.Parse(File.ReadAllText(path));
 
     /// <summary>buff_blacklist.json: { "blacklist": [int, ...] }.</summary>
+    /// <summary>스킬 분류 자산(<c>skill_class.json</c>): 시전으로 세지 않을 패시브 코드와, base 가 패시브라
+    /// 접기로는 잘못 걸러지는 액티브 예외 코드. 생성은 <c>tools/skill-class-export.py</c>.</summary>
+    public static (List<int> Passive, List<int> ActiveOverrides) LoadSkillClass(string path)
+    {
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+        return (ReadIntArray(doc.RootElement, "passive"), ReadIntArray(doc.RootElement, "activeOverrides"));
+    }
+
+    private static List<int> ReadIntArray(JsonElement root, string name)
+    {
+        var result = new List<int>();
+        if (root.TryGetProperty(name, out JsonElement arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement e in arr.EnumerateArray())
+            {
+                result.Add(e.GetInt32());
+            }
+        }
+
+        return result;
+    }
+
     public static List<int> LoadBuffBlacklist(string path)
     {
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));

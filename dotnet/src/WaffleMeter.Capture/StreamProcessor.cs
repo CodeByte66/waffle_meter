@@ -2161,11 +2161,6 @@ public sealed class StreamProcessor
                 return;
             }
 
-            if ((packet[flagOff] & 0x0C) != 0)
-            {
-                return; // extra trailing varint present — the last-varint walk would read a duration, not a cooldown
-            }
-
             int skillOff = flagOff + 1; // the flag byte, then the u32 skill code
             if (skillOff + 4 > packet.Length)
             {
@@ -2178,16 +2173,35 @@ public sealed class StreamProcessor
                 return; // job skills only (the band the buff overlay grays)
             }
 
-            // remaining = the LAST varint of the frame. Walk back from the terminal byte over continuation bytes.
-            int start = packet.Length - 1;
-            int floor = Math.Max(skillOff + 4, packet.Length - 5);
-            while (start > floor && (packet[start - 1] & 0x80) != 0)
+            // 쿨타임 잔여시간을 <b>먼저</b> 구한다. 값 자체는 쿨타임 오버레이의 것이지만, "이 발동이 쿨을
+            // 돌렸다"는 사실은 시전 타임라인도 쓴다 — 같은 스킬의 여러 발동 중 어느 것이 진짜 눌러서 나간
+            // 것인지 가를 수 있는, 와이어에 존재하는 유일한 신호다.
+            long remaining = 0;
+            if ((packet[flagOff] & 0x0C) == 0)
             {
-                start--;
+                // remaining = the LAST varint of the frame. Walk back from the terminal byte over continuation bytes.
+                // (flag 0x04/0x08 이 켜진 프레임은 꼬리에 varint 가 하나 더 붙어 이 워크가 지속시간을 쿨로
+                //  오독한다 — 그래서 그 프레임은 애초에 잔여시간을 읽지 않는다. 실측 오저장 165건 가드.)
+                int start = packet.Length - 1;
+                int floor = Math.Max(skillOff + 4, packet.Length - 5);
+                while (start > floor && (packet[start - 1] & 0x80) != 0)
+                {
+                    start--;
+                }
+
+                remaining = PacketPrimitives.ReadVarInt(packet, start).Value;
             }
 
-            long remaining = PacketPrimitives.ReadVarInt(packet, start).Value;
-            if (remaining <= 0 || remaining > 3_600_000)
+            bool startsCooldown = remaining is > 0 and <= 3_600_000;
+
+            // 시전 타임라인은 여기서 갈라진다 — 아래 쿨타임 게이트보다 앞이다. 그 게이트는 "이 프레임에서
+            // 쿨타임을 읽을 수 있는가"를 판정할 뿐, "시전이 있었는가"가 아니다.
+            // 실측(5인 파티 1세션 코퍼스): 직업 밴드 0x3802 프레임 중 remaining > 0 은 17.5%. 즉 쿨타임
+            // 경로는 발동의 82.5%를 버린다. 그것들도 전부 진짜 발동이다(쿨 없는 스킬·이동기·버프·연계).
+            _data.SaveSkillCast(actor.Value, skillCode, arrivedAt, startsCooldown);
+            _sink.Meta("skill_cast", ("actor", actor.Value), ("skill", skillCode), ("cd", startsCooldown ? 1 : 0));
+
+            if (!startsCooldown)
             {
                 return; // ready/non-cast (0) or implausible — only cooldown STARTS gray instantly
             }

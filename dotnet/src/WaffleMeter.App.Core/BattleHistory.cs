@@ -10,7 +10,10 @@ public sealed record BattleHistoryItem(
     bool IsBoss,
     double TotalAmount,
     long BattleTimeMs,
-    long BattleStartMs);
+    long BattleStartMs,
+    /// <summary>허수아비 측정 런인가. 저장 스냅샷이 <c>Mob</c> 레코드를 그대로 실어 가므로 별도 필드 없이
+    /// <c>Target.Mob.IsDummy</c> 하나로 판정된다 — 패널의 '허수아비' 탭이 이 값으로 갈린다.</summary>
+    bool IsDummy = false);
 
 /// <summary>
 /// Maps the data layer's saved-battle list into history rows. Pure (no WPF) so it is unit-testable.
@@ -42,10 +45,23 @@ public static class BattleHistory
                 IsBoss: report.Target?.Mob.Boss ?? false,
                 TotalAmount: report.Information.Values.Sum(i => i.Amount),
                 BattleTimeMs: battleTime,
-                BattleStartMs: report.BattleStart));
+                BattleStartMs: report.BattleStart,
+                IsDummy: report.Target?.Mob.IsDummy ?? false));
         }
 
         items.Reverse(); // repository is oldest-first; show newest first
         return items;
     }
+
+    /// <summary>패널 탭 하나. 허수아비 런은 진짜 전투와 성격이 달라(같은 대상, 고정 길이, 반복) 한 목록에
+    /// 섞이면 둘 다 읽기 어렵다.</summary>
+    public enum Tab
+    {
+        Battle,
+        Dummy,
+    }
+
+    /// <summary>탭 필터. 순수 함수로 여기 두는 이유는 App.Wpf 에 테스트 프로젝트가 없기 때문이다.</summary>
+    public static IReadOnlyList<BattleHistoryItem> Filter(IReadOnlyList<BattleHistoryItem> items, Tab tab) =>
+        items.Where(i => i.IsDummy == (tab == Tab.Dummy)).ToList();
 }

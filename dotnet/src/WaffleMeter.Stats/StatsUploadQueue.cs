@@ -134,7 +134,18 @@ public sealed class StatsUploadQueue : IDisposable
         }
 
         MobInfo? target = log.Report.Target;
-        if (target == null || !target.Mob.Boss || target.Mob.IsDummy)
+
+        // 허수아비 런은 <b>조용히</b> 무시한다 — 카운터도, 최근 스킵 사유도 건드리지 않는다.
+        // 스킵 진단은 "올라갔어야 할 전투가 왜 안 올라갔나"에 답하려고 있는 화면인데(설정›통계의 한 줄),
+        // 허수아비는 애초에 후보가 아니다. 아래 not_boss 로 흘려보내면 연습 30번이 그 줄을
+        // "건너뜀 +30 · 최근: 보스 전투가 아님"으로 덮어 사용자가 쫓던 진짜 사유를 지운다.
+        // (허수아비 런이 여기까지 오는 것은 전투 기록의 '허수아비' 탭을 만들며 저장을 푼 뒤부터다.)
+        if (target?.Mob.IsDummy == true)
+        {
+            return;
+        }
+
+        if (target == null || !target.Mob.Boss)
         {
             MarkSkipped("not_boss");
             return;

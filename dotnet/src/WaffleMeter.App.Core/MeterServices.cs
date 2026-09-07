@@ -337,7 +337,10 @@ public sealed class MeterServices
             // itself waiting on this (consumer) thread — writing the replay first means the artifact
             // survives even if that notify can't complete. Isolated in try/catch because the replay engine
             // is an optional private module and must never break the parity-critical save/upload path.
-            if (RecordReplay && Movement is { } replay)
+            // 허수아비 런은 리플레이를 굽지 않는다. 제자리에 선 표적을 때리는 60초짜리 이동 기록은 볼 것이
+            // 없는데, 연습 30번이면 replay-*.json 이 30개 쌓인다(허수아비가 기록에 남기 시작하면서 생긴
+            // 새 경로다 — 예전에는 저장 자체가 막혀 여기까지 오지 않았다).
+            if (RecordReplay && Movement is { } replay && log.Report.Target?.Mob.IsDummy != true)
             {
                 try
                 {
@@ -360,7 +363,7 @@ public sealed class MeterServices
             }
 
             LogRaidSlotBinding(log);
-            UploadQueue.OfferIfEligible(log);
+            UploadQueue.OfferIfEligible(log); // 허수아비 런은 큐가 조용히 무시한다 (진단 카운터도 안 건드린다)
             NotifyBattleListChanged();
         };
     }
@@ -434,6 +437,15 @@ public sealed class MeterServices
             {
                 Data.LoadBuffs(ReferenceJson.LoadBuffs(path));
             }
+        }
+
+        // 스킬 분류(액티브/패시브). 스킬 타임라인 탭이 패시브 프록을 빼는 데 쓴다. 없으면 아무 것도
+        // 걸러지지 않으므로 옛 자산 번들에서도 그냥 예전 동작이 된다.
+        string skillClass = Path.Combine(jsonDir, "skill_class.json");
+        if (File.Exists(skillClass))
+        {
+            (var passive, var activeOverrides) = ReferenceJson.LoadSkillClass(skillClass);
+            Data.LoadSkillClass(passive, activeOverrides);
         }
 
         string blacklist = Path.Combine(jsonDir, "buff_blacklist.json");

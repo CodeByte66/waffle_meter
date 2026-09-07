@@ -134,6 +134,8 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _buffUiGrayOnCooldown = ReadBool("buffUi.grayOnCooldown", false);
         _buffUiShowLevel = ReadBool("buffUi.showLevel", true);
         _showOtherPlayerBuffs = ReadBool("buffUi.showOther", true);
+        _detailShowPartyBuffs = ReadBool("detail.showPartyBuffs", false);
+        _detailTimelineCooldownOnly = ReadBool("detail.timelineCooldownOnly", false);
         _buffUiHidden = _props.GetProperty("buffUi.hidden") ?? "";
         _buffUiObserved = _props.GetProperty("buffUi.observed") ?? "";
         _buffUiVoice = _props.GetProperty("buffUi.voice") ?? "";
@@ -543,6 +545,30 @@ public sealed class MeterSettings : INotifyPropertyChanged
     private bool _showOtherPlayerBuffs;
     /// <summary>Include buffs applied by other players (off = only the local player's own buffs).</summary>
     public bool ShowOtherPlayerBuffs { get => _showOtherPlayerBuffs; set => SetBool(ref _showOtherPlayerBuffs, "buffUi.showOther", value); }
+
+    private bool _detailShowPartyBuffs;
+    /// <summary>전투 상세 › 버프 업타임 탭에서 「남이 준 버프」 섹션을 함께 보여줄지. 기본 꺼짐.
+    /// <para>⚠️ <see cref="ShowOtherPlayerBuffs"/>(<c>buffUi.showOther</c>)와 키를 공유하면 안 된다 — 그쪽은
+    /// 버프 <i>오버레이</i>의 것이고 프리셋 3슬롯이 읽고 쓰는 값이라(<c>BuffPresetManager.PresetProps</c>),
+    /// 프리셋을 바꾸는 순간 상세창 필터까지 같이 뒤집힌다. 같은 이유로 이 키를 그 목록에 넣지도 마라.</para></summary>
+    public bool DetailShowPartyBuffs
+    {
+        get => _detailShowPartyBuffs;
+        set => SetBool(ref _detailShowPartyBuffs, "detail.showPartyBuffs", value);
+    }
+
+    private bool _detailTimelineCooldownOnly;
+    /// <summary>전투 상세 › 스킬 타임라인에서 <b>쿨타임을 돌린 발동만</b> 볼지. 기본 꺼짐.
+    /// <para>왜 이 토글이 있나: 일부 스킬은 활성화 1회에 0x3802 프레임을 <b>둘</b> 낸다(실측 광풍 화살 77건 /
+    /// 쿨 39건, 표적 화살 24 / 12 — <c>●○</c> 교대가 100%이고 사이 간격 중앙값 350ms, 시전→적중으로 보인다).
+    /// 그걸 시간으로 접으면 임의의 임계값이 필요하고, 그 임계값이 매크로 케이던스를 통째로 지운다. 대신 서버가
+    /// 준 사실 하나(쿨을 돌렸나)로 거르면 계수가 하나도 안 든다.</para>
+    /// <para>⚠️ 쿨타임이 없는 스킬(속사·저격 등)은 이 필터에서 통째로 사라진다 — 그래서 기본은 꺼짐이다.</para></summary>
+    public bool DetailTimelineCooldownOnly
+    {
+        get => _detailTimelineCooldownOnly;
+        set => SetBool(ref _detailTimelineCooldownOnly, "detail.timelineCooldownOnly", value);
+    }
 
     private string _buffUiHidden;
     /// <summary>Comma-separated base skill codes the user unchecked in the per-job buff picker; the overlay

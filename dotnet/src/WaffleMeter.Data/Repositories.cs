@@ -242,6 +242,103 @@ public sealed class UseBuffRepository
     public void Flush() => _storage.Clear();
 }
 
+/// <summary>
+/// 액터별 스킬 시전 이력(0x3802). <see cref="UseBuffRepository"/>와 같은 모양이되, 상한이 있다.
+/// <para>상한에 닿으면 <b>가장 오래된 것을 덮어쓴다</b>(<c>PacketRepository</c>의 링버퍼와 같은 규칙).
+/// "가득 차면 새 것을 버린다"로 만들면, 전투 밖에서 상한만큼 쌓인 뒤 정작 다음 전투가 통째로 기록되지 않는다 —
+/// 정리(<see cref="PruneBefore"/>)는 전투가 저장될 때만 돌기 때문이다.</para>
+/// <para><b>락이 있는 이유.</b> 쓰기는 소비자 스레드 전용이지만 읽기는 아니다 — 미터 행을 클릭하면
+/// <c>new DetailsViewModel(...)</c> 의 생성자가 <b>UI 스레드에서</b> 곧바로 Refresh 를 돌린다(App.ToggleDetail).
+/// 그 경로는 리포트 틱의 블로킹 <c>Dispatcher.Invoke</c> 밖이라 파서가 그동안 계속 돈다. 목록 append 는 배열을
+/// 재할당할 수 있고 정리는 Dictionary 를 구조적으로 바꾸므로, 그때 읽고 있으면 예외가 난다.</para>
+/// </summary>
+public sealed class SkillCastRepository
+{
+    /// <summary>한 액터가 들고 있을 수 있는 최대 시전 수. 레코드가 16바이트라 액터당 320KB 상한이고,
+    /// 20분 전투에서 초당 1시전이어도 1,200건이라 넉넉하다.</summary>
+    public const int MaxCastsPerActor = 20_000;
+
+    /// <summary>액터 하나를 얼마나 오래 들고 있을지. 정리(<see cref="PruneBefore"/>)는 전투가 <b>저장될 때만</b>
+    /// 도는데, 필드에서 몇 시간을 돌아다니는 동안에는 저장되는 전투가 하나도 없을 수 있다. 그동안 이 저장소는
+    /// 지나가는 모든 플레이어의 시전을 액터 키로 쌓는다 — 액터당 상한은 있어도 <b>액터 수</b>에는 없다.
+    /// 그래서 시간 기준으로도 잘라 낸다. ⚠️ 10분은 <b>긴 전투보다 짧다</b>(공대·시련은 그 이상 간다) — 그래서
+    /// <see cref="Save"/>의 <c>keepFromMs</c>가 열린 전투 창을 정리에서 빼 준다. 이 둘은 한 쌍이다.</summary>
+    private const long RetentionMs = 10 * 60 * 1000L;
+
+    /// <summary>몇 건마다 위 보존 정리를 돌릴지. 매 시전마다 전 액터를 훑으면 파서 경로에 비용이 붙는다.</summary>
+    private const int SweepEvery = 4096;
+
+    private readonly Dictionary<int, List<SkillCast>> _storage = new();
+    private readonly Lock _gate = new();
+    private int _sinceSweep;
+
+    /// <param name="keepFromMs">이 시각 이후는 보존 정리가 절대 건드리지 않는다 — 열려 있는 전투 창의 시작을
+    /// 넘긴다. 이게 없으면 10분을 넘기는 전투(공대·시련)에서 정리가 <b>진행 중인 그 전투의 앞부분</b>을 지워,
+    /// 얼려 둔 타임라인이 이미 잘린 채로 저장된다. 열린 전투가 없으면 <see cref="long.MaxValue"/>.</param>
+    public void Save(int actorId, SkillCast cast, long keepFromMs = long.MaxValue)
+    {
+        lock (_gate)
+        {
+            if (!_storage.TryGetValue(actorId, out List<SkillCast>? list))
+            {
+                list = [];
+                _storage[actorId] = list;
+            }
+
+            if (list.Count >= MaxCastsPerActor)
+            {
+                list.RemoveAt(0); // overwrite-oldest
+            }
+
+            list.Add(cast);
+
+            if (++_sinceSweep >= SweepEvery)
+            {
+                _sinceSweep = 0;
+                PruneBefore(Math.Min(cast.TimestampMs - RetentionMs, keepFromMs));
+            }
+        }
+    }
+
+    /// <summary>[start, end] 창에 든 시전들, 저장 순서 그대로(= 시각 오름차순).</summary>
+    public List<SkillCast> FindInWindow(int actorId, long start, long end)
+    {
+        lock (_gate)
+        {
+            if (!_storage.TryGetValue(actorId, out List<SkillCast>? list))
+            {
+                return [];
+            }
+
+            return list.Where(c => c.TimestampMs >= start && c.TimestampMs <= end).ToList();
+        }
+    }
+
+    public void PruneBefore(long timestamp)
+    {
+        lock (_gate)
+        {
+            foreach (int key in _storage.Keys.ToList())
+            {
+                List<SkillCast> casts = _storage[key];
+                casts.RemoveAll(c => c.TimestampMs < timestamp);
+                if (casts.Count == 0)
+                {
+                    _storage.Remove(key);
+                }
+            }
+        }
+    }
+
+    public void Flush()
+    {
+        lock (_gate)
+        {
+            _storage.Clear();
+        }
+    }
+}
+
 /// <summary>Skill catalog (Kotlin SkillRepository): code -> Skill (with name).</summary>
 public sealed class SkillRepository
 {

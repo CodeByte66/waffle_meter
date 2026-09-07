@@ -54,6 +54,35 @@ public sealed class StatsUploadQueueTests : IDisposable
             dispatch: job => job(), killRecheckDelay: () => { }, clock: () => 1, retryDelay: _ => { });
     }
 
+    private DpsLog DummyLog()
+    {
+        DpsLog log = BossLog(remainHp: 0, boss: false, mobCode: 2300229);
+        log.Report.Target = new MobInfo(200, new Mob(2300229, "훈련용 허수아비", Boss: false, IsDummy: true), 0, 0);
+        return log;
+    }
+
+    [Fact]
+    public void A_dummy_run_is_ignored_without_touching_the_skip_diagnostics()
+    {
+        // 허수아비 런은 전투 기록의 '허수아비' 탭 때문에 저장되기 시작했고, 그래서 이 큐까지 온다. 업로드는
+        // 물론 막혀야 하지만 "건너뜀" 카운터와 최근 사유까지 갱신하면, 연습 30번이 설정›통계의 진단 줄을
+        // "건너뜀 +30 · 최근: 보스 전투가 아님"으로 덮어 사용자가 쫓던 진짜 사유를 지운다.
+        using StatsUploadQueue queue = NewQueue(AcceptingApi(), accept: true);
+        queue.OfferIfEligible(BossLog(0, boss: false));       // 진짜 스킵 — 사유가 남아야 한다
+        string realReason = queue.Status().LastReason;
+        int realSkips = queue.Status().Skipped;
+
+        for (int i = 0; i < 5; i++)
+        {
+            queue.OfferIfEligible(DummyLog());
+        }
+
+        StatsUploadStatus status = queue.Status();
+        Assert.Equal(0, status.Uploaded);            // 업로드는 여전히 차단
+        Assert.Equal(realSkips, status.Skipped);     // 카운터가 안 움직였다
+        Assert.Equal(realReason, status.LastReason); // 진짜 사유가 그대로 남았다
+    }
+
     private DpsLog BossLog(int remainHp, bool boss = true, int mobCode = 12345)
     {
         User me = _dm.User(1)!;

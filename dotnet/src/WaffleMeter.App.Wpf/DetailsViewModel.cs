@@ -33,6 +33,10 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
     private readonly DpsCalculator _calc;
     private readonly string _fallbackName;
 
+    /// <summary>「남이 준 버프」 체크박스의 상태를 담아 두는 곳. 상세창은 행을 클릭할 때마다 새로 만들어지므로
+    /// VM 필드에만 두면 창을 닫는 순간 선택이 날아간다. null 이면(테스트·미배선) 그 창에서만 사는 값이 된다.</summary>
+    private readonly MeterSettings? _settings;
+
     /// <summary>이 캐릭터의 티어 줄을 <b>표시 중인 리포트에서</b> 다시 뽑는 공급자. 값으로 스냅샷해 두지 않는
     /// 이유는 티어가 "렌더되는 리포트의 함수"여야 하기 때문이다 — 밀어 넣는 모델(SetTiers)은 기록 재생에서
     /// 옛 값을 그리던 회귀를 낳아 이미 한 번 걷어냈다. null 이면 티어 타일을 접는다(설정 꺼짐·미배선).</summary>
@@ -43,12 +47,15 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
     private DpsReport? _tierReport;
 
     public DetailsViewModel(DpsReport report, int uid, DpsCalculator calc, string name, MeterColorTheme theme, string fontFamily,
-        Func<DpsReport, TierDetailLine>? tierLineOf = null)
+        Func<DpsReport, TierDetailLine>? tierLineOf = null, MeterSettings? settings = null)
     {
         _uid = uid;
         _calc = calc;
         _fallbackName = name;
         _tierLineOf = tierLineOf;
+        _settings = settings;
+        _showPartyBuffs = settings?.DetailShowPartyBuffs ?? false;
+        _timelineCooldownOnly = settings?.DetailTimelineCooldownOnly ?? false;
         FontFamily = fontFamily;
         // Theme-linked text colors (snapshot at open; the detail window is short-lived per row click).
         AmountBrush = ThemeBrush(theme.MeterStatAmount);
@@ -84,6 +91,100 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
     /// timeline (icon lane), drawn on a plain Canvas by <see cref="DetailWindow"/>. Rebuilt every
     /// <see cref="Refresh"/>; null when there isn't enough to plot.</summary>
     public DpsGraphModel? Graph { get => _graph; private set => Set(ref _graph, value); }
+
+    /// <summary>필터를 걸기 <b>전</b>의 버프 섹션 전체. 탭 활성화 판정(<see cref="HasBuffs"/>)과 체크박스 토글이
+    /// 둘 다 이걸 본다 — 필터 결과로 판정하면 「남이 준 버프」밖에 없는 사람의 탭이 비활성화되고, 그러면 그 탭을
+    /// 채워 줄 체크박스가 비활성화된 탭 안에 갇혀 영영 못 켠다.</summary>
+    private IReadOnlyList<DetailBuffSection> _buffSections = [];
+
+    private bool _showPartyBuffs;
+
+    /// <summary>「남이 준 버프」 섹션을 표에 포함할지. 기본은 꺼짐 — 기본 화면이 답하는 질문은 "내가 뭘 유지했나"이고,
+    /// 공대에서는 이 섹션만 수십 줄이라 켜 두면 내 버프가 묻힌다. 설정 파일(<c>detail.showPartyBuffs</c>)에
+    /// 즉시 저장돼 다음에 연 상세창에도 그대로 이어진다.</summary>
+    public bool ShowPartyBuffs
+    {
+        get => _showPartyBuffs;
+        set
+        {
+            if (_showPartyBuffs == value)
+            {
+                return;
+            }
+
+            Set(ref _showPartyBuffs, value);
+            if (_settings != null)
+            {
+                _settings.DetailShowPartyBuffs = value;
+            }
+
+            RebuildBuffs();
+        }
+    }
+
+    private bool _hasPartyBuffs;
+
+    /// <summary>이 전투에 남이 걸어 준 버프가 하나라도 있나. 없으면 체크박스를 접는다 — 켜도 아무 일이 안 일어나는
+    /// 컨트롤은 고장으로 읽힌다(솔로 전투에서 늘 그렇다).</summary>
+    public bool HasPartyBuffs { get => _hasPartyBuffs; private set => Set(ref _hasPartyBuffs, value); }
+
+    /// <summary>스킬 시전 순서(간격 포함). 전투가 길면 수천 줄이 되므로 XAML 쪽에서 가상화한다.</summary>
+    public ObservableCollection<SkillCastRowVM> TimelineCasts { get; } = new();
+
+    /// <summary>스킬별 사용 간격 집계(횟수·평균·중앙값·최소·최대).</summary>
+    public ObservableCollection<SkillGapRowVM> TimelineSkills { get; } = new();
+
+    private string _timelineSummaryText = string.Empty;
+
+    /// <summary>타임라인 탭 상단 한 줄 요약.</summary>
+    public string TimelineSummaryText { get => _timelineSummaryText; private set => Set(ref _timelineSummaryText, value); }
+
+    private bool _timelineCooldownOnly;
+
+    /// <summary>타임라인에서 <b>쿨타임을 돌린 발동만</b> 볼지. 기본 꺼짐.
+    /// <para>일부 스킬은 활성화 1회에 프레임을 둘 낸다(시전→적중으로 보이는 350ms 짝). 그걸 시간으로 접으면
+    /// 임의의 임계값이 필요하고 그게 매크로 케이던스를 지운다 — 대신 서버가 준 사실 하나로 거른다.</para>
+    /// <para>⚠️ 쿨 없는 스킬은 통째로 사라지므로 켤 때만 쓰는 렌즈다.</para></summary>
+    public bool TimelineCooldownOnly
+    {
+        get => _timelineCooldownOnly;
+        set
+        {
+            if (_timelineCooldownOnly == value)
+            {
+                return;
+            }
+
+            Set(ref _timelineCooldownOnly, value);
+            if (_settings != null)
+            {
+                _settings.DetailTimelineCooldownOnly = value;
+            }
+
+            // 목록의 앞부분이 통째로 달라지므로 증분 append 를 쓰면 안 된다 — 시그니처를 무효화해
+            // 다음 Refresh 가 전부 다시 만들게 한다.
+            _timelineSignature = long.MinValue;
+            TimelineCasts.Clear();
+            _rebuildTimeline?.Invoke();
+        }
+    }
+
+    /// <summary>토글이 즉시 반영되도록 마지막 Refresh 의 재계산을 담아 둔다(다음 틱을 기다리지 않는다).</summary>
+    private Action? _rebuildTimeline;
+
+    private bool _hasTimeline;
+
+    /// <summary>시전이 2건 이상일 때만 "간격"이 존재한다. 그 아래면 탭을 비활성화한다.</summary>
+    public bool HasTimeline { get => _hasTimeline; private set => Set(ref _hasTimeline, value); }
+
+    // 라이브 전투에서는 Refresh 가 매 틱 돈다. 시전 목록은 오직 뒤로만 자라므로, 바뀐 게 없으면 아무것도 하지
+    // 않고, 자라기만 했으면 꼬리만 붙인다 — 수천 줄을 매 틱 다시 만들면 그래프가 이미 피해 간 비용을 되밟는다.
+    private long _timelineSignature = long.MinValue;
+
+    private bool _hasCooldownStarts;
+
+    /// <summary>이 전투에 쿨을 돌린 발동이 하나라도 있나. 없으면 토글을 감춘다 — 켜도 목록이 비기만 한다.</summary>
+    public bool HasCooldownStarts { get => _hasCooldownStarts; private set => Set(ref _hasCooldownStarts, value); }
 
     private bool _hasGraph;
 
@@ -222,8 +323,17 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
             Skills.Clear();
             Buffs.Clear();
             Debuffs.Clear();
+            _buffSections = [];
             HasBuffs = false;
             HasDebuffs = false;
+            HasPartyBuffs = false;
+            TimelineCasts.Clear();
+            TimelineSkills.Clear();
+            TimelineSummaryText = string.Empty;
+            HasTimeline = false;
+            HasCooldownStarts = false;
+            _rebuildTimeline = null;
+            _timelineSignature = long.MinValue;
             Graph = null;
             HasGraph = false;
             _graphSignature = long.MinValue;
@@ -289,8 +399,29 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
             grantedBy[source] = granter;
         }
 
+        // 남이 걸어 준 버프의 시전자 이름. Contributors 는 피해를 낸 사람만 담으므로(딜 0 인 서포터는 없다)
+        // 라이브 전투에서는 얼려 두기 전의 파티 스냅샷으로 보강한다. 저장 전투에는 스냅샷이 실리지 않아
+        // Contributors 만 남고, 못 찾은 uid 는 DetailModel 이 "플레이어 {uid}" 로 떨어뜨린다.
+        Dictionary<int, string> casterNames = new();
+        foreach (User c in report.Contributors)
+        {
+            if (!string.IsNullOrWhiteSpace(c.Nickname))
+            {
+                casterNames[c.Id] = c.Nickname!;
+            }
+        }
+
+        foreach (User member in report.PartySnapshot)
+        {
+            if (!string.IsNullOrWhiteSpace(member.Nickname))
+            {
+                casterNames.TryAdd(member.Id, member.Nickname!);
+            }
+        }
+
         DetailModel model = DetailModel.Compute(
-            skills, own, boss, _uid, user?.Job, contribution, combatMs, proc, metrics, grantedBy);
+            skills, own, boss, _uid, user?.Job, contribution, combatMs, proc, metrics, grantedBy, casterNames,
+            _calc.ResolveSummonOwner);
 
         TotalDamageText = MeterFormat.FormatAmount(model.TotalDamage);
         DpsText = model.CombatMs > 0
@@ -319,9 +450,9 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
         CombatTimeText = $"{(int)span.TotalMinutes}:{span.Seconds:D2}";
 
         ReconcileSkills(model.Skills, model.CombatMs);
-        Rebuild(Buffs, model.Buffs);
+        _buffSections = model.Buffs;
+        RebuildBuffs();
         Rebuild(Debuffs, model.Debuffs);
-        HasBuffs = Buffs.Count > 0;
         HasDebuffs = Debuffs.Count > 0;
 
         // DPS-over-time graph: per-second damage + this player's buff timeline. Prefer the frozen snapshot
@@ -354,6 +485,67 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
         }
 
         HasGraph = series.Length >= 2;
+
+        // 스킬 타임라인. 그래프와 같은 스냅샷-vs-라이브 분기다: 저장된 전투는 얼려 둔 목록을 쓴다
+        // (시전 저장소는 저장 직후 잘리므로 다시 계산하면 기록 재생에서 탭이 통째로 빈다).
+        IReadOnlyList<SkillCastRow> casts = report.SkillCasts.Count > 0
+            ? report.SkillCasts.GetValueOrDefault(_uid) ?? []
+            : _calc.GetSkillCasts(_uid, report.BattleStart, report.BattleEnd);
+
+        long battleStart = report.BattleStart;
+        _rebuildTimeline = () => RebuildTimeline(
+            SkillTimelineModel.Compute(FilterCasts(casts), battleStart));
+
+        long castSig = casts.Count == 0 ? 0L : casts.Count * 1_000_003L + casts[^1].TimestampMs;
+        if (castSig != _timelineSignature)
+        {
+            _timelineSignature = castSig;
+            _rebuildTimeline();
+        }
+
+        HasTimeline = casts.Count >= 2;
+        HasCooldownStarts = casts.Any(c => c.StartsCooldown);
+    }
+
+    private IReadOnlyList<SkillCastRow> FilterCasts(IReadOnlyList<SkillCastRow> casts) =>
+        _timelineCooldownOnly ? casts.Where(c => c.StartsCooldown).ToList() : casts;
+
+    /// <summary>타임라인 두 표를 채운다. 시전 목록은 뒤로만 자라므로, 이미 그린 앞부분이 그대로면 꼬리만
+    /// 붙인다 — 라이브 전투에서 매 틱 수천 줄을 다시 만들지 않기 위해서다.</summary>
+    private void RebuildTimeline(SkillTimelineModel model)
+    {
+        bool canAppend = model.Casts.Count >= TimelineCasts.Count
+            && TimelineCasts.Count > 0
+            && TimelineCasts[0].Matches(model.Casts[0]);
+
+        if (!canAppend)
+        {
+            TimelineCasts.Clear();
+            foreach (SkillCastEntry entry in model.Casts)
+            {
+                TimelineCasts.Add(new SkillCastRowVM(entry));
+            }
+        }
+        else
+        {
+            for (int i = TimelineCasts.Count; i < model.Casts.Count; i++)
+            {
+                TimelineCasts.Add(new SkillCastRowVM(model.Casts[i]));
+            }
+        }
+
+        // 집계 행은 수십 개 수준이고 매 시전마다 값이 바뀌므로 통째로 다시 만든다.
+        TimelineSkills.Clear();
+        foreach (SkillCastSummaryRow row in model.Skills)
+        {
+            TimelineSkills.Add(new SkillGapRowVM(row));
+        }
+
+        TimelineSummaryText = model.Casts.Count == 0
+            ? string.Empty
+            : $"총 {model.Casts.Count:N0}회 시전 · 스킬 {model.Skills.Count:N0}종"
+              + (model.MedianGapMs is long med ? $" · 시전 간격 중앙값 {med:N0}ms" : string.Empty)
+              + (model.MeanGapMs is long avg ? $" (평균 {avg:N0}ms)" : string.Empty);
     }
 
     private long _graphSignature = long.MinValue;
@@ -443,9 +635,22 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>버프 표를 현재 체크박스 상태로 다시 그린다. <see cref="HasBuffs"/>/<see cref="HasPartyBuffs"/>는
+    /// <b>필터 전</b> 목록으로 판정한다 — 필터 결과로 탭을 껐다가는 그 탭을 채울 체크박스가 그 안에 갇힌다.</summary>
+    private void RebuildBuffs()
+    {
+        Rebuild(
+            Buffs,
+            _showPartyBuffs ? _buffSections : _buffSections.Where(s => !s.FromOtherPlayers).ToList());
+        HasBuffs = _buffSections.Any(s => s.Rows.Count > 0);
+        HasPartyBuffs = _buffSections.Any(s => s.FromOtherPlayers && s.Rows.Count > 0);
+    }
+
     // Sections are flattened into one table: the section label rides along as each row's subtitle
-    // ("내 버프" / "파티원 버프" / "그 외", or the caster's name for boss debuffs), which is how the stats
-    // site presents the same data. Keeping the label per row lets the rows sort as one list.
+    // ("내 버프" / "그 외" / "남이 준 버프"), except that a 남이 준 버프 row shows its CASTER's name instead —
+    // repeating one section label down forty raid rows says nothing, and "who gave me this" is the only new
+    // fact that row carries. Boss debuffs come through with an empty label (one caster: this player).
+    // Keeping the label per row lets the rows sort as one list, which is how the stats site presents them.
     private static void Rebuild(ObservableCollection<BuffRowVM> target, IReadOnlyList<DetailBuffSection> sections)
     {
         target.Clear();
@@ -453,7 +658,7 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
         {
             foreach (DetailBuffRow r in s.Rows)
             {
-                target.Add(new BuffRowVM(r, s.Label));
+                target.Add(new BuffRowVM(r, r.CasterName ?? s.Label));
             }
         }
     }
@@ -664,8 +869,8 @@ public sealed class BuffRowVM
 
     public string Name { get; }
 
-    /// <summary>The section this row came from ("내 버프" / "그 외"). Empty for boss debuffs — every row there
-    /// has the same caster (this player), so a subtitle would repeat on every line.</summary>
+    /// <summary>이 행의 부제. 보통은 섹션 이름("내 버프" / "그 외")이고, 「남이 준 버프」 행에서는 <b>시전자
+    /// 이름</b>이다. 보스 디버프는 비어 있다 — 거기 모든 행의 시전자가 이 플레이어 하나라 부제가 매 줄 반복된다.</summary>
     public string Subtitle { get; }
 
     public Visibility SubtitleVisibility => Subtitle.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
@@ -677,6 +882,89 @@ public sealed class BuffRowVM
     public Brush BarBrush { get; }
     public string Description { get; }
     public ImageSource? IconSource { get; }
+}
+
+/// <summary>타임라인 한 줄: 시전 1회.</summary>
+public sealed class SkillCastRowVM
+{
+    private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+
+    public SkillCastRowVM(SkillCastEntry entry)
+    {
+        OffsetMs = entry.OffsetMs;
+        Code = entry.Code;
+        TimeText = FormatOffset(entry.OffsetMs);
+        Name = entry.Name;
+        GapText = entry.GapFromPrevMs is long g ? g.ToString("N0", Inv) + "ms" : "-";
+        IconSource = JoinIcons.Skill(entry.Code);
+        CooldownMarkVisibility = entry.StartsCooldown ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    internal long OffsetMs { get; }
+
+    internal int Code { get; }
+
+    /// <summary>같은 시전을 가리키는 행인가 — 라이브 갱신에서 "앞부분은 그대로다"를 확인하는 데만 쓴다.</summary>
+    internal bool Matches(SkillCastEntry entry) => entry.OffsetMs == OffsetMs && entry.Code == Code;
+
+    /// <summary>전투 시작 기준 경과. 오프너는 음수라 부호를 그대로 보여 준다.</summary>
+    public string TimeText { get; }
+
+    public string Name { get; }
+
+    /// <summary>직전 시전과의 간격. 첫 줄은 "-".</summary>
+    public string GapText { get; }
+
+    /// <summary>쿨타임을 돌린 발동에만 붙는 점. 서버가 보낸 사실이라 "확실히 나갔다"로 읽어도 된다 —
+    /// 다만 점이 없다고 안 나간 것은 아니다(쿨 없는 스킬은 돌릴 쿨이 없다).</summary>
+    public Visibility CooldownMarkVisibility { get; }
+
+    public ImageSource? IconSource { get; }
+
+    private static string FormatOffset(long ms)
+    {
+        string sign = ms < 0 ? "-" : string.Empty;
+        long abs = Math.Abs(ms);
+        long minutes = abs / 60_000;
+        double seconds = (abs % 60_000) / 1000.0;
+        return $"{sign}{minutes}:{seconds.ToString("00.0", Inv)}";
+    }
+}
+
+/// <summary>스킬 한 종류의 사용 간격 집계 한 줄.</summary>
+public sealed class SkillGapRowVM
+{
+    private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+
+    public SkillGapRowVM(SkillCastSummaryRow row)
+    {
+        Name = row.Name;
+        CountText = row.Count.ToString("N0", Inv);
+        // 쿨을 돌린 발동이 하나도 없으면 칸을 비운다 — 0 을 찍으면 "0번 나갔다"로 읽히는데, 쿨타임이 없는
+        // 스킬에는 애초에 돌릴 쿨이 없다는 뜻일 뿐이다.
+        CooldownCountText = row.CooldownStartCount > 0 ? row.CooldownStartCount.ToString("N0", Inv) : "-";
+        MeanText = Ms(row.MeanGapMs);
+        MedianText = Ms(row.MedianGapMs);
+        MinText = Ms(row.MinGapMs);
+        MaxText = Ms(row.MaxGapMs);
+        IconSource = JoinIcons.Skill(row.Code);
+    }
+
+    public string Name { get; }
+    public string CountText { get; }
+
+    /// <summary>그중 쿨타임을 돌린 발동 수. 쿨타임이 있는 스킬이면 이 수가 "진짜 나간 횟수"다.</summary>
+    public string CooldownCountText { get; }
+
+    /// <summary>같은 스킬의 연속 시전 사이 평균 간격. 한 번만 쓴 스킬은 "-".</summary>
+    public string MeanText { get; }
+
+    public string MedianText { get; }
+    public string MinText { get; }
+    public string MaxText { get; }
+    public ImageSource? IconSource { get; }
+
+    private static string Ms(long? value) => value is long v ? v.ToString("N0", Inv) + "ms" : "-";
 }
 
 /// <summary>Render-ready DPS-over-time graph the detail window hand-draws on a Canvas. <see cref="PerSecond"/>

@@ -147,6 +147,44 @@
             </Setter>
         </Style>
 
+        <!-- 표 위의 표시 옵션 체크박스. 이 창은 설정창과 달리 Skin.Controls.xaml 을 일부러 병합하지 않으므로
+             (SkinManager.cs: 오버레이/상세/색선택기는 각자의 손그림 룩을 유지한다는 결정) 여기서 직접 그린다.
+             ⚠️ "정리" 삼아 Skin.Controls.xaml 병합으로 바꾸지 말 것 — 그건 문서화된 결정을 뒤집는 일이다. -->
+        <Style x:Key="DetailCheck" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="{DynamicResource Skin.MutedFg}"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Border x:Name="b" Width="15" Height="15" CornerRadius="4" VerticalAlignment="Center"
+                                    Background="{DynamicResource Skin.ControlBg}"
+                                    BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1">
+                                <TextBlock x:Name="g" Text="&#x2713;" FontSize="10.5" FontWeight="Bold"
+                                           Foreground="{DynamicResource Skin.Accent}" Visibility="Collapsed"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ContentPresenter x:Name="c" Margin="7,0,0,0" VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"
+                                              TextElement.FontSize="{TemplateBinding FontSize}"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="g" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource Skin.Accent}"/>
+                                <Setter TargetName="c" Property="TextElement.Foreground" Value="{DynamicResource Skin.Fg}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{DynamicResource Skin.RowHover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 특화 (specialization) pips: five dots per skill, active slots lit. Bound to a list of SpecPipVM. -->
         <ItemsPanelTemplate x:Key="SpecPipPanel">
             <StackPanel Orientation="Horizontal"/>
@@ -167,7 +205,7 @@
         </Style>
 
         <!-- Buff/debuff uptime table. Bound to a flat list of BuffRowVM; each row carries its section
-             ("내 버프" / "파티원 버프" / "그 외", or the caster) as a subtitle, like the stats site. -->
+             ("내 버프" / "그 외") as a subtitle — or, for a 「남이 준 버프」 row, that buff's caster. -->
         <DataTemplate x:Key="UptimeTable">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
               <StackPanel>
@@ -480,7 +518,16 @@
                     <!-- ══════════════ 버프 업타임 ══════════════ -->
                     <TabItem Style="{StaticResource Pill}" IsEnabled="{Binding HasBuffs}">
                         <TabItem.Header>버프 업타임</TabItem.Header>
-                        <ContentControl Content="{Binding Buffs}" ContentTemplate="{StaticResource UptimeTable}"/>
+                        <DockPanel>
+                            <!-- 남이 걸어 준 버프는 기본적으로 접혀 있다. 이 체크박스가 그 섹션을 표 맨 뒤에
+                                 붙였다 뗐다 한다(설정에 저장돼 다음에 연 상세창에도 이어진다).
+                                 남이 준 버프가 하나도 없는 전투(솔로)에서는 통째로 감춘다. -->
+                            <CheckBox DockPanel.Dock="Top" Style="{StaticResource DetailCheck}"
+                                      Margin="2,0,0,8" Content="남이 준 버프도 보기"
+                                      IsChecked="{Binding ShowPartyBuffs, Mode=TwoWay}"
+                                      Visibility="{Binding HasPartyBuffs, Converter={StaticResource BoolToVis}}"/>
+                            <ContentControl Content="{Binding Buffs}" ContentTemplate="{StaticResource UptimeTable}"/>
+                        </DockPanel>
                     </TabItem>
 
                     <!-- ══════════════ 디버프 업타임 ══════════════ -->
@@ -521,6 +568,174 @@
                                     BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1" ClipToBounds="True">
                                 <Canvas x:Name="GraphCanvas" Background="Transparent" ClipToBounds="True"/>
                             </Border>
+                        </DockPanel>
+                    </TabItem>
+
+
+                    <!-- ══════════════ 스킬 타임라인 ══════════════ -->
+                    <TabItem Style="{StaticResource Pill}" IsEnabled="{Binding HasTimeline}">
+                        <TabItem.Header>스킬 타임라인</TabItem.Header>
+                        <DockPanel>
+                            <!-- 같은 스킬의 연속 사용 간격이 이 탭의 본론이다. 위의 전역 수치는 입력 밀도이지
+                                 "얼마나 자주 눌렀나"가 아니다 — 연계 스킬이 같은 ms 에 함께 나가기 때문이다. -->
+                            <TextBlock DockPanel.Dock="Top" Text="{Binding TimelineSummaryText}"
+                                       Foreground="{DynamicResource Skin.MutedFg}" FontSize="11.5"
+                                       Margin="2,0,0,5" TextWrapping="Wrap"/>
+
+                            <!-- 점이 무엇인지 그 자리에서 말해 준다. 표식만 있고 설명이 없으면 읽을 수 없다. -->
+                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="2,0,0,8">
+                                <Ellipse Width="5" Height="5" VerticalAlignment="Center"
+                                         Fill="{StaticResource ValueMagenta}"/>
+                                <TextBlock Margin="6,0,0,0" FontSize="11" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource Skin.MutedFg}"
+                                           Text="= 쿨타임을 돌린 발동 (확실히 나간 시전). 점이 없다고 안 나간 건 아닙니다 — 쿨타임이 없는 스킬은 돌릴 쿨이 없습니다."/>
+                                <!-- 일부 스킬은 활성화 1회에 프레임을 둘 낸다(시전→적중으로 보이는 350ms 짝).
+                                     그걸 시간으로 접으면 임의의 임계값이 필요하고, 그 값이 매크로 케이던스를
+                                     지운다. 대신 서버가 준 사실 하나로 거르는 렌즈를 준다. -->
+                                <CheckBox Style="{StaticResource DetailCheck}" Margin="14,0,0,0"
+                                          Content="쿨 시작만 보기"
+                                          IsChecked="{Binding TimelineCooldownOnly, Mode=TwoWay}"
+                                          Visibility="{Binding HasCooldownStarts, Converter={StaticResource BoolToVis}}"
+                                          ToolTip="쿨타임을 돌린 발동만 남깁니다. 한 번 눌렀는데 프레임이 둘 오는 스킬을 걸러내는 데 씁니다. ⚠️ 쿨타임이 없는 스킬(속사·저격 등)은 통째로 사라집니다."/>
+                            </StackPanel>
+                            <Grid>
+                                <!-- 오른쪽(시전 순서)은 고정폭, 왼쪽(집계)이 남는 폭을 다 가져간다.
+                                     창을 좁혀도 왼쪽의 최소/최대 칸이 잘리지 않을 만큼만 남긴다. -->
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MinWidth="462"/>
+                                    <ColumnDefinition Width="12"/>
+                                    <ColumnDefinition Width="344"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- 왼쪽: 스킬별 사용 간격 집계 -->
+                                <DockPanel Grid.Column="0">
+                                    <Border DockPanel.Dock="Top" Background="{DynamicResource Skin.TableHeadBg}"
+                                            CornerRadius="5" Margin="0,0,0,5">
+                                        <Grid Margin="10,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" MinWidth="110"/>
+                                                <ColumnDefinition Width="48"/>
+                                                <ColumnDefinition Width="48"/>
+                                                <ColumnDefinition Width="64"/>
+                                                <ColumnDefinition Width="64"/>
+                                                <ColumnDefinition Width="64"/>
+                                                <ColumnDefinition Width="64"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="스킬" Style="{StaticResource Head}" TextAlignment="Left"/>
+                                            <TextBlock Grid.Column="1" Text="횟수" Style="{StaticResource Head}"/>
+                                            <TextBlock Grid.Column="2" Text="쿨" Style="{StaticResource Head}"
+                                                       ToolTip="그중 쿨타임을 실제로 돌린 발동 수. 서버가 보낸 사실이라 &quot;확실히 나갔다&quot;로 읽어도 됩니다. 쿨타임이 없는 스킬은 돌릴 쿨이 없어 &quot;-&quot; 로 남습니다."/>
+                                            <TextBlock Grid.Column="3" Text="평균" Style="{StaticResource Head}"/>
+                                            <TextBlock Grid.Column="4" Text="중앙값" Style="{StaticResource Head}"/>
+                                            <TextBlock Grid.Column="5" Text="최소" Style="{StaticResource Head}"/>
+                                            <TextBlock Grid.Column="6" Text="최대" Style="{StaticResource Head}"/>
+                                        </Grid>
+                                    </Border>
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl ItemsSource="{Binding TimelineSkills}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border CornerRadius="5" Padding="10,6" Margin="0,1"
+                                                            Background="{DynamicResource Skin.RowBg}">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" MinWidth="110"/>
+                                                                <ColumnDefinition Width="48"/>
+                                                                <ColumnDefinition Width="48"/>
+                                                                <ColumnDefinition Width="64"/>
+                                                                <ColumnDefinition Width="64"/>
+                                                                <ColumnDefinition Width="64"/>
+                                                                <ColumnDefinition Width="64"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <Image Source="{Binding IconSource}" Width="22" Height="22"
+                                                                       Margin="0,0,9,0" VerticalAlignment="Center"/>
+                                                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Skin.Fg}"
+                                                                           FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                            </StackPanel>
+                                                            <TextBlock Grid.Column="1" Text="{Binding CountText}" Style="{StaticResource Cell}"/>
+                                                            <TextBlock Grid.Column="2" Text="{Binding CooldownCountText}" Style="{StaticResource CellBold}"
+                                                                       Foreground="{StaticResource ValueMagenta}"/>
+                                                            <TextBlock Grid.Column="3" Text="{Binding MeanText}" Style="{StaticResource CellBold}"
+                                                                       Foreground="{StaticResource ValueCyan}"/>
+                                                            <TextBlock Grid.Column="4" Text="{Binding MedianText}" Style="{StaticResource Cell}"/>
+                                                            <TextBlock Grid.Column="5" Text="{Binding MinText}" Style="{StaticResource Cell}"/>
+                                                            <TextBlock Grid.Column="6" Text="{Binding MaxText}" Style="{StaticResource Cell}"/>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </DockPanel>
+
+                                <!-- 오른쪽: 시전 순서와 그 사이 간격. 긴 전투는 수천 줄이라 가상화한다. -->
+                                <DockPanel Grid.Column="2">
+                                    <Border DockPanel.Dock="Top" Background="{DynamicResource Skin.TableHeadBg}"
+                                            CornerRadius="5" Margin="0,0,0,5">
+                                        <Grid Margin="10,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="14"/>
+                                                <ColumnDefinition Width="56"/>
+                                                <ColumnDefinition Width="*" MinWidth="110"/>
+                                                <ColumnDefinition Width="78"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="1" Text="시각" Style="{StaticResource Head}" TextAlignment="Left"/>
+                                            <TextBlock Grid.Column="2" Text="스킬" Style="{StaticResource Head}" TextAlignment="Left"/>
+                                            <TextBlock Grid.Column="3" Text="직전 간격" Style="{StaticResource Head}"/>
+                                        </Grid>
+                                    </Border>
+                                    <ItemsControl ItemsSource="{Binding TimelineCasts}"
+                                                  VirtualizingStackPanel.IsVirtualizing="True"
+                                                  VirtualizingStackPanel.VirtualizationMode="Recycling">
+                                        <ItemsControl.Template>
+                                            <ControlTemplate TargetType="ItemsControl">
+                                                <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto"
+                                                              HorizontalScrollBarVisibility="Disabled">
+                                                    <ItemsPresenter/>
+                                                </ScrollViewer>
+                                            </ControlTemplate>
+                                        </ItemsControl.Template>
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <VirtualizingStackPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="5" Padding="10,4" Margin="0,1"
+                                                        Background="{DynamicResource Skin.RowBg}">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="14"/>
+                                                            <ColumnDefinition Width="56"/>
+                                                            <ColumnDefinition Width="*" MinWidth="110"/>
+                                                            <ColumnDefinition Width="78"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <!-- 쿨타임을 돌린 발동에만 붙는 점. 서버가 보낸 사실이지 우리 판정이 아니다. -->
+                                                        <Ellipse Grid.Column="0" Width="5" Height="5" VerticalAlignment="Center"
+                                                                 HorizontalAlignment="Left" Fill="{StaticResource ValueMagenta}"
+                                                                 Visibility="{Binding CooldownMarkVisibility}"
+                                                                 ToolTip="이 발동이 쿨타임을 돌렸습니다 (확실히 나간 시전)"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding TimeText}" Style="{StaticResource Cell}"
+                                                                   TextAlignment="Left" FontSize="12"/>
+                                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <Image Source="{Binding IconSource}" Width="18" Height="18"
+                                                                   Margin="0,0,7,0" VerticalAlignment="Center"/>
+                                                            <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Skin.Fg}"
+                                                                       FontSize="12" VerticalAlignment="Center"
+                                                                       TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="3" Text="{Binding GapText}" Style="{StaticResource Cell}"
+                                                                   FontSize="12"/>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </DockPanel>
+                            </Grid>
                         </DockPanel>
                     </TabItem>
 
