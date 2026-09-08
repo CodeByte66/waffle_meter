@@ -21,11 +21,13 @@ public readonly record struct WeeklyContentInfo(
     IReadOnlyList<int> FinalBossCodes);
 
 /// <summary>
-/// The three 성역 raids that reset weekly, one clear per character each.
+/// The 성역 raids that reset weekly, one clear per character each.
 /// <para>Sourced from the client's own <c>Contents_Ticket_&lt;Dungeon&gt;_Clear</c> currencies
 /// ("[성역] &lt;던전&gt; 최종 보스 처치 횟수"), whose Korean description is literally
 /// <i>"최종 보스 처치 시 횟수가 차감됩니다"</i>. 무스펠의 성배 gets ONE entry because the client has one such
-/// currency for it — 보통(620022) and 어려움(620021) share the weekly count.</para>
+/// currency for it — 보통(620022) and 어려움(620021) share the weekly count. 비탄의 설원 is the same shape with
+/// three difficulties (쉬움 620027 / 보통 620026 / 어려움 620025) behind the one
+/// <c>Contents_Ticket_FrozenLament_Clear</c>.</para>
 /// </summary>
 public static class WeeklyContentCatalog
 {
@@ -37,6 +39,11 @@ public static class WeeklyContentCatalog
         new("rud", WeeklyContentKind.Rudra, "심연의 재련 : 루드라", "루드라", "content_rudra.png", [2301014]),
         new("ero", WeeklyContentKind.ErosionPurifier, "침식의 정화소", "정화소", "content_erosion.png", [2301208]),
         new("mus", WeeklyContentKind.MuspelGrail, "무스펠의 성배", "성배", "content_muspel.png", [2301090, 2301060]),
+
+        // 델트라스는 한 전투 안에서 액터가 갈리는 2페이즈 보스다. 여기 적는 건 차감이 걸린 2페이즈 코드뿐 —
+        // 1페이즈(2301163/2301143/2301113)도 실제로 딜을 받지만 그 죽음은 페이즈 전환이지 클리어가 아니다.
+        // (encounters.json 은 그 셋을 같은 보스의 별칭으로 함께 싣는다: 전투 라벨링은 두 페이즈를 다 알아야 한다.)
+        new("lam", WeeklyContentKind.FrozenLament, "비탄의 설원", "설원", "content_lament.png", [2301165, 2301145, 2301115]),
     ];
 
     public static WeeklyContentInfo? BySlug(string? slug) =>

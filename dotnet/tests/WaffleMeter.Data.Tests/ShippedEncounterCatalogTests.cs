@@ -242,6 +242,60 @@ public sealed class ShippedEncounterCatalogTests
         Assert.Equal(boss, info.Value.BossName);
     }
 
+    /// <summary>비탄의 설원 (2026-09-09 패치) — the 성역 raid added with client VersionInfo 107. Same sourcing as
+    /// the 2026-08-12 pair: every code is a <c>NpcSubType::HeroMonster</c> out of the map's own
+    /// <c>MapData.SpawnInfoList</c> (FrozenLament_03/02/01 = dungeonId 620027/620026/620025).
+    /// <para>⚠️ The difficulty runs BACKWARDS in the ids — 620025 is 어려움 and 620027 is 쉬움, the second raid to
+    /// do this after 무스펠의 성배 (620021 어려움 &lt; 620022 보통). A test that assumes ascending = harder would
+    /// pass on every other dungeon and mislabel this one.</para>
+    /// <para>⚠️ 델트라스 owns TWO codes per difficulty because the fight swaps actors at phase 2. The reward
+    /// table's <c>FinalBossName</c> points at <c>_V01_02</c> (…165/…145/…115), but <c>_V01_01</c>
+    /// (…163/…143/…113) has <c>bCanBeAttacked</c> and <c>bAutoDamageAnalyze</c> set and really does take damage —
+    /// unlike 무스펠 칼드릭스's invulnerable dummy 2301061. So the phase-1 codes are aliases of the same boss, and
+    /// a battle that starts on one must not come out unlabelled or under a second name.</para></summary>
+    [Theory]
+    // 쉬움 — FrozenLament_03, dungeonId 620027
+    [InlineData(2301162, "쉬움", "귀환자 트리톤")]
+    [InlineData(2301165, "쉬움", "델트라스")]
+    [InlineData(2301163, "쉬움", "델트라스")]  // 1페이즈 별칭
+    // 보통 — FrozenLament_02, dungeonId 620026
+    [InlineData(2301142, "보통", "귀환자 트리톤")]
+    [InlineData(2301145, "보통", "델트라스")]
+    [InlineData(2301143, "보통", "델트라스")]  // 1페이즈 별칭
+    // 어려움 — FrozenLament_01, dungeonId 620025
+    [InlineData(2301112, "어려움", "귀환자 트리톤")]
+    [InlineData(2301115, "어려움", "델트라스")]
+    [InlineData(2301113, "어려움", "델트라스")]  // 1페이즈 별칭
+    public void The_frozen_lament_sanctuary_is_catalogued(int mobCode, string variant, string boss)
+    {
+        EncounterInfo? info = Shipped().Lookup(mobCode);
+
+        Assert.NotNull(info);
+        Assert.Equal("비탄의 설원", info!.Value.DungeonName);
+        Assert.Equal(variant, info.Value.VariantLabel);
+        Assert.Equal(boss, info.Value.BossName);
+    }
+
+    /// <summary>Nailing the phase-1 aliases down as aliases, not as a lookalike second encounter: a battle that
+    /// opens on 델트라스 1페이즈 has to upload under the SAME dungeon and difficulty as one that opens on phase 2,
+    /// or the same clear lands in two buckets depending on which actor got hit first.</summary>
+    [Theory]
+    [InlineData(2301163, 2301165)]
+    [InlineData(2301143, 2301145)]
+    [InlineData(2301113, 2301115)]
+    public void Both_deltras_phases_resolve_to_the_same_encounter(int phase1, int phase2)
+    {
+        EncounterCatalog catalog = Shipped();
+
+        EncounterInfo first = catalog.Lookup(phase1)!.Value;
+        EncounterInfo second = catalog.Lookup(phase2)!.Value;
+
+        Assert.Equal(second.DungeonName, first.DungeonName);
+        Assert.Equal(second.VariantLabel, first.VariantLabel);
+        Assert.Equal(second.BossName, first.BossName);
+        Assert.True(catalog.IsSupported(phase1));  // the upload gate must not drop a phase-1 opener
+    }
+
     /// <summary>The gate has to be tight where it matters: a field boss must NOT be uploadable, or we are back
     /// to spending a request the server answers 400 for.</summary>
     [Fact]

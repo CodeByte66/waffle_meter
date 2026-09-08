@@ -40957,5 +40957,415 @@
     "code": 2921511,
     "name": "오만의 아티엘",
     "boss": false
+  },
+  {
+    "code": 2110679,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110680,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110681,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110682,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110683,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110684,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110685,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110686,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110687,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110688,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110689,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110690,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110691,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110692,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2110693,
+    "name": "영광의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2301101,
+    "name": "델트라스의 얼어붙은 심장",
+    "boss": false
+  },
+  {
+    "code": 2301102,
+    "name": "파괴의 아칸 정예병",
+    "boss": false
+  },
+  {
+    "code": 2301103,
+    "name": "파괴의 아칸 수호성",
+    "boss": false
+  },
+  {
+    "code": 2301104,
+    "name": "파괴의 아칸 검성",
+    "boss": false
+  },
+  {
+    "code": 2301105,
+    "name": "파괴의 아칸 병사",
+    "boss": false
+  },
+  {
+    "code": 2301106,
+    "name": "모래폭풍 레기온 정예병",
+    "boss": false
+  },
+  {
+    "code": 2301107,
+    "name": "모래폭풍 레기온 십부장",
+    "boss": false
+  },
+  {
+    "code": 2301108,
+    "name": "모래폭풍 레기온 군단병",
+    "boss": false
+  },
+  {
+    "code": 2301109,
+    "name": "모래폭풍 레기온 검성",
+    "boss": false
+  },
+  {
+    "code": 2301110,
+    "name": "모래폭풍 레기온 수호성",
+    "boss": false
+  },
+  {
+    "code": 2301111,
+    "name": "방어포",
+    "boss": false
+  },
+  {
+    "code": 2301112,
+    "name": "귀환자 트리톤",
+    "boss": true
+  },
+  {
+    "code": 2301113,
+    "name": "델트라스",
+    "boss": true
+  },
+  {
+    "code": 2301114,
+    "name": "환영 폭탄",
+    "boss": false
+  },
+  {
+    "code": 2301115,
+    "name": "델트라스",
+    "boss": true
+  },
+  {
+    "code": 2301119,
+    "name": "온기의 화로",
+    "boss": false
+  },
+  {
+    "code": 2301131,
+    "name": "델트라스의 얼어붙은 심장",
+    "boss": false
+  },
+  {
+    "code": 2301132,
+    "name": "파괴의 아칸 정예병",
+    "boss": false
+  },
+  {
+    "code": 2301133,
+    "name": "파괴의 아칸 수호성",
+    "boss": false
+  },
+  {
+    "code": 2301134,
+    "name": "파괴의 아칸 검성",
+    "boss": false
+  },
+  {
+    "code": 2301135,
+    "name": "파괴의 아칸 병사",
+    "boss": false
+  },
+  {
+    "code": 2301136,
+    "name": "모래폭풍 레기온 정예병",
+    "boss": false
+  },
+  {
+    "code": 2301137,
+    "name": "모래폭풍 레기온 십부장",
+    "boss": false
+  },
+  {
+    "code": 2301138,
+    "name": "모래폭풍 레기온 군단병",
+    "boss": false
+  },
+  {
+    "code": 2301139,
+    "name": "모래폭풍 레기온 검성",
+    "boss": false
+  },
+  {
+    "code": 2301140,
+    "name": "모래폭풍 레기온 수호성",
+    "boss": false
+  },
+  {
+    "code": 2301141,
+    "name": "방어포",
+    "boss": false
+  },
+  {
+    "code": 2301142,
+    "name": "귀환자 트리톤",
+    "boss": true
+  },
+  {
+    "code": 2301143,
+    "name": "델트라스",
+    "boss": true
+  },
+  {
+    "code": 2301144,
+    "name": "환영 폭탄",
+    "boss": false
+  },
+  {
+    "code": 2301145,
+    "name": "델트라스",
+    "boss": true
+  },
+  {
+    "code": 2301151,
+    "name": "델트라스의 얼어붙은 심장",
+    "boss": false
+  },
+  {
+    "code": 2301152,
+    "name": "파괴의 아칸 정예병",
+    "boss": false
+  },
+  {
+    "code": 2301153,
+    "name": "파괴의 아칸 수호성",
+    "boss": false
+  },
+  {
+    "code": 2301154,
+    "name": "파괴의 아칸 검성",
+    "boss": false
+  },
+  {
+    "code": 2301155,
+    "name": "파괴의 아칸 병사",
+    "boss": false
+  },
+  {
+    "code": 2301156,
+    "name": "모래폭풍 레기온 정예병",
+    "boss": false
+  },
+  {
+    "code": 2301157,
+    "name": "모래폭풍 레기온 십부장",
+    "boss": false
+  },
+  {
+    "code": 2301158,
+    "name": "모래폭풍 레기온 군단병",
+    "boss": false
+  },
+  {
+    "code": 2301159,
+    "name": "모래폭풍 레기온 검성",
+    "boss": false
+  },
+  {
+    "code": 2301160,
+    "name": "모래폭풍 레기온 수호성",
+    "boss": false
+  },
+  {
+    "code": 2301161,
+    "name": "방어포",
+    "boss": false
+  },
+  {
+    "code": 2301162,
+    "name": "귀환자 트리톤",
+    "boss": true
+  },
+  {
+    "code": 2301163,
+    "name": "델트라스",
+    "boss": true
+  },
+  {
+    "code": 2301164,
+    "name": "환영 폭탄",
+    "boss": false
+  },
+  {
+    "code": 2301165,
+    "name": "델트라스",
+    "boss": true
+  },
+  {
+    "code": 2407118,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407119,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407120,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407121,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407122,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407123,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407124,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407125,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407126,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407127,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407128,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407129,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407130,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407131,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2407132,
+    "name": "긍지의 모노리스",
+    "boss": false
+  },
+  {
+    "code": 2921576,
+    "name": "델트라스",
+    "boss": false
+  },
+  {
+    "code": 2921579,
+    "name": "지켈의 권능",
+    "boss": false
+  },
+  {
+    "code": 2921580,
+    "name": "드라토나 알",
+    "boss": false
+  },
+  {
+    "code": 2921581,
+    "name": "동굴 드라토나 유체",
+    "boss": false
+  },
+  {
+    "code": 2921582,
+    "name": "드라토나 알",
+    "boss": false
+  },
+  {
+    "code": 2921583,
+    "name": "드라토나 덩치",
+    "boss": false
   }
 ]

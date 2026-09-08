@@ -13,6 +13,11 @@ public enum WeeklyContentKind
 
     /// <summary>무스펠의 성배 — 최종 보스 칼드릭스 (보통 2301090 / 어려움 2301060, 횟수 공유).</summary>
     MuspelGrail = 2,
+
+    /// <summary>비탄의 설원 — 최종 보스 델트라스 (쉬움 2301165 / 보통 2301145 / 어려움 2301115, 횟수 공유).
+    /// 2026-09-09 패치 신규. 무스펠과 같은 이유로 한 항목이다: 클라 통화가
+    /// <c>Contents_Ticket_FrozenLament_Clear</c>(ID 90000008) 하나뿐이고 난이도 접미사가 없다.</summary>
+    FrozenLament = 3,
 }
 
 /// <summary>Outcome of decoding one weekly-content ticket record. Like aether, BOTH pools are authoritative:
@@ -55,6 +60,7 @@ public static class WeeklyContentParser
     private const uint RudraId = 90_000_002;
     private const uint ErosionPurifierId = 90_000_004;
     private const uint MuspelGrailId = 90_000_006;
+    private const uint FrozenLamentId = 90_000_008;  // 2026-09-09 패치, ContentsTicket 90000008 (도전 횟수는 90000007)
 
     private const byte MaskNone = 0x00;   // no fields → both pools zero (= already cleared this week)
     private const byte MaskBase = 0x04;   // 기본 수량 only
@@ -65,19 +71,37 @@ public static class WeeklyContentParser
     /// byte run, so it is loose enough to survive the game handing out bonus 처치권.</summary>
     private const int MaxTickets = 64;
 
-    /// <summary>The wire currency id for a dungeon.</summary>
+    /// <summary>The wire currency id for a dungeon. 0 = no id is wired up for this kind, which
+    /// <see cref="TryParse"/> refuses to scan for.
+    /// <para><b>⚠️ No catch-all arm, on purpose.</b> This used to end in <c>_ =&gt; MuspelGrailId</c>, so any kind
+    /// added to the enum without an id here would quietly read 무스펠의 성배's counter — the new raid's chip would
+    /// show another raid's number, with nothing on screen to give it away. Every kind now gets its own arm and an
+    /// unmapped one reads NOTHING; <c>Maps_every_declared_kind_to_a_distinct_currency_id</c> turns the omission
+    /// into a red test instead of a silent misread.</para>
+    /// <para>0 rather than a throw because the whole opcode dispatch shares one try/catch
+    /// (<c>StreamProcessor.OnPacketReceived</c>): an exception raised here would also swallow the 어비스 회랑 parse
+    /// that runs after us on the SAME packet, turning one missing id into two broken features.</para></summary>
     public static uint CurrencyId(WeeklyContentKind kind) => kind switch
     {
         WeeklyContentKind.Rudra => RudraId,
         WeeklyContentKind.ErosionPurifier => ErosionPurifierId,
-        _ => MuspelGrailId,
+        WeeklyContentKind.MuspelGrail => MuspelGrailId,
+        WeeklyContentKind.FrozenLament => FrozenLamentId,
+        _ => 0,
     };
 
     /// <summary>Scan <paramref name="packet"/> from <paramref name="bodyStart"/> for one dungeon's ticket
-    /// record. A 0x610B snapshot carries all three (call once per kind); a 0x610C delta carries one.</summary>
+    /// record. A 0x610B snapshot carries every one of them (call once per kind); a 0x610C delta carries one.</summary>
     public static WeeklyContentParse TryParse(byte[] packet, int bodyStart, WeeklyContentKind kind)
     {
         uint id = CurrencyId(kind);
+        if (id == 0)
+        {
+            // An unmapped kind. Scanning for 00 00 00 00 would false-match on the padding every snapshot is full
+            // of and invent a count, which is worse than reporting nothing.
+            return WeeklyContentParse.None;
+        }
+
         Span<byte> needle = stackalloc byte[4];
         needle[0] = (byte)id;
         needle[1] = (byte)(id >> 8);

@@ -2247,8 +2247,8 @@ public sealed class StreamProcessor
         _sink.Meta("shugokey", ("base", s.Base), ("bonus", s.Bonus), ("total", s.Total));
     }
 
-    /// <summary>주간 성역 '최종 보스 처치 횟수' 3종, 오드·슈고 열쇠와 같은 0x610B/0x610C 패킷에 실려 온다
-    /// (통화 id로 구분). 전체 스냅샷은 셋 다 싣고 델타는 하나만 싣기 때문에 세 번 시도한다 — 실패는 정상이다.
+    /// <summary>주간 성역 '최종 보스 처치 횟수' 4종, 오드·슈고 열쇠와 같은 0x610B/0x610C 패킷에 실려 온다
+    /// (통화 id로 구분). 전체 스냅샷은 전부 싣고 델타는 하나만 싣기 때문에 종류마다 한 번씩 시도한다 — 실패는 정상이다.
     /// <para>델타는 최종 보스 사망 +0.13~0.43초에 도착한다(코퍼스 3세션 실측). 즉 이 훅은 "전투가 끝났다"를
     /// 미터가 판정할 필요가 없다 — 서버가 차감을 알려준다.</para></summary>
     private void ParseWeeklyContent(byte[] packet, int bodyStart, bool fromSnapshot)
@@ -2267,8 +2267,15 @@ public sealed class StreamProcessor
         }
     }
 
+    /// <summary>Every counter the 0x610B/0x610C pair is walked for. ⚠️ A kind missing from HERE is read off the
+    /// wire never — parser and catalog can both be complete and the chip still sits at a permanent 1/1.</summary>
     private static readonly WeeklyContentKind[] WeeklyContentKinds =
-        [WeeklyContentKind.Rudra, WeeklyContentKind.ErosionPurifier, WeeklyContentKind.MuspelGrail];
+    [
+        WeeklyContentKind.Rudra,
+        WeeklyContentKind.ErosionPurifier,
+        WeeklyContentKind.MuspelGrail,
+        WeeklyContentKind.FrozenLament,
+    ];
 
     /// <summary>어비스 회랑 이용 시간(ms) — 오드/주간 성역과 같은 0x610B/0x610C에 통화 id 10000001~10000012로
     /// 실려 온다. 스냅샷은 12개를 전부, 델타는 입장(130000)과 소진(0) 두 순간만 싣는다.

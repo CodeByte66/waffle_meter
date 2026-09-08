@@ -68,14 +68,29 @@ public sealed class WeeklyContentParserTests
         Assert.True(WeeklyContentParser.TryParse(packet, 0, WeeklyContentKind.Rudra).Ok);
         Assert.False(WeeklyContentParser.TryParse(packet, 0, WeeklyContentKind.ErosionPurifier).Ok);
         Assert.False(WeeklyContentParser.TryParse(packet, 0, WeeklyContentKind.MuspelGrail).Ok);
+        Assert.False(WeeklyContentParser.TryParse(packet, 0, WeeklyContentKind.FrozenLament).Ok);
     }
 
     [Theory]
     [InlineData(WeeklyContentKind.Rudra, 90_000_002u)]
     [InlineData(WeeklyContentKind.ErosionPurifier, 90_000_004u)]
     [InlineData(WeeklyContentKind.MuspelGrail, 90_000_006u)]
+    // 비탄의 설원 (2026-09-09 패치): ContentsTicket 90000008 Contents_Ticket_FrozenLament_Clear, 주간 1회 수요일 충전.
+    [InlineData(WeeklyContentKind.FrozenLament, 90_000_008u)]
     public void Maps_each_dungeon_to_its_observed_currency_id(WeeklyContentKind kind, uint expected) =>
         Assert.Equal(expected, WeeklyContentParser.CurrencyId(kind));
+
+    /// <summary>The guard that replaces the old <c>_ =&gt; MuspelGrailId</c> catch-all. That arm meant a kind
+    /// added to the enum without an id of its own read 무스펠의 성배's counter instead — a chip quietly showing
+    /// another raid's number. Adding a dungeon must now either come with its currency id or fail right here.</summary>
+    [Fact]
+    public void Maps_every_declared_kind_to_a_distinct_currency_id()
+    {
+        uint[] ids = Enum.GetValues<WeeklyContentKind>().Select(WeeklyContentParser.CurrencyId).ToArray();
+
+        Assert.DoesNotContain(0u, ids);                       // an unmapped kind reads nothing at all
+        Assert.Equal(ids.Length, ids.Distinct().Count());     // ...and no two kinds read the same counter
+    }
 
     /// <summary>The id must not be matched when it straddles the header — the mask byte would then be read from
     /// outside the body, i.e. from the opcode.</summary>
@@ -110,6 +125,11 @@ public sealed class WeeklyContentParserTests
         "93 03 07 04 81 1D 2C 04 03 00 01 B4 C4 04 04 81 4A 5D 05 04 04 82 4A 5D 05 01 04 83 4A 5D 05 04 04 " +
         "84 4A 5D 05 01 04 85 4A 5D 05 04 04 86 4A 5D 05 01";
 
+    /// <summary>⚠️ Three kinds, not every kind, and it must stay that way: this fixture is a 2026-07-22 capture,
+    /// and 비탄의 설원 (currency 90000008) did not exist until the 2026-09-09 patch. Adding
+    /// <see cref="WeeklyContentKind.FrozenLament"/> here would assert that a byte run absent from the recorded
+    /// packet is present — a red test that says nothing about the parser. Replace the fixture with a post-patch
+    /// snapshot to extend it.</summary>
     [Theory]
     [InlineData(WeeklyContentKind.Rudra)]
     [InlineData(WeeklyContentKind.ErosionPurifier)]

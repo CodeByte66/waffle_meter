@@ -1800,6 +1800,85 @@
      ]
     }
    ]
+  },
+  {
+   "key": "sanctuary-snowfield-of-lament",
+   "category": "성역",
+   "categoryOrd": 3,
+   "name": "비탄의 설원",
+   "variantType": "difficulty",
+   "bosses": [
+    {
+     "index": 1,
+     "name": "귀환자 트리톤"
+    },
+    {
+     "index": 2,
+     "name": "델트라스"
+    }
+   ],
+   "variants": [
+    {
+     "label": "쉬움",
+     "dungeonId": 620027,
+     "difficulty": "쉬움",
+     "stage": null,
+     "mobs": [
+      [
+       2301162,
+       1
+      ],
+      [
+       2301165,
+       2
+      ],
+      [
+       2301163,
+       2
+      ]
+     ]
+    },
+    {
+     "label": "보통",
+     "dungeonId": 620026,
+     "difficulty": "보통",
+     "stage": null,
+     "mobs": [
+      [
+       2301142,
+       1
+      ],
+      [
+       2301145,
+       2
+      ],
+      [
+       2301143,
+       2
+      ]
+     ]
+    },
+    {
+     "label": "어려움",
+     "dungeonId": 620025,
+     "difficulty": "어려움",
+     "stage": null,
+     "mobs": [
+      [
+       2301112,
+       1
+      ],
+      [
+       2301115,
+       2
+      ],
+      [
+       2301113,
+       2
+      ]
+     ]
+    }
+   ]
   }
  ]
 }
