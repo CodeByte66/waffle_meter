@@ -132,4 +132,52 @@ public sealed class StatsSerializationTests
 
         Assert.DoesNotContain("dpsSeries", without);
     }
+
+    /// <summary>Locks the wire names and shape of the judgment block. The server writes its validator against
+    /// these exact keys, and a rename here would strip the block silently — the schema has no strict mode, so
+    /// an unknown key is dropped without an error at either end.</summary>
+    [Fact]
+    public void Self_judgment_block_uses_expected_wire_names_and_array_rows()
+    {
+        var payload = new StatsSelfJudgmentPayload(
+            TargetMobCode: 2301721,
+            EligibleHits: 120,
+            StampAgeP50Ms: 400,
+            FreshHits: 30,
+            Smite: new StatsJudgmentAxisPayload(120, 66, [[82, 2, 120, 66]]),
+            Perfect: new StatsJudgmentAxisPayload(120, 90, [[52, 2, 120, 90]]),
+            Accuracy: new StatsJudgmentAccuracyPayload(120, 4, [[1800, 2, 120, 4]], [[11020001, 120, 4]]),
+            Crit: new StatsJudgmentCritPayload(120, 96, [[3600, 11020001, 120, 96]], [40, 25]),
+            Stats: new StatsSelfJudgmentStatsPayload("full", 31, 391, 320, 5350, 210, 5950));
+
+        string json = StatsJson.Serialize(payload);
+
+        Assert.Contains("\"targetMobCode\":2301721", json);
+        Assert.Contains("\"eligibleHits\":120", json);
+        Assert.Contains("\"stampAgeP50Ms\":400", json);
+        Assert.Contains("\"smite\":{\"n\":120,\"hits\":66,\"bins\":[[82,2,120,66]]}", json);
+        Assert.Contains("\"bySkill\":[[11020001,120,4]]", json);
+        Assert.Contains("\"sw4\":[40,25]", json);
+        Assert.Contains("\"blockPierce256\":210", json);
+        Assert.Contains("\"src\":\"full\"", json);
+        // lateBins is null here and must be omitted, not sent as an empty array.
+        Assert.DoesNotContain("lateBins", json);
+    }
+
+    /// <summary>flaggedHits is the row-level marker that a judgment-aware meter wrote the row, so it must
+    /// serialize even at 0 — while the other counters stay omitted on a party member's row.</summary>
+    [Fact]
+    public void Result_payload_keeps_zero_flagged_hits_and_omits_absent_counters()
+    {
+        string uploader = StatsJson.Serialize(new StatsResultPayload(
+            1, 2, 3.0, 4.0, 5, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 0.0,
+            FlaggedHits: 0, SmiteHits: 0, EligibleDamage: 0L));
+        Assert.Contains("\"flaggedHits\":0", uploader);
+        Assert.Contains("\"eligibleDamage\":0", uploader);
+
+        string party = StatsJson.Serialize(new StatsResultPayload(
+            1, 2, 3.0, 4.0, 5, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 0.0));
+        Assert.DoesNotContain("flaggedHits", party);
+        Assert.DoesNotContain("summonSmiteHits", party);
+    }
 }

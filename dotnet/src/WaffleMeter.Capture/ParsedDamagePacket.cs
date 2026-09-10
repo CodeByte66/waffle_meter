@@ -35,6 +35,13 @@ public sealed class ParsedDamagePacket
     public IReadOnlyList<SpecialDamage> Specials { get; set; } = [];
     public bool Dot { get; set; }
 
+    /// <summary>The local player's judgment stats as of this packet's arrival, stamped by
+    /// <c>DataManager.SaveDamage</c> for the executor's OWN hits only (every other actor's sheet is
+    /// unobtainable — the stat dictionary is broadcast for the local player alone). Default (mask 0) on every
+    /// other packet. See <see cref="JudgmentStatStamp"/> for why this is stamped here rather than read at
+    /// accumulation time.</summary>
+    public JudgmentStatStamp JudgmentStats { get; set; }
+
     /// <summary>Kotlin: <c>isCrit() = type == 3</c>.</summary>
     public bool IsCrit => Type == 3;
 

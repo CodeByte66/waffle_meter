@@ -40,6 +40,11 @@ public sealed class DpsCalculator
     // being re-anchored (StartAnchor caps back-dating) — the dense per-report array is re-based at build time.
     private readonly Dictionary<int, Dictionary<long, long>> _cachedDpsBuckets = new();
 
+    /// <summary>The uploader's own judgment cross-tabs for the battle in progress. Shares
+    /// <see cref="_cachedSkillDetails"/>'s lifecycle exactly — see <see cref="SelfJudgmentAccumulator"/> for
+    /// why any other clearing schedule is a silent bug.</summary>
+    private readonly SelfJudgmentAccumulator _cachedJudgment = new();
+
     private static readonly string[] SummonDamageSkillPrefixes =
     [
         "불의 정령:",
@@ -64,6 +69,7 @@ public sealed class DpsCalculator
         _cachedContributors.Clear();
         _cachedSkillDetails.Clear();
         _cachedDpsBuckets.Clear();
+        _cachedJudgment.Clear();
         _cachedBattleEnd = 0L;
         _cachedBattleStart = 0L;
         _isCachedBattleStartFake = false;
@@ -197,7 +203,8 @@ public sealed class DpsCalculator
     }
 
     private void AccumulateSkillDetail(
-        Dictionary<int, Dictionary<string, AnalyzedSkill>> target, ParsedDamagePacket packet, int actor)
+        Dictionary<int, Dictionary<string, AnalyzedSkill>> target, ParsedDamagePacket packet, int actor,
+        bool folded)
     {
         string skillCode = packet.SkillCode.ToString();
         if (!target.TryGetValue(actor, out Dictionary<string, AnalyzedSkill>? actorSkills))
@@ -229,7 +236,11 @@ public sealed class DpsCalculator
             // A special-flag region exists only for switch-type 5/6/7 (region size ≥ 10); switch-type 4 hits
             // (heals/buffs/passives) have no flag byte, so back/전방/강타/완벽/페리 are unmeasurable on them.
             // Count the flag-bearing hits so those rates use them as the denominator instead of every hit.
-            if ((packet.SwitchVariable & 0x0F) is 5 or 6 or 7) analyzedSkill.FlaggedTimes++;
+            bool flagged = (packet.SwitchVariable & 0x0F) is 5 or 6 or 7;
+            if (flagged) analyzedSkill.FlaggedTimes++;
+            // 막기가 굴러갈 수 있었던 피해. 후방 타격은 구조적으로 막히지 않으므로(실측 0/267,357) 분모에서
+            // 빠져야 한다 — 이 몫이 "명중을 올리면 DPS가 얼마나 오르나"의 분모다.
+            if (flagged && !packet.IsBack) analyzedSkill.EligibleDamage += packet.Damage;
             if (packet.IsCrit) analyzedSkill.CritTimes++;
             // Attack direction comes from the position byte the 07-01 patch added (IsBack/IsFront), NOT the
             // special-flag byte: its raw bit 0x80 (which the old back count used) is a ~45%-incidence proc
@@ -242,6 +253,17 @@ public sealed class DpsCalculator
             if (packet.Specials.Contains(SpecialDamage.PERFECT)) analyzedSkill.PerfectTimes++;
             if (packet.Specials.Contains(SpecialDamage.POWER_SHARD)) analyzedSkill.ShardTimes++;
             if (packet.Loop != 0) analyzedSkill.MultiHitTimes++;
+
+            // 소환수 몫을 접기 전에 따로 센다. ResolveActor 가 이미 주인 uid 로 접어 넣었으므로 여기서 세지
+            // 않으면 사후 분리가 원리적으로 불가능하다 — 소환수 강타율이 주인과 +8.68%p 어긋나고, 그 편향이
+            // 직업과 상관돼 있어 "정령성/치유성은 저항이 다르다"는 가짜 발견을 만든다.
+            if (folded)
+            {
+                analyzedSkill.SummonTimes++;
+                if (flagged) analyzedSkill.SummonFlaggedTimes++;
+                if (packet.Specials.Contains(SpecialDamage.DOUBLE)) analyzedSkill.SummonDoubleTimes++;
+                if (packet.Specials.Contains(SpecialDamage.PERFECT)) analyzedSkill.SummonPerfectTimes++;
+            }
         }
     }
 
@@ -297,7 +319,17 @@ public sealed class DpsCalculator
         }
 
         info.AddDamage(packet.Damage);
-        AccumulateSkillDetail(_cachedSkillDetails, packet, user.Id);
+        // 접힘 판정은 여기서만 할 수 있다. ResolveActor 는 순수 함수(부작용을 넣으면 재생 안전성 추론이
+        // 무너진다)이고, 그 안에서 세면 바로 아래 user == null 분기가 통째로 버리는 패킷까지 세어 과다 차감된다.
+        bool folded = actor != packet.ActorId;
+        AccumulateSkillDetail(_cachedSkillDetails, packet, user.Id, folded);
+
+        // 판정 교차표는 업로더 본인의 접히지 않은 타격만 받는다 — 스탯 스탬프는 본인 시트이므로, 소환수 타격을
+        // 넣으면 한 주체의 발동률을 다른 주체의 스탯과 짝지어 버린다.
+        if (!folded && user.Id == _dm.ExecutorId())
+        {
+            _cachedJudgment.Accumulate(packet, _cachedBattleStart);
+        }
 
         long ts = packet.Timestamp;
 
@@ -713,7 +745,7 @@ public sealed class DpsCalculator
             {
                 int? realActor = ResolveActor(p, data.Contributors);
                 if (realActor == null || !contributorIds.Contains(realActor.Value)) continue;
-                AccumulateSkillDetail(analyzedByActor, p, realActor.Value);
+                AccumulateSkillDetail(analyzedByActor, p, realActor.Value, folded: realActor.Value != p.ActorId);
             }
         }
 
@@ -1234,6 +1266,10 @@ public sealed class DpsCalculator
         _recentData.DpsSeries = dpsSeries;
         _recentData.BuffIntervals = buffIntervals;
         _recentData.SkillCasts = skillCasts;
+        // 판정 교차표도 같은 이유로 여기서 얼린다 — 저장 리포트는 Packets = null 이고 누적기는 다음 전투가
+        // 시작될 때 비워지므로, 여기서 안 얼리면 업로드 시점에 만들 방법이 원리적으로 없다.
+        _recentData.SelfJudgment = _cachedJudgment.Build(
+            _recentData.Target?.Mob.Code ?? 0, _dm.PlayerStats.Current);
         // Freeze AFTER the rates above are on the report: BuildDpsMetrics reads THOSE (plus the skill table
         // passed in) rather than the buff repository, which SaveBattleLog is about to prune. The skill table
         // is handed over explicitly instead of being parked on _recentData.SkillDetailsSnapshot — that field
