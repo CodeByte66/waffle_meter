@@ -127,6 +127,27 @@ public sealed record PlayerStatSheet(
         return flat * (1.0 + (Percent(PlayerStatIds.AccuracyIncreasePercent) ?? 0.0) / 100.0);
     }
 
+    /// <summary>
+    /// 커뮤니티가 <b>'명중컷'</b>을 말할 때 쓰는 수치 = <c>스탯창 명중 + PvE 명중 + 막기 관통</c>.
+    ///
+    /// <para><see cref="AccuracyTotal"/>(스탯창 명중)만으로는 유저가 쓰는 어휘와 어긋난다 — 커뮤니티는 세 항을
+    /// 더한 값을 기준으로 "이 던전은 명중 몇이면 안 막힌다"를 말한다. 통계웹이 발행하는 명중컷도 이 단위로
+    /// 표시되므로, 미터가 같은 합을 보여 줘야 유저가 자기 화면과 발행값을 직접 비교할 수 있다.</para>
+    ///
+    /// <para>⚠️ 이건 <b>표시 단위</b>이지 물리 단위가 아니다. 패킷 실측에서 막기 발동률을 실제로 움직인 것은
+    /// 추가 명중(104) 하나뿐이고, 나머지 항(무기 명중·명중 증가율·PvE 명중·막기 관통)은 한 캐릭터 안에서 상수라
+    /// 효과의 유무를 로컬 데이터로는 가릴 수 없었다 — 컷 값이 그 상수를 통째로 흡수한다. 그래서 추정·저장은
+    /// 원시 104 단위로 하고, 이 합은 화면에 보여 줄 때만 쓴다. (반증된 항은 철벽 관통 449 하나다.)</para>
+    ///
+    /// <para>⚠️ 버프·도핑이 반영된 값이다 — 스탯 사전은 버프 포함 최종치를 싣는다. 마을에서 본 무버프 값과
+    /// 전투 중 값은 다르다.</para>
+    /// </summary>
+    public double? AccuracyCutTotal()
+    {
+        if (AccuracyTotal() is not { } accuracy) return null;
+        return accuracy + (Raw(PlayerStatIds.PveAccuracy) ?? 0) + (Raw(PlayerStatIds.BlockPierce) ?? 0);
+    }
+
     /// <summary>인게임 스탯창의 <b>치명타</b> = <c>기본 치명타 × (1 + 치명타 증가율)</c>. 명중·공격력과 달리
     /// 무기 몫이 따로 없다. 실측: <c>2,278 × 1.595 = 3,633.41</c> vs 스탯창 <b>3,633</b>.</summary>
     public double? CriticalTotal()
@@ -195,6 +216,36 @@ public sealed class PlayerStatStore
                     ? null
                     : new PlayerStatSheet(new Dictionary<int, int>(_values), _updatedAt, _fullSeen);
             }
+        }
+    }
+
+    /// <summary>
+    /// The four judgment stats (강타 443 · 완벽 442 · 추가 명중 104 · 치명타 128/429) as one value-typed
+    /// reading, for stamping onto a damage packet on the capture consumer thread.
+    ///
+    /// <para><b>Why not <see cref="Current"/>.</b> That getter deep-copies the whole dictionary (~85-112
+    /// entries, 1.5-2 KB) inside the lock on every call. Stamping every own hit through it would put
+    /// 20-40 KB/s of gen0 churn on the damage path for data we throw away immediately. This reads five entries
+    /// and allocates nothing.</para>
+    ///
+    /// <para>Returns <c>default</c> (mask 0 = not stamped) when nothing has been captured yet. Missing
+    /// individual stats leave their presence bit clear rather than reporting 0 — see
+    /// <see cref="JudgmentStatStamp"/>.</para>
+    /// </summary>
+    public JudgmentStatStamp JudgmentStats()
+    {
+        lock (_gate)
+        {
+            if (_values.Count == 0) return default;
+
+            int mask = 0;
+            if (_values.TryGetValue(PlayerStatIds.HardHitPercent, out int hardHit)) mask |= JudgmentStatStamp.HasHardHit;
+            if (_values.TryGetValue(PlayerStatIds.PerfectPercent, out int perfect)) mask |= JudgmentStatStamp.HasPerfect;
+            if (_values.TryGetValue(PlayerStatIds.Accuracy, out int accuracy)) mask |= JudgmentStatStamp.HasAccuracy;
+            if (_values.TryGetValue(PlayerStatIds.Critical, out int critical)) mask |= JudgmentStatStamp.HasCritical;
+            if (_values.TryGetValue(PlayerStatIds.CriticalIncreasePercent, out int criticalInc)) mask |= JudgmentStatStamp.HasCriticalInc;
+
+            return new JudgmentStatStamp(mask, hardHit, perfect, accuracy, critical, criticalInc, _updatedAt);
         }
     }
 

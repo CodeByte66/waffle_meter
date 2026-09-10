@@ -35,7 +35,120 @@ public sealed record StatsUploadPayload(
     // uploader's copy so a web that only reads v5 keeps its chart. Same source and same downsampling as the
     // uploader's participant row, so the two never disagree.
     StatsDpsSeriesPayload? DpsSeries = null,
-    IReadOnlyList<StatsSelfBuffIntervalPayload>? SelfBuffIntervals = null);
+    IReadOnlyList<StatsSelfBuffIntervalPayload>? SelfBuffIntervals = null,
+    // The uploader's judgment cross-tabs. Root-scoped, like SelfBuffIntervals and for the same reason: the
+    // participant-fold path merges integer counters by hand and has no rule for a nested block, so a battle
+    // where the uploader's uid split across a zone boundary would lose it silently. Null when the local player
+    // dealt no measurable damage.
+    StatsSelfJudgmentPayload? SelfJudgment = null);
+
+/// <summary>
+/// What the uploader's own hits observed, keyed by the stat they had AT THE MOMENT OF EACH HIT.
+///
+/// <para><b>Why this exists.</b> A boss's 강타 저항 / 막기 / 치명타 저항 are server-side: not on the wire, not in
+/// the client. They are only inferable from "a player with a known stat observed this proc rate against this
+/// boss". Observed rates alone cannot do it — the model is subtractive
+/// (<c>관측 = clamp(내 스탯 − 대상 저항, 0, 1)</c>), so without the attacker's stat there are two unknowns and one
+/// equation. The stat dictionary is broadcast for the LOCAL PLAYER ONLY, which is why this block covers the
+/// uploader alone and why party rows carry nothing new.</para>
+///
+/// <para><b>Why histograms rather than a number.</b> The stats move inside a battle — a measured session ran
+/// 강타 from 52.44% to 103.44% as buffs came and went — so a per-battle mean is both biased (hits are not
+/// spread evenly across that range) and, being a mean, effectively the player's stat. A bucketed cross-tab is
+/// unbiased for the estimator and coarser about the individual.</para>
+/// </summary>
+/// <param name="EligibleHits">Own direct hits that could carry a judgment at all (non-DoT, not folded in from a
+/// summon, switch-type 5/6/7). The shared denominator; each axis's <c>n</c> is this minus hits that had no stat
+/// reading yet, so <c>n / eligibleHits</c> is the coverage of the reading.</param>
+/// <param name="StampAgeP50Ms">Median staleness of the stat reading behind a hit. Bounds a known bias: a buff
+/// lands before the sheet reports it, so some hits carry a pre-buff stat, which pulls the estimate down.</param>
+/// <param name="FreshHits">Hits whose stat reading was ≤500 ms old — a subset large enough to re-fit on and
+/// measure that bias instead of assuming it.</param>
+/// <param name="Trimmed">Which sections were shortened to fit the size budget, comma-separated. Without it
+/// "this player had no such hits" and "we dropped the rows" are indistinguishable.</param>
+public sealed record StatsSelfJudgmentPayload(
+    int TargetMobCode,
+    int EligibleHits,
+    int StampAgeP50Ms,
+    int FreshHits,
+    StatsJudgmentAxisPayload Smite,
+    StatsJudgmentAxisPayload Perfect,
+    StatsJudgmentAccuracyPayload Accuracy,
+    StatsJudgmentCritPayload Crit,
+    StatsSelfJudgmentStatsPayload Stats,
+    string? Trimmed = null);
+
+/// <summary>One proc axis. <c>bins</c> rows are <c>[pct2, pos, n, o]</c> — pct2 is the 2-percentage-point
+/// bucket floor of the driving stat, pos is the facing byte (0 none / 1 back / 2 front), n hits, o procs.
+/// <para><c>sum(bins.n) == n</c> and <c>sum(bins.o) == hits</c> always hold; a violation means the meter
+/// double-counted, which is otherwise symptomless (the ratio stays right, the interval silently narrows).</para>
+/// <para><paramref name="LateBins"/> holds hits past 600 s of combat, empty in every fight measured (longest
+/// 230.6 s). It exists because a client effect drops a target's 강타 저항 by 100%p after ten minutes, which
+/// would change the answer mid-battle if long-form content ever ships.</para></summary>
+public sealed record StatsJudgmentAxisPayload(
+    int N,
+    int Hits,
+    IReadOnlyList<int[]> Bins,
+    IReadOnlyList<int[]>? LateBins = null);
+
+/// <summary>막기 axis. <c>bins</c> rows are <c>[acc25, pos, n, o]</c> (acc25 = 25-point bucket floor of 추가
+/// 명중), o = hits the target blocked.
+/// <para>Back hits cannot be blocked at all — 0 of 267,357 measured, and the client says so outright — so
+/// <c>pos == 1</c> rows are expected to have o = 0 and the server drops them from the denominator. A non-zero
+/// one is evidence the game's rules changed.</para>
+/// <para><paramref name="BySkill"/> rows are <c>[rawSkillCode, n, o]</c>: some skills ignore block entirely
+/// (the client marks 343 of them) and mixing those into the denominator understates the rate. The server learns
+/// which from these counts rather than the meter shipping a catalog that goes stale. Two aggregate rows may
+/// appear for trimmed entries: code 0 = trimmed rows that never blocked, code −1 = trimmed rows that did.</para>
+/// </summary>
+public sealed record StatsJudgmentAccuracyPayload(
+    int N,
+    int Hits,
+    IReadOnlyList<int[]> Bins,
+    IReadOnlyList<int[]> BySkill);
+
+/// <summary>치명타 axis. <c>bins</c> rows are <c>[rating100, rawSkillCode, n, o]</c>, rating100 = the 100-point
+/// bucket floor of <c>기본 치명타 × (1 + 치명타 증가율)</c>.
+/// <para>The skill code is a bin key here and on no other axis, for two measured reasons: guaranteed-crit
+/// skills are 13.6% of boss direct hits and would push the rate above the client's declared 80% cap, and below
+/// that cap the crit rate genuinely differs by skill (chi2/df 2.96, versus 0.63 above it).</para>
+/// <para><paramref name="Sw4"/> is <c>[n, o]</c> for switch-type-4 hits — the ones with no judgment region.
+/// <b>Never merge it into the bins.</b> Two independent measurements of that population disagree with each
+/// other (40.8% vs 63.0%) and both differ structurally from the ~80% the flagged hits sit at, which is evidence
+/// of a different regime rather than noise. It ships so the decision to exclude it stays falsifiable.</para>
+/// </summary>
+public sealed record StatsJudgmentCritPayload(
+    int N,
+    int Hits,
+    IReadOnlyList<int[]> Bins,
+    IReadOnlyList<int> Sw4);
+
+/// <summary>
+/// Judgment-adjacent stats that do not move within a battle, sent once.
+///
+/// <para>These are the terms players add up when they say "명중컷", plus the crit scaling term. The meter
+/// cannot tell whether they enter the game's block calculation: within one character they never change, so
+/// their coefficient is unidentifiable locally and is absorbed into the cut. Only a population that varies them
+/// can separate them, which is the sole reason they are sent. (The one term that WAS testable — 철벽 관통, id
+/// 449 — was measured and rejected, chi2 50.9.)</para>
+///
+/// <para><paramref name="Src"/> carries more weight than it looks. 318/110/256 ride reliably only on a FULL
+/// sheet (0x3649), which the game sends on character/zone load — a session where the meter started after the
+/// game has them missing, and that absence is not random (it tracks how the player launches things). Weight on
+/// this rather than reading an absent value as zero.</para>
+/// </summary>
+/// <param name="Src">"full", "delta", or "none".</param>
+/// <param name="Mask">Presence bits, so "0" and "not captured" stay distinguishable.</param>
+public sealed record StatsSelfJudgmentStatsPayload(
+    string Src,
+    int Mask,
+    int Acc318,
+    int Pve110,
+    int AccInc427,
+    int BlockPierce256,
+    int CritInc429,
+    int? BackCrit100 = null,
+    int? FrontCrit591 = null);
 
 /// <summary>One combatant's per-second damage series. <see cref="Damage"/>[i] = damage dealt during the i-th
 /// sample from battle start, and <see cref="Step"/> = seconds per sample — so sample i covers seconds
@@ -170,7 +283,42 @@ public sealed record StatsResultPayload(
     // omitted it); the web treats an absent frontRate as "no data" (renders "-", never 0%).
     double FrontRate,
     double ParryRate,
-    double BossBlockRate);
+    double BossBlockRate,
+    // ---- raw judgment counters, UPLOADER ROW ONLY (null on every party member's row) ----
+    // The rates above are all the meter has ever sent, and two things are wrong with them for statistical use.
+    // (1) StrongRate/PerfectRate/CritRate/ParryRate divide by directHits, but 강타/완벽/막기 판정 only exist on
+    // flag-bearing hits — the flagged share is a per-character build property (measured 0.717 to 0.997), so the
+    // dilution cannot be corrected after the fact. (2) A rate rounded to one decimal cannot recover its
+    // numerator when the denominator is unknown, and ParryRate in particular censors exactly the boundary the
+    // 명중컷 estimate needs (a real 0.04% reads as 0.0).
+    // These integers make both recoverable without changing the meaning of any existing field.
+    //
+    // FlaggedHits: direct hits that carried a judgment region (switch-type 5/6/7) — the true denominator for
+    // 강타/완벽/막기. ⚠️ Always sent, even as 0: it is also the only reliable marker that a row came from a
+    // judgment-aware meter (clientVersion is not per-row and does not survive report merges).
+    int? FlaggedHits = null,
+    int? SmiteHits = null,
+    int? PerfectHits = null,
+    int? CritHits = null,
+    int? ParryHits = null,
+    //
+    // BackTimes: back hits. Block is structurally impossible from behind (0 of 267,357 measured), so the 막기
+    // denominator is flaggedHits − backTimes. Using flaggedHits alone is off by up to 24.9x — an order
+    // of magnitude worse than the 강타 denominator problem.
+    int? BackTimes = null,
+    //
+    // EligibleDamage: damage dealt by hits that block could have applied to (flag-bearing and not from behind).
+    // The denominator for "how much DPS would more 명중 buy" — measured share of total damage runs 0.118 to
+    // 0.980 by character, so using total damage overstates the gain by up to 8.5x for back-loaded classes.
+    long? EligibleDamage = null,
+    //
+    // Summon*: the summon-attributed share of the counters above. ResolveActor folds a summon's hits onto its
+    // owner, and a summon's proc rate differs from its owner's by a pooled +8.68%p; once folded it cannot be
+    // separated again. Counted before the fold so the server can subtract it from both numerator and
+    // denominator — the bias correlates with class, so leaving it in manufactures class-shaped resistances.
+    int? SummonFlaggedHits = null,
+    int? SummonSmiteHits = null,
+    int? SummonPerfectHits = null);
 
 /// <param name="BackRate">후방 타격률 %. Divides by the FLAG-BEARING hit count, not every hit — a direction is
 /// only measurable on hits that carried a special-flag region, and mixing the others in reads as an

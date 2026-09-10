@@ -37,6 +37,15 @@ public static class PlayerStatIds
     public const int BackCritical = 100;           // 후방 치명타
     public const int SealstoneAdditionalDamage = 69; // 봉혼석 추가 피해
 
+    // ---- 막기 (flat) ----
+    // 🔑 철벽(445)·철벽 관통(449)과 <b>다른 계열</b>이다. usmap 의 EStat 열거형(594 id)이 둘을 따로 선언하고,
+    // 클라 DaevanionNode 의 노드 제목↔스탯 토큰 매핑이 '막기'→Block, '막기 관통'→BlockPierce, '철벽'→IronWall,
+    // '철벽 관통'→IgnoreIronWall 로 1:1 확정한다. 실측으로도 갈린다: 같은 보스를 철벽 관통만 +100 올려 때린
+    // 대조에서 막기 발동률이 움직이지 않아 철벽 관통은 막기 판정의 항으로 기각됐다(chi2=50.9).
+    // 막힌 타격은 피해가 정상의 0.42~0.50배로 깎이며, 와이어에서는 <c>SpecialDamage.PARRY</c> 로 나타난다.
+    public const int Block = 255;                  // 막기
+    public const int BlockPierce = 256;            // 막기 관통
+
     // ---- 주신/기본 스탯 (flat, 포인트) ----
     public const int Might = 1;        // 위력
     public const int Agility = 2;      // 민첩
@@ -120,6 +129,8 @@ public static class PlayerStatIds
         FrontCritical => "전방 치명타",
         BackCritical => "후방 치명타",
         SealstoneAdditionalDamage => "봉혼석 추가 피해",
+        Block => "막기",
+        BlockPierce => "막기 관통",
         Might => "위력",
         Agility => "민첩",
         Knowledge => "지식",

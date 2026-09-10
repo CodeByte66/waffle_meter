@@ -267,7 +267,7 @@ public sealed class StatsPayloadBuilder
             Participants: participantPayloads,
             // ⚠️ 최상위 Result·Buffs 도 접힌 값을 써야 한다. 참가자 행은 접힌 합인데 여기만 한쪽 uid 몫이면
             // 같은 전투에서 업로더의 숫자가 두 군데서 다르게 나간다(skillPayloads/resultRates는 이미 접힌 값).
-            Result: BuildResultPayload(ownFoldedInfo, resultRates),
+            Result: BuildResultPayload(ownFoldedInfo, resultRates, CountJudgments(ownSkills.Values)),
             Skills: skillPayloads,
             Buffs: (folded.Buffs.GetValueOrDefault(ownRepresentativeId)
                     ?? log.BuffRates.GetValueOrDefault(own.Id)
@@ -285,7 +285,8 @@ public sealed class StatsPayloadBuilder
                     ActorIdentity(v.ActorId)))
                 .ToList(),
             DpsSeries: dpsSeries,
-            SelfBuffIntervals: selfBuffIntervals);
+            SelfBuffIntervals: selfBuffIntervals,
+            SelfJudgment: BuildSelfJudgmentPayload(report.SelfJudgment));
 
         return new BuildResult.Payload(payload);
     }
@@ -470,6 +471,11 @@ public sealed class StatsPayloadBuilder
             merged.ShardTimes += add.ShardTimes;
             merged.MultiHitTimes += add.MultiHitTimes;
             merged.FlaggedTimes += add.FlaggedTimes;
+            merged.EligibleDamage += add.EligibleDamage;
+            merged.SummonTimes += add.SummonTimes;
+            merged.SummonFlaggedTimes += add.SummonFlaggedTimes;
+            merged.SummonDoubleTimes += add.SummonDoubleTimes;
+            merged.SummonPerfectTimes += add.SummonPerfectTimes;
             if (merged.RawSkillCode == 0)
             {
                 merged.RawSkillCode = add.RawSkillCode;
@@ -538,7 +544,7 @@ public sealed class StatsPayloadBuilder
                 PartySlot: partySlot,
                 Job: user.Job?.ClassName(),
                 Power: user.Power,
-                Result: BuildResultPayload(info, rates),
+                Result: BuildResultPayload(info, rates, user.Id == ownId ? CountJudgments(skills.Values) : null),
                 Skills: BuildSkillPayloads(skills, totalDamage),
                 Buffs: (folded.Buffs.GetValueOrDefault(user.Id) ?? new List<OperatingData>())
                     .Select(v => ToBuffPayload(
@@ -843,7 +849,8 @@ public sealed class StatsPayloadBuilder
             trial.SkillUpgrade);
     }
 
-    private static StatsResultPayload BuildResultPayload(DpsInformation info, RateSummary rates) => new(
+    private static StatsResultPayload BuildResultPayload(
+        DpsInformation info, RateSummary rates, JudgmentCounts? counts = null) => new(
         TotalDamage: RoundToLong(info.Amount),
         Dps: RoundToLong(info.Dps),
         PartyContribution: OneDecimal(info.Contribution),
@@ -855,7 +862,83 @@ public sealed class StatsPayloadBuilder
         BackRate: rates.BackRate,
         FrontRate: rates.FrontRate,
         ParryRate: rates.ParryRate,
-        BossBlockRate: 0.0);
+        BossBlockRate: 0.0,
+        // 업로더 행에만 실린다. 파티원 행에 넣지 않는 것은 표본을 아껴서가 아니라, 저 정수들이 뜻을 가지려면
+        // 짝이 되는 스탯(강타·명중·치명 수치)이 있어야 하는데 그건 본인 것만 얻을 수 있기 때문이다.
+        FlaggedHits: counts?.FlaggedHits,
+        SmiteHits: counts?.SmiteHits,
+        PerfectHits: counts?.PerfectHits,
+        CritHits: counts?.CritHits,
+        ParryHits: counts?.ParryHits,
+        BackTimes: counts?.BackTimes,
+        EligibleDamage: counts?.EligibleDamage,
+        SummonFlaggedHits: counts?.SummonFlaggedHits,
+        SummonSmiteHits: counts?.SummonSmiteHits,
+        SummonPerfectHits: counts?.SummonPerfectHits);
+
+    /// <summary>The uploader's raw judgment counters, summed over their skill rows.</summary>
+    private sealed record JudgmentCounts(
+        int FlaggedHits,
+        int SmiteHits,
+        int PerfectHits,
+        int CritHits,
+        int ParryHits,
+        int BackTimes,
+        long EligibleDamage,
+        int SummonFlaggedHits,
+        int SummonSmiteHits,
+        int SummonPerfectHits);
+
+    private static JudgmentCounts CountJudgments(IEnumerable<AnalyzedSkill> skillsEnumerable)
+    {
+        List<AnalyzedSkill> skills = skillsEnumerable as List<AnalyzedSkill> ?? skillsEnumerable.ToList();
+        return new JudgmentCounts(
+            FlaggedHits: skills.Sum(s => s.FlaggedTimes),
+            SmiteHits: skills.Sum(s => s.DoubleTimes),
+            PerfectHits: skills.Sum(s => s.PerfectTimes),
+            CritHits: skills.Sum(s => s.CritTimes),
+            ParryHits: skills.Sum(s => s.ParryTimes),
+            BackTimes: skills.Sum(s => s.BackTimes),
+            EligibleDamage: skills.Sum(s => s.EligibleDamage),
+            SummonFlaggedHits: skills.Sum(s => s.SummonFlaggedTimes),
+            SummonSmiteHits: skills.Sum(s => s.SummonDoubleTimes),
+            SummonPerfectHits: skills.Sum(s => s.SummonPerfectTimes));
+    }
+
+    /// <summary>Map the frozen judgment cross-tabs onto the wire DTO. Null in, null out — a battle where the
+    /// local player dealt no measurable damage simply omits the block.</summary>
+    private static StatsSelfJudgmentPayload? BuildSelfJudgmentPayload(SelfJudgmentSnapshot? snapshot)
+    {
+        if (snapshot is null || snapshot.EligibleHits <= 0) return null;
+
+        return new StatsSelfJudgmentPayload(
+            TargetMobCode: snapshot.TargetMobCode,
+            EligibleHits: snapshot.EligibleHits,
+            StampAgeP50Ms: snapshot.StampAgeP50Ms,
+            FreshHits: snapshot.FreshHits,
+            Smite: Axis(snapshot.Smite),
+            Perfect: Axis(snapshot.Perfect),
+            Accuracy: new StatsJudgmentAccuracyPayload(
+                snapshot.Accuracy.N, snapshot.Accuracy.Hits, snapshot.Accuracy.Bins, snapshot.AccuracyBySkill),
+            Crit: new StatsJudgmentCritPayload(
+                snapshot.Crit.N, snapshot.Crit.Hits, snapshot.Crit.Bins,
+                [snapshot.CritSw4Hits, snapshot.CritSw4Crits]),
+            Stats: new StatsSelfJudgmentStatsPayload(
+                Src: snapshot.Stats.Source,
+                Mask: snapshot.Stats.Mask,
+                Acc318: snapshot.Stats.WeaponAccuracy,
+                Pve110: snapshot.Stats.PveAccuracy,
+                AccInc427: snapshot.Stats.AccuracyIncBp,
+                BlockPierce256: snapshot.Stats.BlockPierce,
+                CritInc429: snapshot.Stats.CriticalIncBp,
+                BackCrit100: snapshot.Stats.BackCritical,
+                FrontCrit591: snapshot.Stats.FrontCritical),
+            Trimmed: snapshot.Trimmed);
+
+        // 빈 배열은 보내지 않는다 — "이 구간 타격이 없었다"와 "이 필드를 안 쓰는 미터다"를 웹이 구분해야 한다.
+        static StatsJudgmentAxisPayload Axis(JudgmentAxisSnapshot axis) => new(
+            axis.N, axis.Hits, axis.Bins, axis.LateBins.Count > 0 ? axis.LateBins : null);
+    }
 
     private static StatsBuffPayload ToBuffPayload(
         OperatingData value,

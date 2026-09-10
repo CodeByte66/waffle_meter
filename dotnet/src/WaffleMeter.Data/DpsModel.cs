@@ -123,6 +123,28 @@ public sealed class AnalyzedSkill
     /// non-directional hits don't dilute them (crit stays over <see cref="Times"/> — it's a separate field
     /// present on every hit).</summary>
     public int FlaggedTimes { get; set; }
+
+    /// <summary>피해 합계 중 <b>막기 판정이 굴러갈 수 있었던</b> 몫 — 플래그를 실은 직격(<see cref="FlaggedTimes"/>)
+    /// 이면서 후방이 아닌 타격의 피해다.
+    /// <para>왜 따로 세는가: 막기는 후방 공격에 <b>구조적으로 걸리지 않고</b>(실측 0/267,357, 클라 설명문도
+    /// "뒤에서의 공격은 대상의 막기를 무시합니다"), 막힌 타격은 피해가 0.42~0.50배로 깎인다. 그래서 "명중을
+    /// 올리면 DPS가 몇 % 오르나"의 분모는 총 피해가 아니라 <b>이 몫</b>이다. 실측 지분이 액터별 0.118~0.980
+    /// (중앙 0.616)이라 총 피해로 나누면 후방 의존 직업에서 이득이 최대 8.5배 과대평가된다.</para></summary>
+    public long EligibleDamage { get; set; }
+
+    /// <summary>이 행에 접혀 들어온 <b>소환수</b> 타격 수와 그중 판정 관련 몫. <c>ResolveActor</c> 가 소환수
+    /// 타격을 주인 uid 로 접기 때문에, 접힌 뒤에는 주인의 스탯으로 설명되지 않는 발동률이 주인의 분모에 섞인다
+    /// — 실측 소환수 강타율이 주인과 pooled +8.68%p 어긋나고 flagged 비율도 0.521~0.967 로 따로 논다. 접기
+    /// <b>전에</b> 세어 두지 않으면 사후 복원이 원리적으로 불가능하고, 이 편향은 직업과 상관돼 있어 "정령성은
+    /// 강타 저항이 다르다" 류의 가짜 발견을 만든다.</summary>
+    public int SummonTimes { get; set; }
+
+    public int SummonFlaggedTimes { get; set; }
+
+    public int SummonDoubleTimes { get; set; }
+
+    public int SummonPerfectTimes { get; set; }
+
     public string? Name { get; set; }
 
     public AnalyzedSkill Copy() => new()
@@ -142,6 +164,11 @@ public sealed class AnalyzedSkill
         ShardTimes = ShardTimes,
         MultiHitTimes = MultiHitTimes,
         FlaggedTimes = FlaggedTimes,
+        EligibleDamage = EligibleDamage,
+        SummonTimes = SummonTimes,
+        SummonFlaggedTimes = SummonFlaggedTimes,
+        SummonDoubleTimes = SummonDoubleTimes,
+        SummonPerfectTimes = SummonPerfectTimes,
         Name = Name,
     };
 }
@@ -300,6 +327,13 @@ public sealed class DpsReport
 
     /// <summary>Frozen boss-debuff-uptime snapshot, populated alongside <see cref="BuffRates"/>.</summary>
     public List<OperatingData> BossBuffRates { get; set; } = [];
+
+    /// <summary>Frozen judgment cross-tabs for the LOCAL player (see <see cref="SelfJudgmentSnapshot"/>),
+    /// populated when the battle is saved. Frozen for the same reason <see cref="SkillDetailsSnapshot"/> is: a
+    /// saved report carries <see cref="Packets"/>=null and the live accumulator is cleared when the next battle
+    /// starts, so nothing could rebuild it afterwards. Null while the battle is in progress and on any battle
+    /// where the local player dealt no measurable damage.</summary>
+    public SelfJudgmentSnapshot? SelfJudgment { get; set; }
 
     /// <summary>Frozen per-second damage series (uid -&gt; dense <c>long[]</c>, index = whole-second offset from
     /// <see cref="BattleStart"/>, value = damage dealt in that second), the source for the combat-detail DPS

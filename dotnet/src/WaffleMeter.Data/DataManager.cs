@@ -2722,6 +2722,18 @@ public sealed class DataManager : ICaptureGameData
             return;
         }
 
+        // 판정 스탯 스탬프. 본인의 직격에만, 저장소에 넣기 <b>직전에</b> 찍는다.
+        // 🔑 여기여야 하는 이유: _packetRepository 는 이 객체의 참조를 그대로 보관하고, DpsCalculator 는 캐시
+        // 리셋 때마다 창 전체를 시퀀스 0부터 다시 누적한다. 누적 시점에 시트를 읽으면 "마지막 재생이 일어난
+        // 시각의 시트"가 그 전투의 모든 타격에 소급 적용된다 — 최악의 경우 전투 종료 시점(버프가 다 빠진) 값이
+        // 오프너에까지 붙는다. 도착 시각에 찍어 두면 재생을 몇 번 하든 값이 변하지 않는다.
+        // 본인 것만 찍는 이유: 스탯 사전(0x364A/0x3649)은 로컬 플레이어에게만 방송된다 — 파티원의 강타·명중
+        // 수치는 어떤 경로로도 얻을 수 없다(코퍼스 6종 4,806프레임에서 파티원 0건).
+        if (!pdp.Dot && pdp.ActorId != 0 && pdp.ActorId == ExecutorId())
+        {
+            pdp.JudgmentStats = _playerStats.JudgmentStats();
+        }
+
         _packetRepository.Save(pdp);
         MaybeFollowSelfTarget(pdp); // Feature 2 (염화의 수호검): 본인이 때리는 수호검으로 표시 전환
     }
@@ -3113,6 +3125,7 @@ public sealed class DataManager : ICaptureGameData
             BuffIntervals = data.BuffIntervals,  // frozen buff timeline (built pre-prune by the caller) for the graph's icon lane
             SkillCasts = data.SkillCasts,        // frozen cast timeline (built pre-prune by the caller) for the 스킬 타임라인 탭
             DpsMetrics = data.DpsMetrics,        // frozen nDPS/rDPS — unrecomputable once the buff repo is pruned below
+            SelfJudgment = data.SelfJudgment,    // frozen 판정 교차표 — 누적기는 다음 전투 시작 때 비워진다
         };
 
         var log = new DpsLog

@@ -245,6 +245,10 @@ public static class StatSheetExport
         Derived("공격력", sheet.AttackPower());
         Derived("방어력", sheet.DefensePower());
         Derived("명중", sheet.AccuracyTotal());
+        // 커뮤니티가 '명중컷'을 말할 때 쓰는 합계(명중 + PvE 명중 + 막기 관통). 스탯창에는 이 줄이 없지만,
+        // 통계웹이 발행하는 명중컷이 이 단위라서 사용자가 자기 값과 바로 비교할 수 있어야 한다.
+        // ⚠️ 버프·도핑이 반영된 값이다 — 마을에서 본 무버프 값과 전투 중 값은 다르다.
+        Derived("명중(컷 기준)", sheet.AccuracyCutTotal());
         Derived("치명타", sheet.CriticalTotal());
 
         var groups = new List<StatSheetGroup>
