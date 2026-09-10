@@ -287,6 +287,36 @@ public sealed class SelfJudgmentTests
         Assert.True((present.Stats.Mask & SelfJudgmentStats.HasWeaponAccuracy) == 0); // genuinely absent
     }
 
+    /// <summary>
+    /// Row widths are a load-bearing contract, not an implementation detail: the server's validator drops the
+    /// WHOLE judgment block when a bins row is shorter than 4, and reads only the first four columns when it is
+    /// longer. So widening a row is a compatible change and narrowing one is a silent total loss — this test is
+    /// the thing that makes that asymmetry visible to whoever edits the accumulator next.
+    /// <para>Accepted ranges on the server side: bins 4-8, bySkill 3-8, sw4 2-4.</para>
+    /// </summary>
+    [Fact]
+    public void RowWidthsMatchTheServerContract()
+    {
+        var acc = new SelfJudgmentAccumulator();
+        acc.Accumulate(Hit(specials: SpecialDamage.DOUBLE), battleStart: 0L);
+        acc.Accumulate(Hit(specials: SpecialDamage.PARRY), battleStart: 0L);
+        acc.Accumulate(Hit(timestamp: 700_000L, stampAt: 700_000L), battleStart: 1_000L);
+        acc.Accumulate(Hit(switchVariable: Unflagged, crit: true), battleStart: 0L);
+        // Force the bySkill aggregate rows, which are built by a different code path than the ordinary ones.
+        for (int i = 0; i < 20; i++) acc.Accumulate(Hit(rawSkillCode: 12_000_000 + i), battleStart: 0L);
+        SelfJudgmentSnapshot snapshot = acc.Build(1, null);
+
+        Assert.All(snapshot.Smite.Bins, row => Assert.Equal(4, row.Length));
+        Assert.All(snapshot.Smite.LateBins, row => Assert.Equal(4, row.Length));
+        Assert.All(snapshot.Perfect.Bins, row => Assert.Equal(4, row.Length));
+        Assert.All(snapshot.Perfect.LateBins, row => Assert.Equal(4, row.Length));
+        Assert.All(snapshot.Accuracy.Bins, row => Assert.Equal(4, row.Length));
+        Assert.All(snapshot.Crit.Bins, row => Assert.Equal(4, row.Length));
+        Assert.All(snapshot.AccuracyBySkill, row => Assert.Equal(3, row.Length));
+        Assert.NotEmpty(snapshot.Smite.LateBins);
+        Assert.NotEmpty(snapshot.AccuracyBySkill);
+    }
+
     /// <summary>Trimming must announce itself. Silent truncation reads downstream as "this player never used
     /// those skills", which is the opposite of what happened.</summary>
     [Fact]
