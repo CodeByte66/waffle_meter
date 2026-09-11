@@ -288,6 +288,59 @@ public sealed class SelfJudgmentTests
     }
 
     /// <summary>
+    /// Pins each presence bit to the stat it stands for. The server gates its display-axis rollup on
+    /// <c>mask &amp; 15 == 15</c> (the four 명중컷 terms), so reordering these constants would silently change
+    /// WHICH blocks that axis keeps — and the blocks it drops are not a random subset, which is the whole
+    /// reason that gate was moved off <c>src</c> in the first place.
+    /// <para>A fully-populated sheet gives mask 127 and cannot distinguish any ordering; this asserts the bits
+    /// one at a time, which is the only form that can fail.</para>
+    /// </summary>
+    [Fact]
+    public void StatMaskBitsArePinnedToTheirStatIds()
+    {
+        Assert.Equal(1, SelfJudgmentStats.HasWeaponAccuracy);   // 318 무기 명중
+        Assert.Equal(2, SelfJudgmentStats.HasPveAccuracy);      // 110 PvE 명중
+        Assert.Equal(4, SelfJudgmentStats.HasAccuracyInc);      // 427 명중 증가율
+        Assert.Equal(8, SelfJudgmentStats.HasBlockPierce);      // 256 막기 관통
+        Assert.Equal(16, SelfJudgmentStats.HasCriticalInc);     // 429 치명타 증가율
+        Assert.Equal(32, SelfJudgmentStats.HasBackCritical);    // 100 후방 치명타
+        Assert.Equal(64, SelfJudgmentStats.HasFrontCritical);   // 591 전방 치명타
+
+        // Each id alone must light exactly its own bit — a swap between two of them survives the "all present"
+        // case and every aggregate check, and shows up only here.
+        AssertOnly(PlayerStatIds.WeaponAccuracy, SelfJudgmentStats.HasWeaponAccuracy);
+        AssertOnly(PlayerStatIds.PveAccuracy, SelfJudgmentStats.HasPveAccuracy);
+        AssertOnly(PlayerStatIds.AccuracyIncreasePercent, SelfJudgmentStats.HasAccuracyInc);
+        AssertOnly(PlayerStatIds.BlockPierce, SelfJudgmentStats.HasBlockPierce);
+        AssertOnly(PlayerStatIds.CriticalIncreasePercent, SelfJudgmentStats.HasCriticalInc);
+        AssertOnly(PlayerStatIds.BackCritical, SelfJudgmentStats.HasBackCritical);
+        AssertOnly(PlayerStatIds.FrontCritical, SelfJudgmentStats.HasFrontCritical);
+
+        // The four terms the display axis needs, and nothing else, must be exactly 15.
+        var acc = new SelfJudgmentAccumulator();
+        acc.Accumulate(Hit(), battleStart: 0L);
+        SelfJudgmentSnapshot four = acc.Build(1, new PlayerStatSheet(
+            new Dictionary<int, int>
+            {
+                [PlayerStatIds.WeaponAccuracy] = 391,
+                [PlayerStatIds.PveAccuracy] = 320,
+                [PlayerStatIds.AccuracyIncreasePercent] = 5_350,
+                [PlayerStatIds.BlockPierce] = 210,
+            },
+            UpdatedAt: 1L, FullSnapshotSeen: false));
+        Assert.Equal(15, four.Stats.Mask);
+
+        static void AssertOnly(int statId, int expectedBit)
+        {
+            var probe = new SelfJudgmentAccumulator();
+            probe.Accumulate(Hit(), battleStart: 0L);
+            SelfJudgmentSnapshot snapshot = probe.Build(1, new PlayerStatSheet(
+                new Dictionary<int, int> { [statId] = 1 }, UpdatedAt: 1L, FullSnapshotSeen: false));
+            Assert.Equal(expectedBit, snapshot.Stats.Mask);
+        }
+    }
+
+    /// <summary>
     /// Row widths are a load-bearing contract, not an implementation detail: the server's validator drops the
     /// WHOLE judgment block when a bins row is shorter than 4, and reads only the first four columns when it is
     /// longer. So widening a row is a compatible change and narrowing one is a silent total loss — this test is
