@@ -1478,6 +1478,11 @@ public partial class App : Application
             }
         };
 
+        // 짝이 될 0x970B 가 끝내 오지 않은 0x9709(= 진짜 거절)를 여기서 해소한다. 저장소에는 시계가 없고,
+        // 이 하트비트는 카드가 화면에 있을 수 있는 동안에는 언제나 돌고 있다. 실제로 지워지면 저장소가
+        // Changed 를 올려 아래 핸들러가 다시 그린다.
+        _joinPanel.Heartbeat += () => services.JoinRequests.FlushResolved();
+
         // Store events fire on the meter-consumer thread; marshal to the UI.
         services.JoinRequests.Changed += () => Dispatcher.Invoke(() =>
         {

@@ -68,16 +68,104 @@ public class JoinRequestStoreTests
     }
 
     [Fact]
-    public void RefuseOldest_drops_min_arrivedAt()
+    public void An_unpaired_resolve_drops_the_oldest_once_the_pairing_window_lapses()
     {
-        var store = new JoinRequestStore(() => 1000);
+        long now = 1000;
+        var store = new JoinRequestStore(() => now);
         store.Add(User(1, 300));
         store.Add(User(2, 100)); // oldest
         store.Add(User(3, 200));
-        store.RefuseOldest();
 
+        store.OnResolved();
+        Assert.Equal(3, store.Snapshot().Count); // 아직 짝을 기다린다
+
+        now += 250;
         Assert.DoesNotContain(2, store.Snapshot().Select(r => r.Requester));
         Assert.Equal(2, store.Snapshot().Count);
+    }
+
+    [Fact]
+    public void An_admit_claims_the_resolve_so_nobody_elses_card_is_dropped()
+    {
+        // 제보의 정체: 0x9709 는 거절뿐 아니라 수락에도 온다. 파티장이 나중 신청을 먼저 수락하면, 즉시
+        // "가장 오래된 것"을 지우던 종전 동작은 아직 대기 중인 남의 카드를 대신 지웠다.
+        long now = 1000;
+        var store = new JoinRequestStore(() => now);
+        store.Add(User(1, 100)); // 먼저 온 신청 — 살아 있어야 한다
+        store.Add(User(2, 200)); // 파티장이 이쪽을 수락했다
+
+        store.OnResolved();              // 0x9709 (id 없음)
+        store.Remove(2, admit: true);    // 같은 배치의 0x970B
+
+        now += 500;
+        Assert.Equal([1], store.Snapshot().Select(r => r.Requester));
+    }
+
+    [Fact]
+    public void Three_resolves_with_one_admit_drop_exactly_the_two_refused()
+    {
+        // 실측 장면(2026-09-12 +4831~+4834s): 세 명이 대기 중, 0x9709 가 3발, 그중 마지막과 같은 ms 에
+        // 0x970B(할매미) 가 붙었다. 남는 건 수락된 한 명이 아니라 '거절된 둘'이어야 한다.
+        long now = 1000;
+        var store = new JoinRequestStore(() => now);
+        store.Add(User(1, 100)); // 랄부킥
+        store.Add(User(2, 200)); // 명인만두
+        store.Add(User(3, 300)); // 할매미 — 수락됨
+
+        store.OnResolved();
+        store.OnResolved();
+        store.OnResolved();
+        store.Remove(3, admit: true);
+
+        now += 500;
+        Assert.Empty(store.Snapshot().Where(r => r.Requester is 1 or 2));
+        Assert.Empty(store.Snapshot());
+    }
+
+    [Fact]
+    public void A_cancel_does_not_consume_a_pending_resolve()
+    {
+        // 신청자 본인의 취소(0x9725)에는 0x9709 가 따라오지 않는다 — 그 둘을 짝지으면 진짜 거절이 묻힌다.
+        long now = 1000;
+        var store = new JoinRequestStore(() => now);
+        store.Add(User(1, 100));
+        store.Add(User(2, 200));
+
+        store.OnResolved();            // 1번을 거절했다
+        store.Remove(2, admit: false); // 그 사이 2번이 스스로 물렀다
+
+        now += 500;
+        Assert.Empty(store.Snapshot());
+    }
+
+    [Fact]
+    public void A_resolve_never_drops_an_expired_ghost_instead_of_a_visible_card()
+    {
+        // 사전은 만료 항목을 그대로 들고 있다(재신청이 배지를 물려받게 하려고). 필터 없이 '가장 오래된 것'을
+        // 고르면 화면에 없는 유령이 지워지고 카드는 그대로 남아, 사용자 눈에는 아무 일도 안 일어난다.
+        long now = 100_000;
+        var store = new JoinRequestStore(() => now);
+        store.Add(User(1, now - 25_000)); // 이미 만료돼 화면에 없다
+        store.Add(User(2, now - 1_000));  // 화면의 유일한 카드
+
+        store.OnResolved();
+        now += 500;
+
+        Assert.Empty(store.Snapshot());
+    }
+
+    [Fact]
+    public void Enrich_fills_a_live_card_but_never_resurrects_a_resolved_one()
+    {
+        var store = new JoinRequestStore(() => 1000);
+        store.Add(User(1, 100));
+
+        Assert.True(store.Enrich(1, u => u with { Power = 777 }));
+        Assert.Equal(777, Assert.Single(store.Snapshot()).Power);
+
+        store.Remove(1, admit: true);
+        Assert.False(store.Enrich(1, u => u with { Power = 999 })); // 공식 조회가 1.7초 뒤에 도착한 경우
+        Assert.Empty(store.Snapshot());
     }
 
     [Fact]
@@ -102,7 +190,7 @@ public class JoinRequestStoreTests
         store.Add(User(1, 150));     // +1 (replace)
         store.Remove(1);             // +1
         store.Remove(1);             // no-op (already gone) -> no fire
-        store.RefuseOldest();        // no-op (empty) -> no fire
+        store.FlushResolved();       // nothing pending -> no fire
         store.ClearAll();            // fires Cleared, NOT Changed
 
         Assert.Equal(3, changed);

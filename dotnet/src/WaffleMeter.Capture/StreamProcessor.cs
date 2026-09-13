@@ -921,38 +921,63 @@ public sealed class StreamProcessor
         _joinSink.OnJoinRequest(requester, nickname, jobCode, server, power, arrivedAt);
     }
 
-    /// <summary>0x9725 cancel / 0x970B admit — both remove the request by requester id.</summary>
-    /// <remarks>
-    /// Byte-exact port of Kotlin parseCancelJoinRequest/parseAdmitJoinRequest (offset+2 past opcode,
-    /// then a u32). NOTE: a corpus AdmitJoin frame (<c>35 0b 97 3a 02 aa 72 01 00 ...</c>) carries the
-    /// real requester (<c>aa 72 01 00</c> = 94890) at offset+4, not offset+0 — Kotlin reads the two
-    /// leading <c>3a 02</c> bytes into the id, so admit emits a non-matching id and the card is NOT
-    /// removed on accept; it instead expires via the 20s timeout. This is faithful dev-app parity, not
-    /// a fix. If instant removal-on-accept is wanted, re-derive the offset from the 3 corpus admits.
-    /// </remarks>
+    /// <summary>0x9725 cancel — 신청자가 스스로 물렀다. uid가 opcode 바로 뒤에 온다.</summary>
+    /// <remarks>실측 프레임(2026-09-12): <c>0E 25 97 AB 33 00 00 00 00 D3 07</c> — uid 0x33AB=13227,
+    /// 뒤이어 <c>00 00</c>과 서버 2003. 같은 세션의 0x9707 신청 기록과 uid·서버가 정확히 일치한다.</remarks>
     private void ParseCancelJoin(byte[] packet, VarIntOutput lengthInfo, bool extraFlag) =>
-        RemoveByRequester(packet, lengthInfo, extraFlag, 0x25);
+        RemoveByRequester(packet, lengthInfo, extraFlag, 0x25, uidSkip: 0, admit: false);
 
+    /// <summary>0x970B — 파티에 멤버가 추가됐다는 브로드캐스트. 신청 수락이 그 중 하나다.</summary>
+    /// <remarks>
+    /// <para><b>종전에는 uid를 2바이트 앞에서 읽었다.</b> 옛 주석이 그 사실을 자백해 뒀고("admit emits a
+    /// non-matching id and the card is NOT removed on accept; it instead expires via the 20s timeout"),
+    /// 그게 곧 "인게임에서 수락했는데 카드가 20초 내내 남는다"는 제보의 정체였다. 실측 레이아웃은
+    /// <c>[len][0B 97][flag][slot][uid u32 LE][00 00][server u16][nameLen][name UTF-8]…</c> 이고,
+    /// 2026-09-12 세션의 수락 10건이 모두 직전 0x9707의 uid·서버·닉네임과 일치한다
+    /// (예: <c>34 0B 97 0C 04 EA 07 00 00 00 00 E2 07 06 …데드</c> = uid 2026 / 서버 2018).</para>
+    /// <para><b>flag 바이트는 열거하지 않는다.</b> 수락은 0x0C, 이미 파티에 있는 멤버를 같은 ms에 2~3발씩
+    /// 다시 싣는 열거 브로드캐스트는 0x0E, 2026-06 코퍼스에는 0x3A도 있었다. 열거형이 실어 오는 uid는 이미
+    /// 파티원이라 대기 카드가 있을 수 없으므로, 그 프레임으로 제거를 호출해도 무해한 no-op이다.</para>
+    /// </remarks>
     private void ParseAdmitJoin(byte[] packet, VarIntOutput lengthInfo, bool extraFlag) =>
-        RemoveByRequester(packet, lengthInfo, extraFlag, 0x0B);
+        RemoveByRequester(packet, lengthInfo, extraFlag, 0x0B, uidSkip: 2, admit: true);
 
-    private void RemoveByRequester(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, byte opcodeLow)
+    /// <summary>
+    /// <paramref name="uidSkip"/> = uid 앞에 붙는 바이트 수(0x970B의 <c>[flag][slot]</c>).
+    /// <para><b>모양 게이트가 필수다.</b> 이 계열은 opcode 2바이트만 맞으면 실행되므로, 게임이 아닌 LAN
+    /// 스트림(스트리밍·프록시)의 난수 프레임이 우연히 <c>0B 97</c>·<c>25 97</c>을 만들면 쓰레기 id로 카드를
+    /// 지운다 — 2026-09-12 한 세션에서만 그런 프레임이 11건 있었다. 진짜 프레임은 uid 뒤에 <c>00 00</c>과
+    /// 유효 서버 id가 반드시 따라오므로 그 모양으로 거른다.</para>
+    /// </summary>
+    private void RemoveByRequester(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, byte opcodeLow, int uidSkip, bool admit)
     {
         int offset = lengthInfo.Length;
         if (extraFlag) offset++;
         if (packet.Length < offset + 2) return;
         if (packet[offset] != opcodeLow || packet[offset + 1] != 0x97) return;
-        offset += 2;
+        offset += 2 + uidSkip;
+        if (packet.Length < offset + 8) return; // uid u32 + 00 00 + server u16
+
         int requester = PacketPrimitives.ParseUInt32Le(packet, offset);
-        _joinSink.OnJoinRequestRemove(requester);
+        if (requester <= 0) return;
+        if (packet[offset + 4] != 0x00 || packet[offset + 5] != 0x00) return;
+        if (!IsPartyServer(PacketPrimitives.ParseUInt16Le(packet, offset + 6))) return;
+
+        _sink.Meta(admit ? "join_admit" : "join_cancel", ("requester", requester));
+        _joinSink.OnJoinRequestRemove(requester, admit);
     }
 
-    /// <summary>0x9709 refuse (no id) — drop the oldest pending request.</summary>
+    /// <summary>0x9709 — 대기 중이던 신청 하나가 해소됐다. <b>id가 없고, 거절뿐 아니라 수락에도 온다</b>
+    /// (수락이면 같은 배치로 0x970B가 따라붙는다). 그래서 즉시 "가장 오래된 것"을 지우면 안 된다 — 파티장이
+    /// 나중 신청을 먼저 수락한 순간 애먼 카드가 사라진다. 짝이 될 0x970B를 잠깐 기다렸다가 남은 것만
+    /// 해소하는 판정은 <c>JoinRequestStore</c>가 한다.</summary>
+    /// <remarks>진짜 프레임은 예외 없이 5바이트다(<c>08 09 97 00 00</c>, 마지막 바이트가 0이 아닌 변종 1건
+    /// 포함). 같은 세션의 노이즈는 3·11·14·30·31바이트라 길이만으로 깨끗이 갈린다.</remarks>
     private void ParseRefuseJoin(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
     {
         int offset = lengthInfo.Length;
         if (extraFlag) offset++;
-        if (packet.Length < offset + 2) return;
+        if (packet.Length != offset + 4) return; // opcode 2 + payload 2 — 그 밖은 노이즈다
         if (packet[offset] != 0x09 || packet[offset + 1] != 0x97) return;
         _joinSink.OnRefuseJoinRequest();
     }
@@ -968,7 +993,9 @@ public sealed class StreamProcessor
     {
         int offset = lengthInfo.Length;
         if (extraFlag) offset++;
-        if (packet.Length < offset + 2) return;
+        // 0x9709과 같은 이유의 길이 게이트 — 진짜 프레임은 5바이트뿐인데(08 18 97 00 00 / 08 1D 97 00 00)
+        // 종전에는 opcode 2바이트만 보고 패널을 통째로 비웠다. 한 세션에서 그런 난수 프레임이 13건 있었다.
+        if (packet.Length != offset + 4) return;
         if (packet[offset] != opcodeLow || packet[offset + 1] != 0x97) return;
         // NOTE: deliberately does NOT clear the party roster. 0x971D fires spuriously mid-dungeon (observed while
         // a 5-man party was fully intact), so clearing here would empty a valid roster — the exact failure the

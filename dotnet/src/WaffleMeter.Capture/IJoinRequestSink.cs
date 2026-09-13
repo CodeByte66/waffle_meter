@@ -11,10 +11,13 @@ public interface IJoinRequestSink
     /// <summary>A join request arrived (or was refreshed). Add/replace by <paramref name="requester"/>.</summary>
     void OnJoinRequest(int requester, string nickname, int jobCode, int server, int power, long arrivedAt);
 
-    /// <summary>The request was cancelled by the applicant or admitted by the leader — remove it.</summary>
-    void OnJoinRequestRemove(int requester);
+    /// <summary>The request was cancelled by the applicant (<paramref name="admit"/> false) or admitted by
+    /// the leader (true) — remove it. An admit also answers the id-less 0x9709 that arrived with it, which is
+    /// why the two cases are distinguished.</summary>
+    void OnJoinRequestRemove(int requester, bool admit);
 
-    /// <summary>A refusal with no id — drop the oldest pending request.</summary>
+    /// <summary>0x9709 — one pending request was resolved, with no id saying which. Fires on an ACCEPT as well
+    /// as a refusal, so the store waits briefly for a matching admit before falling back to "drop the oldest".</summary>
     void OnRefuseJoinRequest();
 
     /// <summary>Instance start or party exit — clear all pending requests.</summary>
@@ -26,7 +29,7 @@ public sealed class NullJoinRequestSink : IJoinRequestSink
 {
     public static readonly NullJoinRequestSink Instance = new();
     public void OnJoinRequest(int requester, string nickname, int jobCode, int server, int power, long arrivedAt) { }
-    public void OnJoinRequestRemove(int requester) { }
+    public void OnJoinRequestRemove(int requester, bool admit) { }
     public void OnRefuseJoinRequest() { }
     public void OnExitPartyUi() { }
 }
