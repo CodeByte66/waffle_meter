@@ -233,9 +233,15 @@ public sealed class BuffSlotVM : INotifyPropertyChanged
         CooldownVeil = onCooldown ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>점멸 마스크가 칠할 공유 브러시. <b>반드시 바인딩으로만</b> XAML 에 닿아야 한다 —
+    /// 템플릿에 <c>{x:Static}</c> 으로 직접 쓰면 WPF 가 DataTemplate 을 봉인할 때 이 Freezable 을 함께 얼려
+    /// 버리고, 그러면 타이머의 첫 색 변경이 "읽기 전용" 예외로 앱을 죽인다(UiPreview 로 실제로 재현했다).
+    /// <see cref="TierPalette"/> 가 <see cref="TierSheen"/> 브러시를 VM 프로퍼티로 넘기는 것과 같은 이유다.</summary>
+    public Brush ExpiryMask => BuffExpiryFlash.Mask;
+
     private Visibility _expiryVisibility = Visibility.Collapsed;
-    /// <summary>곧 끝나는 버프의 점멸 마스크. 칠하는 브러시는 <see cref="BuffExpiryFlash"/> 가 공유로 들고
-    /// 두드리므로, 슬롯은 보일지 말지만 정한다.</summary>
+    /// <summary>곧 끝나는 버프의 점멸 마스크를 보일지. 칠하는 브러시는 <see cref="BuffExpiryFlash"/> 가
+    /// 공유로 들고 두드리므로, 슬롯은 보일지 말지만 정한다.</summary>
     public Visibility ExpiryVisibility { get => _expiryVisibility; private set => Set(ref _expiryVisibility, value); }
 
     /// <summary>"버프 종료 3초 전 알림" 창에 들어왔는지.</summary>

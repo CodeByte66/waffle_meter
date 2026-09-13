@@ -56,7 +56,7 @@
                                  슬롯마다 애니메이션을 두지 않으므로 위상이 전부 일치하고, 임박한 게 없으면
                                  타이머 자체가 멈춘다. 쿨타임 회색 베일보다 위에 둬서 둘이 겹쳐도 점멸이 읽힌다. -->
                             <Ellipse Width="40" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                     Fill="{x:Static local:BuffExpiryFlash.Mask}" Visibility="{Binding ExpiryVisibility}"/>
+                                     Fill="{Binding ExpiryMask}" Visibility="{Binding ExpiryVisibility}"/>
                             <!-- Faint full-circle track so the icon always reads as framed. -->
                             <Ellipse Width="43" Height="43" HorizontalAlignment="Center" VerticalAlignment="Center"
                                      Stroke="#40000000" StrokeThickness="2.5"/>

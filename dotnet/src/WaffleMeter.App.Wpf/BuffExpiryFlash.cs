@@ -25,8 +25,14 @@ public static class BuffExpiryFlash
     /// 속도다. 더 빠르면 소프트웨어 렌더에서 비용만 늘고 눈에는 떨림으로 읽힌다.</summary>
     private const int IntervalMs = 220;
 
-    /// <summary>마스크가 켜졌을 때의 검정 알파. 아이콘이 "꺼진 듯" 어두워지되 무엇인지는 계속 읽혀야 한다.</summary>
-    private static readonly Color On = Color.FromArgb(0xAE, 0x00, 0x00, 0x00);
+    /// <summary>마스크가 켜졌을 때의 검정 알파.
+    /// <para>60%. 밝기가 2.5배 떨어져 점멸이 확실히 읽히면서도 아이콘이 무엇인지는 남는다. 더 올리면
+    /// "쿨타임 중 아이콘 회색"이 켜진 슬롯에서 문제가 된다 — 버프가 도는 동안 그 스킬이 아직 쿨타임인 건
+    /// 예외가 아니라 보통이고, 그 슬롯은 이미 <c>IconOpacity 0.4</c> + 회색 베일로 어둡다(UiPreview 의
+    /// <c>buffoverlay_Dark.png</c> 와 <c>buffoverlay_expiring_Dark.png</c> 를 나란히 보면 된다).</para>
+    /// <para>점멸해도 슬롯이 사라져 보이지 않는 이유는 마스크가 <b>40px 아이콘만</b> 덮기 때문이다 —
+    /// 43px 트랙과 46px 지속시간 링, 레벨 배지는 마스크 밖이라 계속 밝게 남아 자리를 잡아 준다.</para></summary>
+    private static readonly Color On = Color.FromArgb(0x99, 0x00, 0x00, 0x00);
     private static readonly Color Off = Colors.Transparent;
 
     private static readonly DispatcherTimer Timer = new(DispatcherPriority.Background)
