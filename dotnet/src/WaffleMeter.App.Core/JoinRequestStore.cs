@@ -24,6 +24,11 @@ public sealed class JoinRequestStore
     private readonly Dictionary<int, JoinRequestUser> _byRequester = new();
     /// <summary>아직 주인을 못 찾은 0x9709들의 도착 시각(오래된 것부터). 자세한 건 <see cref="OnResolved"/>.</summary>
     private readonly List<long> _pendingResolves = new();
+
+    /// <summary>짝이 될 0x9709 보다 <b>먼저</b> 도착한 수락들의 시각. 실측 순서는 언제나 0x9709 → 0x970B
+    /// 였지만, 그 순서에만 기대면 한 번 뒤집히는 순간 종전 버그(애먼 카드가 지워진다)가 그대로 돌아온다.
+    /// 양쪽에 크레딧을 두면 도착 순서와 무관해진다.</summary>
+    private readonly List<long> _recentAdmits = new();
     private readonly Func<long> _now;
 
     public JoinRequestStore(Func<long>? now = null)
@@ -52,10 +57,25 @@ public sealed class JoinRequestStore
         bool changed;
         lock (_gate)
         {
+            long now = _now();
+            // 짝짓기는 <b>화면에 살아 있던</b> 카드에만 건다. 사전은 만료된 신청을 배지 승계용으로 계속
+            // 들고 있고(TryGet 주석), 0x970B 는 기존 파티원을 다시 싣는 열거로도 온다 — 그 유령을 '수락'으로
+            // 세면 진짜 거절의 보류를 대신 삼켜, 거절당한 사람 카드가 20초를 마저 채운다.
+            bool wasLive = _byRequester.TryGetValue(requester, out JoinRequestUser? existing)
+                           && existing.ArrivedAt >= now - LifetimeMs;
             changed = _byRequester.Remove(requester);
-            if (admit && changed && _pendingResolves.Count > 0)
+
+            if (admit && wasLive)
             {
-                _pendingResolves.RemoveAt(0); // 이 수락이 그 0x9709의 정체였다
+                PruneCreditsLocked(now);
+                if (_pendingResolves.Count > 0)
+                {
+                    _pendingResolves.RemoveAt(0); // 이 수락이 그 0x9709의 정체였다
+                }
+                else
+                {
+                    _recentAdmits.Add(now); // 0x9709 가 뒤따라올 수도 있다 — 그때 이 크레딧이 삼킨다
+                }
             }
         }
 
@@ -71,9 +91,26 @@ public sealed class JoinRequestStore
     /// </summary>
     public void OnResolved()
     {
-        lock (_gate) _pendingResolves.Add(_now());
+        lock (_gate)
+        {
+            long now = _now();
+            PruneCreditsLocked(now);
+            if (_recentAdmits.Count > 0)
+            {
+                _recentAdmits.RemoveAt(0); // 방금 처리한 그 수락의 짝이다 — 아무도 더 지우지 않는다
+                return;
+            }
+
+            _pendingResolves.Add(now);
+        }
+
         Changed?.Invoke(); // 아직 바뀐 건 없지만, UI가 곧 Snapshot을 다시 읽게 한다
     }
+
+    /// <summary>짝짓기 창을 넘긴 크레딧을 버린다. 수락 크레딧은 창만 넘기면 그냥 버리면 되고, 보류된 해소는
+    /// <see cref="FlushResolvedLocked"/> 가 따로 소진한다.</summary>
+    private void PruneCreditsLocked(long now)
+        => _recentAdmits.RemoveAll(at => now - at >= AdmitPairingWindowMs);
 
     /// <summary>보류 중인 해소 중 짝짓기 창이 지난 것을 적용한다. 저장소를 읽을 때마다(그리고 패널의 250ms
     /// 하트비트마다) 불린다 — 별도 타이머를 만들지 않으려는 것이고, 어느 쪽이 먼저 부르든 결과는 같다.</summary>
@@ -87,9 +124,19 @@ public sealed class JoinRequestStore
     private bool FlushResolvedLocked(long now)
     {
         bool changed = false;
+        PruneCreditsLocked(now);
         while (_pendingResolves.Count > 0 && now - _pendingResolves[0] >= AdmitPairingWindowMs)
         {
+            long queuedAt = _pendingResolves[0];
             _pendingResolves.RemoveAt(0);
+
+            // 카드 수명보다 오래 묵은 보류는 그냥 버린다. 패널이 닫혀 있으면 하트비트가 멈춰 보류가 몇 분씩
+            // 살아남는데, 그동안 그 보류가 가리키던 카드는 이미 전부 만료됐다 — 그대로 적용하면 한참 뒤에
+            // 도착한 <b>새</b> 신청을 대신 삼킨다.
+            if (now - queuedAt >= LifetimeMs)
+            {
+                continue;
+            }
 
             // 화면에 아직 떠 있는 것 중 가장 오래된 것만 대상이다. 사전은 만료 항목을 그대로 들고 있으므로
             // (재신청이 배지를 물려받게 하려고 일부러 그렇게 뒀다) 필터 없이 고르면 이미 안 보이는 유령을
@@ -124,6 +171,7 @@ public sealed class JoinRequestStore
         {
             _byRequester.Clear();
             _pendingResolves.Clear();
+            _recentAdmits.Clear();
         }
 
         Cleared?.Invoke();

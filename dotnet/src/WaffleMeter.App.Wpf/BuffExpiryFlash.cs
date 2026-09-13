@@ -21,8 +21,9 @@ namespace WaffleMeter.App.Wpf;
 /// </summary>
 public static class BuffExpiryFlash
 {
-    /// <summary>토글 간격. 220ms = 약 2.3Hz 로, 3초 창에 13~14번 깜빡인다 — 게임 UI 의 임박 점멸과 같은 체감
-    /// 속도다. 더 빠르면 소프트웨어 렌더에서 비용만 늘고 눈에는 떨림으로 읽힌다.</summary>
+    /// <summary>마스크를 껐다 켜는 간격. 220ms 마다 뒤집으므로 점멸 한 주기는 440ms(약 2.3Hz)이고,
+    /// 3초 창에 약 7번 깜빡인다 — 게임 UI 의 임박 점멸과 같은 체감 속도다. 더 빠르면 소프트웨어 렌더에서
+    /// 비용만 늘고 눈에는 떨림으로 읽힌다.</summary>
     private const int IntervalMs = 220;
 
     /// <summary>마스크가 켜졌을 때의 검정 알파.

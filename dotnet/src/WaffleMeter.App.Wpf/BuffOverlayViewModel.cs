@@ -98,7 +98,15 @@ public sealed class BuffOverlayViewModel : INotifyPropertyChanged
     /// countdown text + ring progress change on a normal tick.</summary>
     /// <param name="expiryWarnMs">남은 시간이 이 값 이하면 아이콘을 점멸시킨다. 0 = "버프 종료 3초 전 알림" 꺼짐.
     /// 판정은 500ms 틱마다 하므로 점멸 시작이 최대 한 틱 늦을 수 있다 — 3초 창에서는 눈에 띄지 않는다.</param>
-    public void Update(IReadOnlyList<OwnerBuffView> buffs, bool grayOnCooldown, bool showLevel = true, long expiryWarnMs = 0)
+    /// <param name="expiryMinDurationMs">이보다 짧은 버프는 점멸시키지 않는다. 없으면 지속시간이 리드보다
+    /// 짧은 버프가 <b>태어나는 순간부터</b> 계속 어둡게 칠해져, 경고가 아니라 고장으로 읽힌다. 음성 쪽이
+    /// 쓰는 하한과 같은 값이다.</param>
+    public void Update(
+        IReadOnlyList<OwnerBuffView> buffs,
+        bool grayOnCooldown,
+        bool showLevel = true,
+        long expiryWarnMs = 0,
+        long expiryMinDurationMs = 0)
     {
         // remove slots no longer present
         for (int i = Slots.Count - 1; i >= 0; i--)
@@ -132,7 +140,11 @@ public sealed class BuffOverlayViewModel : INotifyPropertyChanged
 
             // 무기한 유지 자세(폭주)는 만료가 합성 keep-alive 라 점멸시키면 매번 거짓 경고가 된다 — 음성 쪽이
             // 같은 이유로 이미 제외하고 있다.
-            bool expiring = expiryWarnMs > 0 && !b.Indefinite && b.RemainingMs > 0 && b.RemainingMs <= expiryWarnMs;
+            bool expiring = expiryWarnMs > 0
+                            && !b.Indefinite
+                            && b.DurationMs > expiryMinDurationMs
+                            && b.RemainingMs > 0
+                            && b.RemainingMs <= expiryWarnMs;
 
             if (current < 0)
             {

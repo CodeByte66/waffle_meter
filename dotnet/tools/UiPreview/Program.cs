@@ -227,7 +227,7 @@ internal static class Program
                     new(11400000, "축복", 45_000, 60_000, 45_000, true, true, false, false),    // 여유 → 평상
                     new(13050000, "섬광베기", 1_200, 20_000, 1_200, false, true, true, false),  // 임박 + 쿨타임 회색
                     new(19130000, "폭주", 5_400, 0, 5_400, false, true, false, true),           // 무기한 → 점멸 제외
-                }, grayOnCooldown: true, showLevel: true, expiryWarnMs: 3_000);
+                }, grayOnCooldown: true, showLevel: true, expiryWarnMs: 3_000, expiryMinDurationMs: 4_000);
                 Capture(() => new BuffOverlayPanel(buffExpiringVm), palette, Path.Combine(outDir, "buffoverlay_expiring_Dark.png"));
 
                 // opaque/findable mode (투명 배경 off) — background + border so an empty window is locatable

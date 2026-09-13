@@ -95,9 +95,11 @@ public sealed class DataManager : ICaptureGameData
     private const string SplitBossName = "염화의 수호검";
     private readonly Dictionary<int, (long FirstMs, long LastMs, int Hits)> _selfDamageStreak = new();
     private readonly Dictionary<int, long> _bossEngageAtMs = new(); // instanceId -> 최근 0x8D21 start-toggle 시각(전환 back-date용)
-    // instanceId -> 그 전투에서 관측된 <b>최저</b> 잔여 HP. 전투 기록이 얼려야 할 값이며, 라이브 게이지는 쓰지
-    // 않는다. 왜 필요한지는 BattleLowMobHp 주석 참조.
-    private readonly Dictionary<int, long> _battleLowHp = new();
+    // instanceId -> (그 값을 쌓은 전투의 리비전, 그 전투에서 관측된 <b>최저</b> 잔여 HP).
+    // 전투 기록이 얼려야 할 값이며 라이브 게이지는 쓰지 않는다. 왜 필요한지는 BattleLowMobHp 주석 참조.
+    // ⚠️ 리비전을 함께 들고 있는 게 핵심이다. 같은 보스를 바로 다시 걸면 새 전투가 열리는 시점이 직전 판의
+    // 저장(리포트 틱)보다 빠를 수 있는데, mobId 만으로 키잉하면 그 저장이 새 판의 만피를 읽어 간다.
+    private readonly Dictionary<int, (long Revision, long Low)> _battleLowHp = new();
     private const long SelfStreakGapMs = 2_000L;    // 이 간격 넘으면 스트릭 리셋(스치는 AoE 누적 방지)
     private const long SelfSwitchDwellMs = 1_500L;  // 전환 전 지속 자기딜 요건
     private const int SelfSwitchMinHits = 3;
@@ -765,7 +767,9 @@ public sealed class DataManager : ICaptureGameData
         // 받는다 — 전멸 직후 보스가 제자리로 돌아가며 쏘는 만피 보고가 이 값을 되돌리지 못하게 하는 게 목적이다.
         if (mobId == CurrentTarget() && CurrentBattleStart() > 0L && CurrentBattleEnd() == 0L)
         {
-            _battleLowHp[mobId] = _battleLowHp.TryGetValue(mobId, out long low) ? Math.Min(low, mobHp) : mobHp;
+            _battleLowHp[mobId] = _battleLowHp.TryGetValue(mobId, out (long Revision, long Low) seen) && seen.Revision == _battleRevision
+                ? (seen.Revision, Math.Min(seen.Low, mobHp))
+                : (_battleRevision, mobHp);
         }
 
         if (mobHp > 0)
@@ -796,7 +800,10 @@ public sealed class DataManager : ICaptureGameData
     /// <para><b>왜 최저값인가.</b> 피해는 줄어들기만 하므로 정상 전투에서 최저 잔여 HP = 마지막 타격 직후의
     /// 잔여 HP다(킬이면 0). 즉 이 값은 평시에 라이브 값과 같고, 보스가 회복한 경우에만 갈린다 — 그리고 그때는
     /// 누적 피해량과도 이쪽이 앞뒤가 맞는다(누적 피해는 회복분을 되돌리지 않는다).</para></summary>
-    public long? BattleLowMobHp(int mobId) => _battleLowHp.TryGetValue(mobId, out long low) ? low : null;
+    public long? BattleLowMobHp(int mobId, long battleRevision)
+        => _battleLowHp.TryGetValue(mobId, out (long Revision, long Low) seen) && seen.Revision == battleRevision
+            ? seen.Low
+            : null;
 
     public long? MobMaxHp(int mobId)
     {
@@ -2973,8 +2980,8 @@ public sealed class DataManager : ICaptureGameData
         _pendingStart = null;
         _unresolvedStarts.Remove(mobId);
         _recentlyEndedBattles.Remove(mobId);
-        _battleLowHp.Remove(mobId); // 새 전투 = 새 최저치. 안 지우면 재도전이 직전 판의 최저 HP를 물려받는다.
-        _battleRevision++;
+        _battleRevision++; // 최저치는 리비전으로 무효화된다 — 여기서 지우면 아직 저장 안 된 직전 판이 값을 잃는다
+        
         // 보스 전투의 시작. 허수아비의 고정 종료가 여기까지 살아남으면 그 값이 이 전투의 종료 스탬프로
         // 새어 나간다(191M 오염과 같은 계열의 사고다). 창을 여는 자리에서 확실히 지운다.
         // (FlushPacket 도 같은 일을 하지만, 이 경로가 그걸 반드시 거친다는 보장은 없다.)
@@ -3066,7 +3073,6 @@ public sealed class DataManager : ICaptureGameData
         _activeBattleMobCode = newCode;
         _unresolvedStarts.Remove(target);
         _recentlyEndedBattles.Remove(target);
-        _battleLowHp.Remove(target); // 창을 새로 여는 자리 — StartBattleAt 과 같은 이유로 최저치도 새로 센다.
         _pendingStart = null;
         // 타깃이 바뀌었으니 유휴 기준도 새 타깃 것으로 옮긴다. 안 옮기면 나가는 수호검이 조용했던 시간이 그대로
         // 새 전투의 유휴로 계산돼, 방금 연 전투가 곧바로 만료될 수 있다(다음 데미지가 다시 찍어주긴 하지만

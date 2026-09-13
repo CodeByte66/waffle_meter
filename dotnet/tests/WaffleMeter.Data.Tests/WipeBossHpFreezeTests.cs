@@ -68,6 +68,64 @@ public sealed class WipeBossHpFreezeTests
     }
 
     [Fact]
+    public void Quitting_right_after_a_wipe_still_records_the_low_water_mark()
+    {
+        // 저장 경로는 셋인데(타깃 전환·전투 종료·종료 드레인) 전이 지점에만 얼리면 세 번째가 샌다 —
+        // 유저가 전멸 직후 미터를 닫아 소비자 루프가 종료 전이를 돌기 전에 빠져나가는 경로다. 하필 이
+        // 기능이 없애려던 바로 그 장면이라, 얼리는 자리를 SaveRecentBattleLog 한 곳으로 모았다.
+        (DataManager dm, DpsCalculator calc, long[] clock) = Boss();
+        var logged = new List<DpsLog>();
+        calc.OnBattleLogged = logged.Add;
+
+        dm.SaveMobMaxHp(Instance, FullHp);
+        dm.MobHp(Instance, FullHp);
+        dm.StartBattle(Instance);
+        Hit(dm, clock[0] + 1_000, 1_000_000);
+        clock[0] += 2_000;
+        dm.MobHp(Instance, 90_199_903L);
+        calc.GetDps();
+
+        clock[0] += 1_000;
+        dm.MobHp(Instance, FullHp); // 전멸 리셋 방송
+        calc.GetDps();
+        clock[0] += 1_000;
+
+        calc.ResetDataStorage(); // 종료 토글이 오기도 전에 미터를 닫았다
+
+        DpsLog log = Assert.Single(logged);
+        Assert.Equal(90_199_903L, log.Report.Target!.RemainHp);
+    }
+
+    [Fact]
+    public void A_repull_that_opens_before_the_previous_attempt_is_saved_keeps_its_own_low_water_mark()
+    {
+        // 최저치를 '전투를 열 때' 지우면, 직전 판의 저장(리포트 틱)보다 새 판의 개시가 빠른 순간 그 저장이
+        // 새 판의 만피를 읽어 간다. 그래서 최저치는 전투 리비전으로 무효화한다.
+        (DataManager dm, DpsCalculator calc, long[] clock) = Boss();
+        var logged = new List<DpsLog>();
+        calc.OnBattleLogged = logged.Add;
+
+        dm.SaveMobMaxHp(Instance, FullHp);
+        dm.MobHp(Instance, FullHp);
+        dm.StartBattle(Instance);
+        Hit(dm, clock[0] + 1_000, 1_000_000);
+        clock[0] += 2_000;
+        dm.MobHp(Instance, 90_199_903L);
+        calc.GetDps();
+
+        // 전멸 → 종료 → 리포트 틱이 돌기 전에 같은 보스로 재교전이 열린다.
+        clock[0] += 1_000;
+        dm.EndBattle(Instance);
+        dm.MobHp(Instance, FullHp);
+        dm.StartBattle(Instance);
+
+        calc.GetDps(); // 이 틱이 직전 판을 저장한다
+
+        DpsLog log = Assert.Single(logged);
+        Assert.Equal(90_199_903L, log.Report.Target!.RemainHp);
+    }
+
+    [Fact]
     public void A_kill_still_records_zero()
     {
         (DataManager dm, DpsCalculator calc, long[] clock) = Boss();

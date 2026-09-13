@@ -2811,18 +2811,14 @@ public partial class App : Application
     /// <summary>"버프 종료 3초 전 알림"의 리드. 점멸이 시작되는 시점이자, 음성이 나가는 시점이다.</summary>
     private const long BuffEndWarnLeadMs = 3_000;
 
-    /// <summary>버프 슬롯을 새로 그리는 주기. 스캔 창은 반드시 이보다 넓어야 틱이 경고를 건너뛰지 않는다.</summary>
+    /// <summary>버프 슬롯을 새로 그리는 주기(<see cref="_buffTimer"/>). 스캔 창은 반드시 이보다 넓어야
+    /// 틱이 경고를 건너뛰지 않는다.</summary>
     private const long BuffTickMs = 500;
 
-    /// <summary>이번 설정에서 종료 경고를 얼마나 앞서 낼 것인가.</summary>
-    private long BuffEndLeadMs => _settings is { BuffEndWarning3s: true } ? BuffEndWarnLeadMs : BuffEndTtsLeadMs;
-
-    /// <summary>리드를 옮기면 스캔 창도 같이 옮겨야 한다 — 위 <see cref="BuffEndTtsScanMs"/> 주석이 그 이유다.</summary>
-    private long BuffEndScanMs => _settings is { BuffEndWarning3s: true } ? BuffEndWarnLeadMs + BuffTickMs : BuffEndTtsScanMs;
-
-    /// <summary>이보다 짧은 버프는 종료 경고를 건너뛴다 — 안 그러면 "온"과 경고가 사실상 동시에 나간다.
-    /// 3초 리드에서는 리드+1초(=4초)로 잡는다. 종전 경로는 옛 값(스캔×2=1400ms)을 그대로 쓴다.</summary>
-    private long BuffEndMinDurationMs => _settings is { BuffEndWarning3s: true } ? BuffEndWarnLeadMs + 1_000 : BuffEndTtsScanMs * 2;
+    /// <summary>3초 리드를 적용할 수 있는 최소 지속시간. 리드보다 1초는 길어야 "온"과 경고가 겹치지 않는다.
+    /// <b>이보다 짧은 버프는 침묵시키지 않고 종전 경로(만료 직전 "오프")로 되돌린다</b> — 안 그러면 이 옵션을
+    /// 켠 것만으로 짧은 버프의 종료 알림이 조용히 사라진다.</summary>
+    private const long BuffEndWarnMinDurationMs = BuffEndWarnLeadMs + 1_000;
     private readonly HashSet<int> _buffStartAnnounced = new(); // base codes we've spoken "온" for (cleared when they end)
     private readonly Dictionary<int, long> _buffEndAnnouncedFor = new(); // base code -> the End(ms) already "오프"-warned; a re-cast extends End and re-arms
     /// <summary>Queued-but-unspoken end warnings, with the End(ms) each was queued against, so a re-cast can
@@ -2861,13 +2857,8 @@ public partial class App : Application
             _buffStartAnnounced.Clear();
             _buffEndAnnouncedFor.Clear();
             // 예약된 종료 경고도 함께 버린다. 안 그러면 사망으로 이미 사라진 버프를 두고 "오프"가 뒤늦게
-            // 나간다 — 리드가 3초가 되면 그 창이 15배 넓어져 확실히 드러난다.
-            foreach ((System.Windows.Threading.DispatcherTimer Timer, long EndMs) queued in _buffEndPending.Values)
-            {
-                queued.Timer.Stop();
-            }
-
-            _buffEndPending.Clear();
+            // 나간다.
+            CancelPendingBuffEndAlerts();
         }
         else
         {
@@ -2885,7 +2876,8 @@ public partial class App : Application
             drawn,
             _settings.BuffUiGrayOnCooldown,
             _settings.BuffUiShowLevel,
-            _settings.BuffEndWarning3s ? BuffEndWarnLeadMs : 0);
+            _settings.BuffEndWarning3s ? BuffEndWarnLeadMs : 0,
+            BuffEndWarnMinDurationMs);
 
         // Visibility: mirror the controller's companion decision (CompanionShown already folds in ShowBuffUi,
         // the meter's on-screen state, and the "메터 숨겨도 오버레이 유지" toggle). Mirror the meter's click-through
@@ -2998,6 +2990,7 @@ public partial class App : Application
         {
             _buffStartAnnounced.Clear();
             _buffEndAnnouncedFor.Clear();
+            CancelPendingBuffEndAlerts(); // 음성을 끈 뒤에 예약분이 뒤늦게 말하지 않도록
             return;
         }
 
@@ -3023,14 +3016,21 @@ public partial class App : Application
             // time a held re-broadcast gap elapsed while the stance was still up.
             // "3초 전 알림"이 켜져 있으면 그쪽이 만료 직전 "오프"를 <b>대체한다</b> — 둘 다 내면 같은 버프를
             // 2.8초 간격으로 두 번 말한다. 문구도 달라야 한다: 3초 전에 "오프"라고 하면 이미 끝난 것으로 들린다.
-            if (s.BuffTtsOnEnd && !b.Indefinite && b.DurationMs > BuffEndMinDurationMs && b.RemainingMs > 0 && b.RemainingMs <= BuffEndScanMs
+            // 판정은 버프마다 따로 한다 — 4초도 안 되는 버프에 3초 리드는 성립하지 않으므로 그런 버프만
+            // 종전 경로로 되돌린다(옵션을 켠 대가로 짧은 버프가 조용해지면 그게 더 나쁜 회귀다).
+            bool warnEarly = s.BuffEndWarning3s && b.DurationMs > BuffEndWarnMinDurationMs;
+            long lead = warnEarly ? BuffEndWarnLeadMs : BuffEndTtsLeadMs;
+            long scan = warnEarly ? BuffEndWarnLeadMs + BuffTickMs : BuffEndTtsScanMs;
+            long minDuration = warnEarly ? BuffEndWarnMinDurationMs : BuffEndTtsScanMs * 2;
+
+            if (s.BuffTtsOnEnd && !b.Indefinite && b.DurationMs > minDuration && b.RemainingMs > 0 && b.RemainingMs <= scan
                 && (!_buffEndAnnouncedFor.TryGetValue(b.Code, out long warnedEnd) || warnedEnd != b.EndMs))
             {
                 _buffEndAnnouncedFor[b.Code] = b.EndMs;
-                string text = s.BuffEndWarning3s ? $"{b.Name} 오프 예정" : $"{b.Name} 오프";
+                string text = warnEarly ? $"{b.Name} 오프 예정" : $"{b.Name} 오프";
                 // Claimed on the tick that spotted it, but spoken at the lead — the tick lands anywhere in the
                 // scan window, so speaking immediately would put the voice up to half a second early.
-                SpeakBuffEnd(b.Code, b.EndMs, text, s.AlarmVolume, b.RemainingMs - BuffEndLeadMs);
+                SpeakBuffEnd(b.Code, b.EndMs, text, s.AlarmVolume, b.RemainingMs - lead);
             }
 
             // A re-cast inside the scan window moves End out, so the warning we already queued is now about an
@@ -3051,6 +3051,18 @@ public partial class App : Application
         {
             _buffEndAnnouncedFor.Remove(c);
         }
+    }
+
+    /// <summary>예약해 둔 종료 경고를 전부 취소한다 — 사망 클리어, 음성 옵션 해제처럼 "그 버프가 더는
+    /// 우리 관심사가 아니다"가 된 순간. 안 그러면 이미 없는 버프를 두고 뒤늦게 말한다.</summary>
+    private void CancelPendingBuffEndAlerts()
+    {
+        foreach ((System.Windows.Threading.DispatcherTimer Timer, long EndMs) queued in _buffEndPending.Values)
+        {
+            queued.Timer.Stop();
+        }
+
+        _buffEndPending.Clear();
     }
 
     /// <summary>Sound an alert: speak it with TTS if enabled (which falls back to the chime on failure),

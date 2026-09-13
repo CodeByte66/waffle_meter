@@ -155,6 +155,58 @@ public class JoinRequestStoreTests
     }
 
     [Fact]
+    public void An_admit_for_an_already_expired_ghost_does_not_eat_a_real_refusal()
+    {
+        // 0x970B 는 수락 전용이 아니라 '멤버가 붙었다' 브로드캐스트라 기존 파티원을 다시 싣기도 하고,
+        // 사전은 만료된 신청을 배지 승계용으로 계속 들고 있다. 그 유령을 '수락'으로 세면 진짜 거절의
+        // 보류를 대신 삼켜, 거절당한 사람 카드가 20초를 마저 채운다.
+        long now = 100_000;
+        var store = new JoinRequestStore(() => now);
+        store.Add(User(1, now - 25_000)); // 만료된 유령(화면엔 없다)
+        store.Add(User(2, now - 1_000));  // 방금 거절당한 카드
+
+        store.OnResolved();
+        store.Remove(1, admit: true);     // 열거 브로드캐스트가 유령 uid 를 싣고 왔다
+
+        now += 500;
+        Assert.Empty(store.Snapshot());
+    }
+
+    [Fact]
+    public void A_resolve_that_outlives_a_card_lifetime_is_dropped_instead_of_eating_a_later_applicant()
+    {
+        // 패널이 닫혀 있으면 하트비트가 멈춰 보류가 분 단위로 살아남는다. 그동안 그 보류가 가리키던 카드는
+        // 이미 전부 만료됐으므로, 그대로 적용하면 한참 뒤에 도착한 '새' 신청을 대신 삼킨다.
+        long now = 1000;
+        var store = new JoinRequestStore(() => now);
+        store.Add(User(1, now));
+        store.OnResolved();
+
+        now += 60_000;               // 패널이 닫힌 채 1분
+        store.Add(User(2, now));     // 새 신청
+
+        now += 500;
+        Assert.Equal([2], store.Snapshot().Select(r => r.Requester));
+    }
+
+    [Fact]
+    public void Pairing_survives_the_admit_arriving_before_the_resolve()
+    {
+        // 실측 순서는 언제나 0x9709 → 0x970B 였지만, 그 순서에만 기대면 한 번 뒤집히는 순간 종전 버그가
+        // 그대로 돌아온다(애먼 카드가 지워진다).
+        long now = 1000;
+        var store = new JoinRequestStore(() => now);
+        store.Add(User(1, 100)); // 살아 있어야 한다
+        store.Add(User(2, 200)); // 수락됨
+
+        store.Remove(2, admit: true); // 0x970B 가 먼저
+        store.OnResolved();           // 0x9709 가 나중
+
+        now += 500;
+        Assert.Equal([1], store.Snapshot().Select(r => r.Requester));
+    }
+
+    [Fact]
     public void Enrich_fills_a_live_card_but_never_resurrects_a_resolved_one()
     {
         var store = new JoinRequestStore(() => 1000);
