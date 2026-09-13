@@ -131,6 +131,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _buffUiTransparent = ReadBool("buffUi.transparent", true);
         _buffTtsOnStart = ReadBool("buffUi.ttsOnStart", false);
         _buffTtsOnEnd = ReadBool("buffUi.ttsOnEnd", false);
+        _buffEndWarning3s = ReadBool("buffUi.endWarning3s", false);
         _buffUiGrayOnCooldown = ReadBool("buffUi.grayOnCooldown", false);
         _buffUiShowLevel = ReadBool("buffUi.showLevel", true);
         _showOtherPlayerBuffs = ReadBool("buffUi.showOther", true);
@@ -489,6 +490,14 @@ public sealed class MeterSettings : INotifyPropertyChanged
     private bool _buffTtsOnEnd;
     /// <summary>Speak "이름 오프" shortly before a tracked buff ends (a lead compensates for TTS latency).</summary>
     public bool BuffTtsOnEnd { get => _buffTtsOnEnd; set => SetBool(ref _buffTtsOnEnd, "buffUi.ttsOnEnd", value); }
+
+    private bool _buffEndWarning3s;
+    /// <summary>버프가 끝나기 <b>3초 전</b>에 미리 알린다 — 오버레이 아이콘이 점멸하고, 음성을 켠 버프라면
+    /// "이름 오프 예정"을 읽어 준다.
+    /// <para>켜면 <see cref="BuffTtsOnEnd"/>의 만료 직전 "이름 오프"를 <b>대체한다</b>(둘 다 발화하면 같은 버프를
+    /// 2.8초 간격으로 두 번 말하게 된다). 끄면 종전 동작 그대로다.</para>
+    /// <para>점멸은 음성 설정과 무관하게, 오버레이에 그려지는 버프면 모두 적용된다.</para></summary>
+    public bool BuffEndWarning3s { get => _buffEndWarning3s; set => SetBool(ref _buffEndWarning3s, "buffUi.endWarning3s", value); }
 
     private bool _buffUiGrayOnCooldown;
     /// <summary>Gray out a buff overlay icon while the skill that grants it is still on cooldown (from the live

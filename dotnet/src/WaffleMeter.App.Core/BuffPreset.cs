@@ -22,6 +22,9 @@ public sealed record BuffPreset
 
     public bool TtsOnEnd { get; init; }
 
+    /// <summary>버프 종료 3초 전 알림(점멸 + "이름 오프 예정").</summary>
+    public bool EndWarning3s { get; init; }
+
     public bool GrayOnCooldown { get; init; }
 
     public bool ShowOther { get; init; } = true;

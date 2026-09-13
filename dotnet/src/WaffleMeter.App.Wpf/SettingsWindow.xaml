@@ -1196,6 +1196,15 @@
                             </StackPanel>
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding BuffTtsOnEnd}"/>
                         </Grid>
+
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="버프 종료 3초 전 알림" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="끝나기 3초 전부터 오버레이 아이콘이 점멸합니다. '버프 종료 음성'도 켜져 있으면 '오프' 대신 '스킬명 오프 예정'을 3초 전에 읽어줍니다." Style="{StaticResource SettingDesc}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding BuffEndWarning3s}"/>
+                        </Grid>
                         <Border Style="{StaticResource SectionDivider}"/>
                         <TextBlock Text="직업별 버프" Style="{StaticResource SectionHeader}" Margin="0,0,0,10"/>
                         <TextBlock Text="직업별로 각 버프를 오버레이/음성 중 어떻게 알릴지 고릅니다. (소비 아이템·물약은 제외)" Style="{StaticResource SettingDesc}" Margin="0,0,0,10"/>

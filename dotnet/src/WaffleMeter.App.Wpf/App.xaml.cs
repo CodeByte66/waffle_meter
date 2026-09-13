@@ -2807,6 +2807,22 @@ public partial class App : Application
     /// this would have regressed if the lead had just been turned down.
     /// </summary>
     private const long BuffEndTtsScanMs = 700;
+
+    /// <summary>"버프 종료 3초 전 알림"의 리드. 점멸이 시작되는 시점이자, 음성이 나가는 시점이다.</summary>
+    private const long BuffEndWarnLeadMs = 3_000;
+
+    /// <summary>버프 슬롯을 새로 그리는 주기. 스캔 창은 반드시 이보다 넓어야 틱이 경고를 건너뛰지 않는다.</summary>
+    private const long BuffTickMs = 500;
+
+    /// <summary>이번 설정에서 종료 경고를 얼마나 앞서 낼 것인가.</summary>
+    private long BuffEndLeadMs => _settings is { BuffEndWarning3s: true } ? BuffEndWarnLeadMs : BuffEndTtsLeadMs;
+
+    /// <summary>리드를 옮기면 스캔 창도 같이 옮겨야 한다 — 위 <see cref="BuffEndTtsScanMs"/> 주석이 그 이유다.</summary>
+    private long BuffEndScanMs => _settings is { BuffEndWarning3s: true } ? BuffEndWarnLeadMs + BuffTickMs : BuffEndTtsScanMs;
+
+    /// <summary>이보다 짧은 버프는 종료 경고를 건너뛴다 — 안 그러면 "온"과 경고가 사실상 동시에 나간다.
+    /// 3초 리드에서는 리드+1초(=4초)로 잡는다. 종전 경로는 옛 값(스캔×2=1400ms)을 그대로 쓴다.</summary>
+    private long BuffEndMinDurationMs => _settings is { BuffEndWarning3s: true } ? BuffEndWarnLeadMs + 1_000 : BuffEndTtsScanMs * 2;
     private readonly HashSet<int> _buffStartAnnounced = new(); // base codes we've spoken "온" for (cleared when they end)
     private readonly Dictionary<int, long> _buffEndAnnouncedFor = new(); // base code -> the End(ms) already "오프"-warned; a re-cast extends End and re-arms
     /// <summary>Queued-but-unspoken end warnings, with the End(ms) each was queued against, so a re-cast can
@@ -2844,6 +2860,14 @@ public partial class App : Application
             _lastBuffClearRevision = clearRevision;
             _buffStartAnnounced.Clear();
             _buffEndAnnouncedFor.Clear();
+            // 예약된 종료 경고도 함께 버린다. 안 그러면 사망으로 이미 사라진 버프를 두고 "오프"가 뒤늦게
+            // 나간다 — 리드가 3초가 되면 그 창이 15배 넓어져 확실히 드러난다.
+            foreach ((System.Windows.Threading.DispatcherTimer Timer, long EndMs) queued in _buffEndPending.Values)
+            {
+                queued.Timer.Stop();
+            }
+
+            _buffEndPending.Clear();
         }
         else
         {
@@ -2857,7 +2881,11 @@ public partial class App : Application
         // 표시 순서: 전역 정렬 모드로 줄을 세우고, 사용자가 "맨 앞 고정"한 버프를 그 앞으로 끌어온다.
         List<WaffleMeter.Data.OwnerBuffView> drawn = BuffOverlayOrder.Sort(
             buffs.Where(b => b.Overlay).ToList(), _settings.BuffUiSortMode, _settings.BuffUiPinnedCodes);
-        _buffOverlayVm.Update(drawn, _settings.BuffUiGrayOnCooldown, _settings.BuffUiShowLevel);
+        _buffOverlayVm.Update(
+            drawn,
+            _settings.BuffUiGrayOnCooldown,
+            _settings.BuffUiShowLevel,
+            _settings.BuffEndWarning3s ? BuffEndWarnLeadMs : 0);
 
         // Visibility: mirror the controller's companion decision (CompanionShown already folds in ShowBuffUi,
         // the meter's on-screen state, and the "메터 숨겨도 오버레이 유지" toggle). Mirror the meter's click-through
@@ -2874,6 +2902,8 @@ public partial class App : Application
             else
             {
                 _buffOverlay.Fade();
+                // 숨겨진 창을 위해 점멸 타이머를 돌릴 이유가 없다. TierSheen 과 같은 규약이다.
+                BuffExpiryFlash.SetDemand(0);
             }
         }
     }
@@ -2991,13 +3021,16 @@ public partial class App : Application
             // so the end alert fires off the REFRESHED duration. A maintained stance (폭주) is skipped entirely:
             // its expiry is a synthetic keep-alive, not a real end, so pre-warning it spoke a false "오프" every
             // time a held re-broadcast gap elapsed while the stance was still up.
-            if (s.BuffTtsOnEnd && !b.Indefinite && b.DurationMs > BuffEndTtsScanMs * 2 && b.RemainingMs > 0 && b.RemainingMs <= BuffEndTtsScanMs
+            // "3초 전 알림"이 켜져 있으면 그쪽이 만료 직전 "오프"를 <b>대체한다</b> — 둘 다 내면 같은 버프를
+            // 2.8초 간격으로 두 번 말한다. 문구도 달라야 한다: 3초 전에 "오프"라고 하면 이미 끝난 것으로 들린다.
+            if (s.BuffTtsOnEnd && !b.Indefinite && b.DurationMs > BuffEndMinDurationMs && b.RemainingMs > 0 && b.RemainingMs <= BuffEndScanMs
                 && (!_buffEndAnnouncedFor.TryGetValue(b.Code, out long warnedEnd) || warnedEnd != b.EndMs))
             {
                 _buffEndAnnouncedFor[b.Code] = b.EndMs;
+                string text = s.BuffEndWarning3s ? $"{b.Name} 오프 예정" : $"{b.Name} 오프";
                 // Claimed on the tick that spotted it, but spoken at the lead — the tick lands anywhere in the
                 // scan window, so speaking immediately would put the voice up to half a second early.
-                SpeakBuffEnd(b.Code, b.EndMs, $"{b.Name} 오프", s.AlarmVolume, b.RemainingMs - BuffEndTtsLeadMs);
+                SpeakBuffEnd(b.Code, b.EndMs, text, s.AlarmVolume, b.RemainingMs - BuffEndLeadMs);
             }
 
             // A re-cast inside the scan window moves End out, so the warning we already queued is now about an
