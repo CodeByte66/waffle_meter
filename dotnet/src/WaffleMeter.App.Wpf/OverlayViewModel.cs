@@ -822,7 +822,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     }
 
     /// <summary>Boss HP readout per React targetInfoDisplayMode.</summary>
-    private static string FormatTargetHp(int remain, int max, double pct, string mode) => mode switch
+    private static string FormatTargetHp(long remain, long max, double pct, string mode) => mode switch
     {
         "percent" => $"{pct:F1}%",
         "remain_percent" => $"{MeterFormat.FormatAmount(remain)}  {pct:F1}%",

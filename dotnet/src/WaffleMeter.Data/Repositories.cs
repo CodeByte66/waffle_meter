@@ -147,21 +147,22 @@ public sealed class PacketRepository
 /// <summary>Kotlin MobIdRepository: instanceId -> (mobCode, maxHp).</summary>
 public sealed class MobIdRepository
 {
-    public sealed class MobInstance(int code, int maxHp = 0)
+    public sealed class MobInstance(int code, long maxHp = 0)
     {
         public int Code { get; } = code;
-        public int MaxHp { get; set; } = maxHp;
+        // long이다 — 실측 최대 HP가 27억대(델트라스)라 int로는 21.47억에서 포화한다.
+        public long MaxHp { get; set; } = maxHp;
     }
 
     private readonly Dictionary<int, MobInstance> _storage = new();
 
     public void Save(int key, int code)
     {
-        int maxHp = _storage.TryGetValue(key, out MobInstance? existing) && existing.Code == code ? existing.MaxHp : 0;
+        long maxHp = _storage.TryGetValue(key, out MobInstance? existing) && existing.Code == code ? existing.MaxHp : 0;
         _storage[key] = new MobInstance(code, maxHp);
     }
 
-    public bool SaveMaxHp(int key, int maxHp)
+    public bool SaveMaxHp(int key, long maxHp)
     {
         if (!_storage.TryGetValue(key, out MobInstance? instance))
         {
@@ -184,9 +185,9 @@ public sealed class MobIdRepository
 /// <summary>Kotlin MobHpRepository: instanceId -> remaining HP.</summary>
 public sealed class MobHpRepository
 {
-    private readonly Dictionary<int, int> _storage = new();
-    public int? Get(int key) => _storage.TryGetValue(key, out int v) ? v : null;
-    public void Set(int key, int value) => _storage[key] = value;
+    private readonly Dictionary<int, long> _storage = new();
+    public long? Get(int key) => _storage.TryGetValue(key, out long v) ? v : null;
+    public void Set(int key, long value) => _storage[key] = value;
     public void Flush() => _storage.Clear();
 }
 

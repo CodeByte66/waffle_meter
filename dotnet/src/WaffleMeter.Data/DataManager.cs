@@ -95,6 +95,9 @@ public sealed class DataManager : ICaptureGameData
     private const string SplitBossName = "염화의 수호검";
     private readonly Dictionary<int, (long FirstMs, long LastMs, int Hits)> _selfDamageStreak = new();
     private readonly Dictionary<int, long> _bossEngageAtMs = new(); // instanceId -> 최근 0x8D21 start-toggle 시각(전환 back-date용)
+    // instanceId -> 그 전투에서 관측된 <b>최저</b> 잔여 HP. 전투 기록이 얼려야 할 값이며, 라이브 게이지는 쓰지
+    // 않는다. 왜 필요한지는 BattleLowMobHp 주석 참조.
+    private readonly Dictionary<int, long> _battleLowHp = new();
     private const long SelfStreakGapMs = 2_000L;    // 이 간격 넘으면 스트릭 리셋(스치는 AoE 누적 방지)
     private const long SelfSwitchDwellMs = 1_500L;  // 전환 전 지속 자기딜 요건
     private const int SelfSwitchMinHits = 3;
@@ -731,7 +734,7 @@ public sealed class DataManager : ICaptureGameData
         }
 
         SaveMobId(entityId, UnknownBossMobCode); // PromoteUnresolvedStart가 back-date StartBattle을 발화
-        SaveMobMaxHp(entityId, (int)Math.Min(hp, int.MaxValue));
+        SaveMobMaxHp(entityId, hp);
     }
 
     public bool SkillExists(long code) => _skillRepository.Exist(code);
@@ -746,9 +749,9 @@ public sealed class DataManager : ICaptureGameData
     public Skill? Skill(long code) => _skillRepository.Get(code);
     public Buff? Buff(int code) => _buffRepository.Get(code);
 
-    public int? MobHp(int mobId) => _mobHpRepository.Get(mobId);
+    public long? MobHp(int mobId) => _mobHpRepository.Get(mobId);
 
-    public void MobHp(int mobId, int mobHp)
+    public void MobHp(int mobId, long mobHp)
     {
         _mobHpRepository.Set(mobId, mobHp);
         if (mobId == CurrentTarget())
@@ -756,6 +759,13 @@ public sealed class DataManager : ICaptureGameData
             // HP 보고만으로도 "그 보스가 아직 우리 시야에 있다"는 증거다 — 파티가 딜을 멈춘 페이즈(칼드릭스)에도
             // 계속 오므로, 데미지만 신호로 삼으면 정상 페이즈를 유휴로 오판한다.
             _lastBossActivityMs = Clock();
+        }
+
+        // 이 전투에서 가장 많이 깎였던 지점을 따로 기억한다. 전투가 열려 있는 동안에만 갱신하고, 내려갈 때만
+        // 받는다 — 전멸 직후 보스가 제자리로 돌아가며 쏘는 만피 보고가 이 값을 되돌리지 못하게 하는 게 목적이다.
+        if (mobId == CurrentTarget() && CurrentBattleStart() > 0L && CurrentBattleEnd() == 0L)
+        {
+            _battleLowHp[mobId] = _battleLowHp.TryGetValue(mobId, out long low) ? Math.Min(low, mobHp) : mobHp;
         }
 
         if (mobHp > 0)
@@ -777,13 +787,24 @@ public sealed class DataManager : ICaptureGameData
         }
     }
 
-    public int? MobMaxHp(int mobId)
+    /// <summary>그 전투에서 관측된 <b>최저</b> 잔여 HP — 전투 기록에 얼려야 할 값이다. 한 번도 HP를 못 받았으면 null.
+    /// <para><b>왜 라이브 HP를 그대로 못 쓰는가.</b> 파티가 전멸하면 보스가 제자리로 돌아가며 만피를 한 번
+    /// 방송한다. 실측(2026-08-31 바실루스)에서 그 프레임은 <b>종료 토글보다 1.495초 먼저</b> 왔다 —
+    /// 25.4%까지 깎아 놓고 진 전투가 기록에 <b>100%</b>로 박혔고, 그 사이 라이브 틱들이 이미 리포트에 만피를
+    /// 써 넣은 뒤였다. 즉 "종료 순간에 얼린다"로는 못 막는다. <c>replay-diag</c> 전수에서 죽지 않고 끝난
+    /// 비포화 전투 601건 중 194건(32%)이 이렇게 만피로 기록돼 있었다.</para>
+    /// <para><b>왜 최저값인가.</b> 피해는 줄어들기만 하므로 정상 전투에서 최저 잔여 HP = 마지막 타격 직후의
+    /// 잔여 HP다(킬이면 0). 즉 이 값은 평시에 라이브 값과 같고, 보스가 회복한 경우에만 갈린다 — 그리고 그때는
+    /// 누적 피해량과도 이쪽이 앞뒤가 맞는다(누적 피해는 회복분을 되돌리지 않는다).</para></summary>
+    public long? BattleLowMobHp(int mobId) => _battleLowHp.TryGetValue(mobId, out long low) ? low : null;
+
+    public long? MobMaxHp(int mobId)
     {
-        int? maxHp = _mobIdRepository.Get(mobId)?.MaxHp;
+        long? maxHp = _mobIdRepository.Get(mobId)?.MaxHp;
         return maxHp is > 0 ? maxHp : null;
     }
 
-    public void SaveMobMaxHp(int mid, int maxHp) => _mobIdRepository.SaveMaxHp(mid, maxHp);
+    public void SaveMobMaxHp(int mid, long maxHp) => _mobIdRepository.SaveMaxHp(mid, maxHp);
 
     public bool IsMobInstance(int id) => _mobIdRepository.Exist(id);
 
@@ -2562,7 +2583,7 @@ public sealed class DataManager : ICaptureGameData
         }
     }
 
-    public void SaveMobHp(int instanceId, int hp) => MobHp(instanceId, hp);
+    public void SaveMobHp(int instanceId, long hp) => MobHp(instanceId, hp);
 
     public List<UseBuff> BattleBuff(int uid, long start, long end) => _useBuffRepository.FindOverlapping(uid, start, end);
 
@@ -2907,7 +2928,7 @@ public sealed class DataManager : ICaptureGameData
         if (CurrentTarget() <= 0
             && endedBattle != null
             && endedBattle.Value.MobCode == mobCode
-            && (MobHp(mobId) ?? 0) == 0 // int? — a despawned corpse loses HP tracking (null); null must count as
+            && (MobHp(mobId) ?? 0) == 0 // long? — a despawned corpse loses HP tracking (null); null must count as
                                         // "corpse", else the guard leaks and a ghost restart re-stamps
                                         // CurrentBattleStart at the kill (→ split + 191M-DPS upload)
             && now - endedBattle.Value.EndedAt <= EndedBattleStartIgnoreMs)
@@ -2952,6 +2973,7 @@ public sealed class DataManager : ICaptureGameData
         _pendingStart = null;
         _unresolvedStarts.Remove(mobId);
         _recentlyEndedBattles.Remove(mobId);
+        _battleLowHp.Remove(mobId); // 새 전투 = 새 최저치. 안 지우면 재도전이 직전 판의 최저 HP를 물려받는다.
         _battleRevision++;
         // 보스 전투의 시작. 허수아비의 고정 종료가 여기까지 살아남으면 그 값이 이 전투의 종료 스탬프로
         // 새어 나간다(191M 오염과 같은 계열의 사고다). 창을 여는 자리에서 확실히 지운다.
@@ -3044,6 +3066,7 @@ public sealed class DataManager : ICaptureGameData
         _activeBattleMobCode = newCode;
         _unresolvedStarts.Remove(target);
         _recentlyEndedBattles.Remove(target);
+        _battleLowHp.Remove(target); // 창을 새로 여는 자리 — StartBattleAt 과 같은 이유로 최저치도 새로 센다.
         _pendingStart = null;
         // 타깃이 바뀌었으니 유휴 기준도 새 타깃 것으로 옮긴다. 안 옮기면 나가는 수호검이 조용했던 시간이 그대로
         // 새 전투의 유휴로 계산돼, 방금 연 전투가 곧바로 만료될 수 있다(다음 데미지가 다시 찍어주긴 하지만
@@ -3184,6 +3207,7 @@ public sealed class DataManager : ICaptureGameData
         _dummyCutoff = false; // full wipe re-arms the dummy test window (mode/duration are preserved)
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
+        _battleLowHp.Clear();
         _partyRoster.Clear();
         _partyRosterAtMs = 0;
         ClearAetherStatus();
@@ -3214,6 +3238,7 @@ public sealed class DataManager : ICaptureGameData
         _dummyCutoff = false;     // the 초기화 button re-arms the dummy test window (mode/duration are preserved)
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
+        _battleLowHp.Clear();
         _partyRoster.Clear();     // drop the 0x9702 party snapshot — a stale party (e.g. after leaving the dungeon
         _partyRosterAtMs = 0;     // and returning to town) must not preview on reset; it re-fills on party formation
         // PRESERVE (do NOT flush): _userRepository (recognized chars + executor), _mobIdRepository (boss

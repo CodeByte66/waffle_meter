@@ -1761,13 +1761,13 @@ public sealed class StreamProcessor
 
         if (maxHp is { } mx && IsSaneHp(mx))
         {
-            _data.SaveMobMaxHp(mobIdInfo.Value, Saturate(mx));
+            _data.SaveMobMaxHp(mobIdInfo.Value, mx);
         }
 
         // 현재 HP가 실리지 않은 프레임(최대 HP만 오는 경우)은 잔여 HP를 발행하지 않는다 — 종전 버그.
         if (currentHp is not { } hp || !IsSaneHp(hp)) return;
 
-        int mobHp = Saturate(hp);
+        long mobHp = hp;
         _data.SaveMobHp(mobIdInfo.Value, mobHp);
         _sink.Meta("remain_hp",
             ("target", mobIdInfo.Value),
@@ -1782,10 +1782,11 @@ public sealed class StreamProcessor
 
     private static bool IsSaneHp(long hp) => hp >= 0 && hp <= MaxPlausibleHp;
 
-    // HP는 아직 데이터 계층 전체가 int다. 실측 최대 18.4억으로 int.MaxValue(21.5억) 대비 여유가 1.17배뿐이라
-    // 상위 던전이 추가되면 넘칠 수 있는데, 그때 음수로 뒤집히는 것보다 상한에 붙는 편이 안전하다.
-    // (자료형을 long으로 넓히는 건 통계 웹 페이로드 스키마까지 번지므로 별도 과제.)
-    private static int Saturate(long hp) => hp > int.MaxValue ? int.MaxValue : (int)hp;
+    // 여기서 int.MaxValue로 포화시키던 자리다. 그 주석은 "여유가 1.17배뿐"이라며 넘칠 것을 예고해 뒀는데,
+    // 실제로 비탄의 설원(델트라스 27억대)과 차원핵 계열이 넘겨서 그 보스들의 HP 게이지·보스 체력 기여도·전투
+    // 기록이 통째로 21.47억에 붙어 버렸다(replay-diag 실측 144건 / 13코드). 와이어는 u64로 정확했고 잘린 건
+    // 저장 직전 이 한 줄뿐이었으므로, 포화를 없애고 데이터 계층을 long으로 넓혔다. 업로드 payload에는 HP
+    // 원본 필드가 없다(bossHpContribution만 나간다) — 스키마 번호는 그대로다.
 
     /// <summary>엔티티 사망 0x8D04 — 죽은 엔티티 id varint 하나가 전부다. 몹·파티원에게도 오므로 "본인인가"
     /// 판정은 executor를 아는 데이터 계층에 맡긴다. 본인 사망 시 버프 오버레이를 비우는 데 쓴다(사망 후

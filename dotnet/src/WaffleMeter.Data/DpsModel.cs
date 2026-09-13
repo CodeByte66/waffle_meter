@@ -236,10 +236,11 @@ public sealed class MobInfo
 {
     public int Id { get; }
     public Mob Mob { get; }
-    public int RemainHp { get; set; }
-    public int MaxHp { get; set; }
+    // HP는 long이다 — 실측 최대가 27억대(델트라스)라 int로는 21.47억에서 포화해 게이지·기여도가 통째로 틀어진다.
+    public long RemainHp { get; set; }
+    public long MaxHp { get; set; }
 
-    public MobInfo(int id, Mob mob, int remainHp = 0, int maxHp = 0)
+    public MobInfo(int id, Mob mob, long remainHp = 0, long maxHp = 0)
     {
         Id = id;
         Mob = mob;

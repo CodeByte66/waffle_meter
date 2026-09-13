@@ -17,8 +17,8 @@ public sealed class RemainHpStatDecodeTests
 
     private sealed class Recorder : ICaptureGameData
     {
-        public readonly List<(int Instance, int Hp)> Hp = new();
-        public readonly List<(int Instance, int MaxHp)> MaxHp = new();
+        public readonly List<(int Instance, long Hp)> Hp = new();
+        public readonly List<(int Instance, long MaxHp)> MaxHp = new();
 
         public Mob? GetMob(int code) => code == BossCode ? new Mob(BossCode, "보스", Boss: true) : null;
         public int? GetMobId(int instanceId) => instanceId == BossInstance ? BossCode : null;
@@ -31,8 +31,8 @@ public sealed class RemainHpStatDecodeTests
         public void SaveNickname(int uid, string nickname, bool isExecutor, int server, int jobByte) { }
         public void SaveUserPower(int uid, int power) { }
         public void SaveSummon(int summonId, int ownerId) { }
-        public void SaveMobHp(int instanceId, int hp) => Hp.Add((instanceId, hp));
-        public void SaveMobMaxHp(int instanceId, int maxHp) => MaxHp.Add((instanceId, maxHp));
+        public void SaveMobHp(int instanceId, long hp) => Hp.Add((instanceId, hp));
+        public void SaveMobMaxHp(int instanceId, long maxHp) => MaxHp.Add((instanceId, maxHp));
         public void SaveUseBuff(int uid, int skillCode, long buffStart, long buffEnd, long duration, int actorId) { }
         public void RequestOfficialCharacterLookup(int uid) { }
         public void SavePartyRoster(IReadOnlyList<(string Nickname, int Server, int Slot)> members) { }
@@ -94,7 +94,7 @@ public sealed class RemainHpStatDecodeTests
         // mask=2, 항목 1개, statId 0, u64 = 880,000,000 (바크론 티어)
         Recorder r = Run(Frame(Entity, B(0x02, 0x01, 0x00), U64(880_000_000L)));
 
-        Assert.Equal((BossInstance, 880_000_000), Assert.Single(r.Hp));
+        Assert.Equal((BossInstance, 880_000_000L), Assert.Single(r.Hp));
         Assert.Empty(r.MaxHp);
     }
 
@@ -105,7 +105,7 @@ public sealed class RemainHpStatDecodeTests
         Recorder r = Run(Frame(Entity, B(0x02, 0x01, 0x07), U64(880_000_000L)));
 
         Assert.Empty(r.Hp);
-        Assert.Equal((BossInstance, 880_000_000), Assert.Single(r.MaxHp));
+        Assert.Equal((BossInstance, 880_000_000L), Assert.Single(r.MaxHp));
     }
 
     [Fact]
@@ -114,8 +114,8 @@ public sealed class RemainHpStatDecodeTests
         // 최대 HP가 현재 HP보다 앞에 실려도 각각 제자리로 간다.
         Recorder r = Run(Frame(Entity, B(0x02, 0x02, 0x07), U64(880_000_000L), B(0x00), U64(123_456_789L)));
 
-        Assert.Equal((BossInstance, 123_456_789), Assert.Single(r.Hp));
-        Assert.Equal((BossInstance, 880_000_000), Assert.Single(r.MaxHp));
+        Assert.Equal((BossInstance, 123_456_789L), Assert.Single(r.Hp));
+        Assert.Equal((BossInstance, 880_000_000L), Assert.Single(r.MaxHp));
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public sealed class RemainHpStatDecodeTests
             B(0x03, 0x01, 0x01), BitConverter.GetBytes(4257), // u32 자원 스탯 1개
             B(0x01, 0x00), U64(555_000_000L)));               // u64 리스트: 1개, statId 0
 
-        Assert.Equal((BossInstance, 555_000_000), Assert.Single(r.Hp));
+        Assert.Equal((BossInstance, 555_000_000L), Assert.Single(r.Hp));
     }
 
     [Fact]
@@ -157,6 +157,19 @@ public sealed class RemainHpStatDecodeTests
         Recorder r = Run(frame);
 
         Assert.Empty(r.Hp);
+    }
+
+    [Fact]
+    public void An_hp_above_int_max_is_not_saturated()
+    {
+        // 종전에는 저장 직전 Saturate()가 int.MaxValue로 잘랐다. 델트라스(27억대)·차원핵 계열이 그 상한을
+        // 넘겨 게이지·보스 체력 기여도·전투 기록이 통째로 21.47억에 붙었다(replay-diag 실측 144건/13코드).
+        // 와이어는 u64로 정확했으므로 잘리는 건 저장 경로뿐이었다 — 그 경로가 다시 좁아지면 여기서 걸린다.
+        const long twentySevenHundredMillion = 2_720_000_000L;
+        Recorder r = Run(Frame(Entity, B(0x02, 0x02, 0x07), U64(twentySevenHundredMillion), B(0x00), U64(2_500_000_000L)));
+
+        Assert.Equal((BossInstance, 2_500_000_000L), Assert.Single(r.Hp));
+        Assert.Equal((BossInstance, twentySevenHundredMillion), Assert.Single(r.MaxHp));
     }
 
     [Fact]

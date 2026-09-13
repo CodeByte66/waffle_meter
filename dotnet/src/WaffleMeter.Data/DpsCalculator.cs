@@ -463,6 +463,23 @@ public sealed class DpsCalculator
         };
     }
 
+    /// <summary>이 전투의 보스 HP를 기록용으로 확정한다 — 라이브 값이 아니라 <b>전투 중 관측된 최저 잔여 HP</b>다.
+    /// <para>전멸하면 보스가 제자리로 돌아가며 만피를 한 번 방송하는데, 실측상 그 프레임이 <b>종료 토글보다
+    /// 1.5초 먼저</b> 온다. 그래서 라이브 값을 읽으면 25% 남기고 진 전투가 기록에 100%로 박히고, 종료 직후
+    /// 대기 화면의 게이지까지 만피로 그려진다(이 리포트가 <c>BattleFinished</c>로 계속 나가므로). 최저치는
+    /// 정상 전투에서 마지막 타격 직후의 잔여 HP와 같으므로(피해는 줄어들기만 한다) 평시 동작은 안 바뀐다.</para>
+    /// <para>최대 HP는 단조 증가라 되돌아갈 일이 없어 그대로 라이브에서 읽는다.</para></summary>
+    private void FreezeTargetHp(int targetId)
+    {
+        if (_recentData.Target is not { } target)
+        {
+            return;
+        }
+
+        target.RemainHp = _dm.BattleLowMobHp(targetId) ?? _dm.MobHp(targetId) ?? target.RemainHp;
+        target.MaxHp = _dm.MobMaxHp(targetId) ?? target.MaxHp;
+    }
+
     public DpsReport GetDps()
     {
         _dm.TickDummyBattle(); // enforce the dummy duration hard-cut / idle-end / mode-off before reading state
@@ -484,6 +501,7 @@ public sealed class DpsCalculator
         {
             ProcessPendingPacketsBefore(previousTarget, ActivePacketCutoff());
             RefreshRecentReportFromCache(previousTarget, _recentData.Target);
+            FreezeTargetHp(previousTarget);
             SaveRecentBattleLog();
             _recentDataSaved = true;
         }
@@ -506,11 +524,7 @@ public sealed class DpsCalculator
                 {
                     ProcessPendingPacketsBefore(previousTarget, 0L);
                     RefreshRecentReportFromCache(previousTarget, _recentData.Target);
-                    if (_recentData.Target != null)
-                    {
-                        _recentData.Target.RemainHp = _dm.MobHp(previousTarget) ?? _recentData.Target.RemainHp;
-                        _recentData.Target.MaxHp = _dm.MobMaxHp(previousTarget) ?? _recentData.Target.MaxHp;
-                    }
+                    FreezeTargetHp(previousTarget);
                 }
             }
 
