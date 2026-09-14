@@ -921,38 +921,72 @@ public sealed class StreamProcessor
         _joinSink.OnJoinRequest(requester, nickname, jobCode, server, power, arrivedAt);
     }
 
-    /// <summary>0x9725 cancel / 0x970B admit — both remove the request by requester id.</summary>
-    /// <remarks>
-    /// Byte-exact port of Kotlin parseCancelJoinRequest/parseAdmitJoinRequest (offset+2 past opcode,
-    /// then a u32). NOTE: a corpus AdmitJoin frame (<c>35 0b 97 3a 02 aa 72 01 00 ...</c>) carries the
-    /// real requester (<c>aa 72 01 00</c> = 94890) at offset+4, not offset+0 — Kotlin reads the two
-    /// leading <c>3a 02</c> bytes into the id, so admit emits a non-matching id and the card is NOT
-    /// removed on accept; it instead expires via the 20s timeout. This is faithful dev-app parity, not
-    /// a fix. If instant removal-on-accept is wanted, re-derive the offset from the 3 corpus admits.
-    /// </remarks>
+    /// <summary>0x9725 cancel — 신청자가 스스로 물렀다. uid가 opcode 바로 뒤에 온다.</summary>
+    /// <remarks>실측 프레임(2026-09-12): <c>0E 25 97 AB 33 00 00 00 00 D3 07</c> — uid 0x33AB=13227,
+    /// 뒤이어 <c>00 00</c>과 서버 2003. 같은 세션의 0x9707 신청 기록과 uid·서버가 정확히 일치한다.</remarks>
     private void ParseCancelJoin(byte[] packet, VarIntOutput lengthInfo, bool extraFlag) =>
-        RemoveByRequester(packet, lengthInfo, extraFlag, 0x25);
+        RemoveByRequester(packet, lengthInfo, extraFlag, 0x25, uidSkip: 0, admit: false);
 
+    /// <summary>0x970B — 파티에 멤버가 추가됐다는 브로드캐스트. 신청 수락이 그 중 하나다.</summary>
+    /// <remarks>
+    /// <para><b>종전에는 uid를 2바이트 앞에서 읽었다.</b> 옛 주석이 그 사실을 자백해 뒀고("admit emits a
+    /// non-matching id and the card is NOT removed on accept; it instead expires via the 20s timeout"),
+    /// 그게 곧 "인게임에서 수락했는데 카드가 20초 내내 남는다"는 제보의 정체였다. 실측 레이아웃은
+    /// <c>[len][0B 97][flag][slot][uid u32 LE][00 00][server u16][nameLen][name UTF-8]…</c> 이고,
+    /// 2026-09-12 세션의 수락 10건이 모두 직전 0x9707의 uid·서버·닉네임과 일치한다
+    /// (예: <c>34 0B 97 0C 04 EA 07 00 00 00 00 E2 07 06 …데드</c> = uid 2026 / 서버 2018).</para>
+    /// <para><b>flag 바이트는 열거하지 않는다.</b> 수락은 0x0C, 이미 파티에 있는 멤버를 같은 ms에 2~3발씩
+    /// 다시 싣는 열거 브로드캐스트는 0x0E, 2026-06 코퍼스에는 0x3A도 있었다. 열거형이 실어 오는 uid는 이미
+    /// 파티원이라 대기 카드가 있을 수 없으므로 제거는 무해한 no-op이다 — 다만 저장소는 만료된 신청을 배지
+    /// 승계용으로 계속 들고 있으므로, 그 유령까지 '수락'으로 세지 않도록 짝짓기는 <b>화면에 살아 있던
+    /// 카드</b>에만 걸린다(<c>JoinRequestStore.Remove</c>).</para>
+    /// <para>수락 10건 중 9건은 직전 0x9707 과 uid·서버·닉네임이 일치했고, 1건은 선행 신청도 0x9709 도 없이
+    /// 왔다(초대·파티찾기로 들어온 멤버로 보인다) — 그래서 '수락 = 신청 해소'로 단정하지 않는다.</para>
+    /// </remarks>
     private void ParseAdmitJoin(byte[] packet, VarIntOutput lengthInfo, bool extraFlag) =>
-        RemoveByRequester(packet, lengthInfo, extraFlag, 0x0B);
+        RemoveByRequester(packet, lengthInfo, extraFlag, 0x0B, uidSkip: 2, admit: true);
 
-    private void RemoveByRequester(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, byte opcodeLow)
+    /// <summary>
+    /// <paramref name="uidSkip"/> = uid 앞에 붙는 바이트 수(0x970B의 <c>[flag][slot]</c>).
+    /// <para><b>모양 게이트가 필수다.</b> 이 계열은 opcode 2바이트만 맞으면 실행되므로, 게임이 아닌 LAN
+    /// 스트림(스트리밍·프록시)의 난수 프레임이 우연히 <c>0B 97</c>·<c>25 97</c>을 만들면 쓰레기 id로 카드를
+    /// 지운다. 진짜 프레임은 uid 뒤에 <c>00 00</c>과 서버 id가 반드시 따라오므로 그 모양으로 거른다 —
+    /// 코퍼스 8세션 재현에서 이 게이트가 제거 계열 노이즈 15건(길이 13 · 패드 2)을 걸렀고, 진짜 프레임은
+    /// 한 건도 걸리지 않았다.</para>
+    /// </summary>
+    private void RemoveByRequester(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, byte opcodeLow, int uidSkip, bool admit)
     {
         int offset = lengthInfo.Length;
         if (extraFlag) offset++;
         if (packet.Length < offset + 2) return;
         if (packet[offset] != opcodeLow || packet[offset + 1] != 0x97) return;
-        offset += 2;
+        offset += 2 + uidSkip;
+        if (packet.Length < offset + 8) return; // uid u32 + 00 00 + server u16
+
         int requester = PacketPrimitives.ParseUInt32Le(packet, offset);
-        _joinSink.OnJoinRequestRemove(requester);
+        if (requester <= 0) return;
+        if (packet[offset + 4] != 0x00 || packet[offset + 5] != 0x00) return;
+        if (!IsPlausibleServerBand(PacketPrimitives.ParseUInt16Le(packet, offset + 6))) return;
+
+        // 이름이 "admit"이 아니라 "member_add"인 이유: 0x970B 는 신청 수락 전용이 아니라 파티에 멤버가
+        // 붙었다는 브로드캐스트다. 실측상 30건 중 수락은 9~10건이고 나머지는 기존 멤버를 같은 ms 에 2~3발씩
+        // 다시 싣는 열거다 — 진단에서 이걸 '수락'으로 세면 3배로 부풀어 보인다.
+        _sink.Meta(admit ? "join_member_add" : "join_cancel", ("requester", requester));
+        _joinSink.OnJoinRequestRemove(requester, admit);
     }
 
-    /// <summary>0x9709 refuse (no id) — drop the oldest pending request.</summary>
+    /// <summary>0x9709 — 대기 중이던 신청 하나가 해소됐다. <b>id가 없고, 거절뿐 아니라 수락에도 온다</b>
+    /// (수락이면 같은 배치로 0x970B가 따라붙는다). 그래서 즉시 "가장 오래된 것"을 지우면 안 된다 — 파티장이
+    /// 나중 신청을 먼저 수락한 순간 애먼 카드가 사라진다. 짝이 될 0x970B를 잠깐 기다렸다가 남은 것만
+    /// 해소하는 판정은 <c>JoinRequestStore</c>가 한다.</summary>
+    /// <remarks>진짜 프레임은 예외 없이 5바이트다(<c>08 09 97 00 00</c>, 마지막 바이트가 0이 아닌 변종 1건
+    /// 포함). 코퍼스 8세션 재현에서 길이가 다른 노이즈 19건(7·11·41·45·49바이트)이 여기서 걸렸고 진짜
+    /// 프레임은 한 건도 안 걸렸다.</remarks>
     private void ParseRefuseJoin(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
     {
         int offset = lengthInfo.Length;
         if (extraFlag) offset++;
-        if (packet.Length < offset + 2) return;
+        if (packet.Length != offset + 4) return; // opcode 2 + payload 2 — 그 밖은 노이즈다
         if (packet[offset] != 0x09 || packet[offset + 1] != 0x97) return;
         _joinSink.OnRefuseJoinRequest();
     }
@@ -968,7 +1002,10 @@ public sealed class StreamProcessor
     {
         int offset = lengthInfo.Length;
         if (extraFlag) offset++;
-        if (packet.Length < offset + 2) return;
+        // 0x9709과 같은 이유의 길이 게이트 — 진짜 프레임은 5바이트뿐인데(08 18 97 00 00 / 08 1D 97 00 00)
+        // 종전에는 opcode 2바이트만 보고 패널을 통째로 비웠다. 코퍼스 8세션 재현에서 이 길이 검사가 거른
+        // 난수 프레임이 0x9718 12건 · 0x971D 9건이다(전부 길이 7·11·31·45).
+        if (packet.Length != offset + 4) return;
         if (packet[offset] != opcodeLow || packet[offset + 1] != 0x97) return;
         // NOTE: deliberately does NOT clear the party roster. 0x971D fires spuriously mid-dungeon (observed while
         // a 5-man party was fully intact), so clearing here would empty a valid roster — the exact failure the
@@ -1269,6 +1306,16 @@ public sealed class StreamProcessor
     // [server][len][name]-shaped byte runs that would otherwise false-match inside the packet body.
     private static bool IsPartyServer(int server) =>
         (server is >= 1001 and <= 1021) || (server is >= 2001 and <= 2021);
+
+    /// <summary>같은 두 대역이되 <b>상한을 열어 둔</b> 서버 검사. 신청 카드를 지우는 경로에만 쓴다.
+    /// <para><see cref="IsPartyServer"/>의 상한(1021·2021)은 현재 운영 중인 마지막 서버다 — 2021(이스할겐)이
+    /// 2026-08-12 라이브 패치로 들어왔다. 그걸 <b>제거</b> 경로에 그대로 쓰면 비대칭이 생긴다: 신규 서버
+    /// 유저의 신청은 카드로 <b>뜨지만</b>(추가 경로 0x9707 에는 서버 검사가 없다) 수락해도 그 카드가 안
+    /// 지워지고, 대신 짝을 못 찾은 0x9709 가 애먼 카드를 지운다. 증설이 곧 그 버그의 배포다.</para>
+    /// <para>느슨하게 해도 잃는 게 없다는 건 실측으로 확인했다 — 코퍼스 8세션에서 이 검사가 탈락시킨
+    /// 프레임은 <b>0건</b>이고, 노이즈는 그 앞의 길이·패드(<c>00 00</c>) 검사가 전부 잡았다.</para></summary>
+    private static bool IsPlausibleServerBand(int server) =>
+        (server is >= 1001 and < 2000) || (server is >= 2001 and < 3000);
 
     /// <summary>엔티티 id 상한. <c>DataManager.MaxEntityUid</c>와 같은 값이지만 Capture는 Data를 참조하지
     /// 않으므로(의존 방향이 Data → Capture다) 여기에 둔다. 오프셋을 잘못 잡은 varint는 곧바로 이 범위를
@@ -1761,13 +1808,13 @@ public sealed class StreamProcessor
 
         if (maxHp is { } mx && IsSaneHp(mx))
         {
-            _data.SaveMobMaxHp(mobIdInfo.Value, Saturate(mx));
+            _data.SaveMobMaxHp(mobIdInfo.Value, mx);
         }
 
         // 현재 HP가 실리지 않은 프레임(최대 HP만 오는 경우)은 잔여 HP를 발행하지 않는다 — 종전 버그.
         if (currentHp is not { } hp || !IsSaneHp(hp)) return;
 
-        int mobHp = Saturate(hp);
+        long mobHp = hp;
         _data.SaveMobHp(mobIdInfo.Value, mobHp);
         _sink.Meta("remain_hp",
             ("target", mobIdInfo.Value),
@@ -1776,16 +1823,21 @@ public sealed class StreamProcessor
             ("hp", mobHp));
     }
 
-    // 실측 상한은 18.4억(바크론 계열)이다. 그보다 훨씬 큰 값은 프레임이 우리 해석과 다르다는 뜻이므로 버린다
-    // — 진짜 게임 프레임 중에도 3.0e18짜리가 1건 있었고, 프레임을 정확히 소진해서 길이 검사로는 못 걸러진다.
-    private const long MaxPlausibleHp = 100_000_000_000L;
+    // 그보다 훨씬 큰 값은 프레임이 우리 해석과 다르다는 뜻이므로 버린다 — 진짜 게임 프레임 중에도 3.0e18짜리가
+    // 1건 있었고, 프레임을 정확히 소진해서 길이 검사로는 못 걸러진다.
+    // ⚠️ 100e9 에서 10e9 로 조였다. 종전에는 이 검사를 통과해도 저장 직전 Saturate 가 21.47억에 붙여 줘서
+    // 상한이 느슨해도 피해가 제한적이었는데, 그 포화를 걷어내면서 이게 유일한 가드가 됐다. 최대 HP 는 단조
+    // 증가로 래치되고 소프트 리셋에서도 보존되므로(Repositories.SaveMaxHp / DataManager.ResetBattleRecords),
+    // 이상값 한 프레임이 그 엔티티의 분모를 세션 내내 오염시킨다. 실측 최대 27.2억(델트라스) 대비 3.7배 여유.
+    private const long MaxPlausibleHp = 10_000_000_000L;
 
     private static bool IsSaneHp(long hp) => hp >= 0 && hp <= MaxPlausibleHp;
 
-    // HP는 아직 데이터 계층 전체가 int다. 실측 최대 18.4억으로 int.MaxValue(21.5억) 대비 여유가 1.17배뿐이라
-    // 상위 던전이 추가되면 넘칠 수 있는데, 그때 음수로 뒤집히는 것보다 상한에 붙는 편이 안전하다.
-    // (자료형을 long으로 넓히는 건 통계 웹 페이로드 스키마까지 번지므로 별도 과제.)
-    private static int Saturate(long hp) => hp > int.MaxValue ? int.MaxValue : (int)hp;
+    // 여기서 int.MaxValue로 포화시키던 자리다. 그 주석은 "여유가 1.17배뿐"이라며 넘칠 것을 예고해 뒀는데,
+    // 실제로 비탄의 설원(델트라스 27억대)과 차원핵 계열이 넘겨서 그 보스들의 HP 게이지·보스 체력 기여도·전투
+    // 기록이 통째로 21.47억에 붙어 버렸다(replay-diag 실측 144건 / 13코드). 와이어는 u64로 정확했고 잘린 건
+    // 저장 직전 이 한 줄뿐이었으므로, 포화를 없애고 데이터 계층을 long으로 넓혔다. 업로드 payload에는 HP
+    // 원본 필드가 없다(bossHpContribution만 나간다) — 스키마 번호는 그대로다.
 
     /// <summary>엔티티 사망 0x8D04 — 죽은 엔티티 id varint 하나가 전부다. 몹·파티원에게도 오므로 "본인인가"
     /// 판정은 executor를 아는 데이터 계층에 맡긴다. 본인 사망 시 버프 오버레이를 비우는 데 쓴다(사망 후

@@ -96,7 +96,17 @@ public sealed class BuffOverlayViewModel : INotifyPropertyChanged
 
     /// <summary>Replace the slot list from a fresh snapshot, reusing existing rows by code so only the
     /// countdown text + ring progress change on a normal tick.</summary>
-    public void Update(IReadOnlyList<OwnerBuffView> buffs, bool grayOnCooldown, bool showLevel = true)
+    /// <param name="expiryWarnMs">남은 시간이 이 값 이하면 아이콘을 점멸시킨다. 0 = "버프 종료 3초 전 알림" 꺼짐.
+    /// 판정은 500ms 틱마다 하므로 점멸 시작이 최대 한 틱 늦을 수 있다 — 3초 창에서는 눈에 띄지 않는다.</param>
+    /// <param name="expiryMinDurationMs">이보다 짧은 버프는 점멸시키지 않는다. 없으면 지속시간이 리드보다
+    /// 짧은 버프가 <b>태어나는 순간부터</b> 계속 어둡게 칠해져, 경고가 아니라 고장으로 읽힌다. 음성 쪽이
+    /// 쓰는 하한과 같은 값이다.</param>
+    public void Update(
+        IReadOnlyList<OwnerBuffView> buffs,
+        bool grayOnCooldown,
+        bool showLevel = true,
+        long expiryWarnMs = 0,
+        long expiryMinDurationMs = 0)
     {
         // remove slots no longer present
         for (int i = Slots.Count - 1; i >= 0; i--)
@@ -128,16 +138,25 @@ public sealed class BuffOverlayViewModel : INotifyPropertyChanged
                 }
             }
 
+            // 무기한 유지 자세(폭주)는 만료가 합성 keep-alive 라 점멸시키면 매번 거짓 경고가 된다 — 음성 쪽이
+            // 같은 이유로 이미 제외하고 있다.
+            bool expiring = expiryWarnMs > 0
+                            && !b.Indefinite
+                            && b.DurationMs > expiryMinDurationMs
+                            && b.RemainingMs > 0
+                            && b.RemainingMs <= expiryWarnMs;
+
             if (current < 0)
             {
-                Slots.Insert(
-                    Math.Min(target, Slots.Count),
-                    new BuffSlotVM(b.Code, b.Name, b.RemainingMs, dur, b.ByOther, onCooldown, b.Level, showLevel));
+                var slot = new BuffSlotVM(b.Code, b.Name, b.RemainingMs, dur, b.ByOther, onCooldown, b.Level, showLevel);
+                slot.SetExpiring(expiring);
+                Slots.Insert(Math.Min(target, Slots.Count), slot);
                 continue;
             }
 
             Slots[current].SetRemaining(b.RemainingMs, dur);
             Slots[current].SetCooldown(onCooldown);
+            Slots[current].SetExpiring(expiring);
             // 같은 슬롯을 다른 사람이 이어받으면(_ownerBuffs 가 base 코드로 키잉되므로) 레벨도 시전자도 바뀐다.
             Slots[current].SetLevel(b.Level, showLevel);
             Slots[current].SetByOther(b.ByOther);
@@ -149,6 +168,19 @@ public sealed class BuffOverlayViewModel : INotifyPropertyChanged
         }
 
         RecomputePlaceholder();
+
+        // 점멸 타이머는 실제로 깜빡일 슬롯이 있을 때만 돈다. 0 이면 마스크를 투명으로 되돌리므로, 마지막
+        // 깜빡임이 켜진 채 굳어 아이콘이 영영 어두워지는 일도 여기서 함께 막힌다.
+        int flashing = 0;
+        foreach (BuffSlotVM slot in Slots)
+        {
+            if (slot.ExpiryVisibility == Visibility.Visible)
+            {
+                flashing++;
+            }
+        }
+
+        BuffExpiryFlash.SetDemand(flashing);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -212,6 +244,21 @@ public sealed class BuffSlotVM : INotifyPropertyChanged
         IconOpacity = onCooldown ? 0.4 : 1.0;
         CooldownVeil = onCooldown ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    /// <summary>점멸 마스크가 칠할 공유 브러시. <b>반드시 바인딩으로만</b> XAML 에 닿아야 한다 —
+    /// 템플릿에 <c>{x:Static}</c> 으로 직접 쓰면 WPF 가 DataTemplate 을 봉인할 때 이 Freezable 을 함께 얼려
+    /// 버리고, 그러면 타이머의 첫 색 변경이 "읽기 전용" 예외로 앱을 죽인다(UiPreview 로 실제로 재현했다).
+    /// <see cref="TierPalette"/> 가 <see cref="TierSheen"/> 브러시를 VM 프로퍼티로 넘기는 것과 같은 이유다.</summary>
+    public Brush ExpiryMask => BuffExpiryFlash.Mask;
+
+    private Visibility _expiryVisibility = Visibility.Collapsed;
+    /// <summary>곧 끝나는 버프의 점멸 마스크를 보일지. 칠하는 브러시는 <see cref="BuffExpiryFlash"/> 가
+    /// 공유로 들고 두드리므로, 슬롯은 보일지 말지만 정한다.</summary>
+    public Visibility ExpiryVisibility { get => _expiryVisibility; private set => Set(ref _expiryVisibility, value); }
+
+    /// <summary>"버프 종료 3초 전 알림" 창에 들어왔는지.</summary>
+    public void SetExpiring(bool expiring)
+        => ExpiryVisibility = expiring ? Visibility.Visible : Visibility.Collapsed;
 
     private string _remainingText = string.Empty;
     public string RemainingText { get => _remainingText; private set => Set(ref _remainingText, value); }

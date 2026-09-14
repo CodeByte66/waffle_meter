@@ -42,7 +42,7 @@ public sealed class OwnCombatPowerValidationTests
         public void StartBattle(int target) { }
         public void EndBattle(int target) { }
         public void SaveSummon(int summonId, int ownerId) { }
-        public void SaveMobHp(int instanceId, int hp) { }
+        public void SaveMobHp(int instanceId, long hp) { }
         public void SaveUseBuff(int uid, int skillCode, long buffStart, long buffEnd, long duration, int actorId) { }
         public void RequestOfficialCharacterLookup(int uid) { }
         public void SavePartyRoster(IReadOnlyList<(string Nickname, int Server, int Slot)> members) { }

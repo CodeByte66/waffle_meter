@@ -114,6 +114,7 @@ public static class SettingsKeyCatalog
         new("buffUi.sortMode", F, "버프 오버레이", "표시 순서"),
         new("buffUi.ttsOnStart", F, "버프 오버레이", "버프 시작 음성"),
         new("buffUi.ttsOnEnd", F, "버프 오버레이", "버프 종료 음성"),
+        new("buffUi.endWarning3s", F, "버프 오버레이", "버프 종료 3초 전 알림"),
         new("buffUi.hidden", F, "버프 오버레이", "숨긴 버프"),
         new("buffUi.voice", F, "버프 오버레이", "음성 버프"),
         new("buffUi.pinned", F, "버프 오버레이", "위치 고정 버프"),

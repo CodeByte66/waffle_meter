@@ -155,7 +155,7 @@ void CompareBattle(int idx, DpsLog got, JsonElement exp, List<string> outDiffs)
         {
             Eq(outDiffs, $"{p}.target.id", gt.Id, et.GetProperty("id").GetInt32());
             Eq(outDiffs, $"{p}.target.mob.code", gt.Mob.Code, et.GetProperty("mob").GetProperty("code").GetInt32());
-            Eq(outDiffs, $"{p}.target.maxHp", gt.MaxHp, et.GetProperty("maxHp").GetInt32());
+            Eq(outDiffs, $"{p}.target.maxHp", gt.MaxHp, et.GetProperty("maxHp").GetInt64());
         }
     }
 

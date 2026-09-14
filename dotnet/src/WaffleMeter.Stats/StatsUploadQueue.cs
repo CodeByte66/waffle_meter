@@ -378,8 +378,8 @@ public sealed class StatsUploadQueue : IDisposable
         }
 
         bool snapshotKill = target.MaxHp > 0 && target.RemainHp <= 0;
-        int? latestHp = _data.MobHp(target.Id);
-        int latestMaxHp = _data.MobMaxHp(target.Id) ?? target.MaxHp;
+        long? latestHp = _data.MobHp(target.Id);
+        long latestMaxHp = _data.MobMaxHp(target.Id) ?? target.MaxHp;
         bool latestKill = latestMaxHp > 0 && latestHp == 0;
         return snapshotKill || latestKill;
     }

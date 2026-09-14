@@ -403,7 +403,13 @@ public sealed class DpsCalculator
             int? mobCode = _dm.GetMobId(targetId);
             Mob? mob = mobCode != null ? _dm.Mob(mobCode.Value) : null;
             targetInfo = mob != null
-                ? new MobInfo(targetId, mob, _dm.MobHp(targetId) ?? 0, _dm.MobMaxHp(targetId) ?? 0)
+                // 라이브 재구성도 기록용 최저치를 쓴다 — 안 그러면 기여도 분모(아래 fixedMax)와 저장 값이
+                // 서로 다른 HP 를 보게 된다.
+                ? new MobInfo(
+                    targetId,
+                    mob,
+                    _dm.BattleLowMobHp(targetId, _currentBattleRevision) ?? _dm.MobHp(targetId) ?? 0,
+                    _dm.MobMaxHp(targetId) ?? 0)
                 : null;
         }
 
@@ -463,6 +469,27 @@ public sealed class DpsCalculator
         };
     }
 
+    /// <summary>이 전투의 보스 HP를 기록용으로 확정한다 — 라이브 값이 아니라 <b>전투 중 관측된 최저 잔여 HP</b>다.
+    /// <para>전멸하면 보스가 제자리로 돌아가며 만피를 한 번 방송하는데, 실측상 그 프레임이 <b>종료 토글보다
+    /// 1.5초 먼저</b> 온다. 그래서 라이브 값을 읽으면 25% 남기고 진 전투가 기록에 100%로 박히고, 종료 직후
+    /// 대기 화면의 게이지까지 만피로 그려진다(이 리포트가 <c>BattleFinished</c>로 계속 나가므로). 최저치는
+    /// 정상 전투에서 마지막 타격 직후의 잔여 HP와 같으므로(피해는 줄어들기만 한다) 평시 동작은 안 바뀐다.</para>
+    /// <para>최대 HP는 단조 증가라 되돌아갈 일이 없어 그대로 라이브에서 읽는다.</para></summary>
+    /// <para><b>저장 직전에 한 번 더 부르는 이유.</b> 저장 경로는 셋이고(타깃 전환·전투 종료·종료 드레인)
+    /// 셋 다 <see cref="SaveRecentBattleLog"/> 를 지난다. 전이 지점에만 꽂으면 세 번째 — 유저가 전멸
+    /// <b>직후</b> 미터를 닫아 소비자 루프가 종료 전이를 돌기 전에 빠져나가는 경로 — 가 그대로 새고, 그게
+    /// 하필 이 수정이 없애려던 바로 그 장면이다.</para>
+    private void FreezeTargetHp(int targetId)
+    {
+        if (_recentData.Target is not { } target)
+        {
+            return;
+        }
+
+        target.RemainHp = _dm.BattleLowMobHp(targetId, _currentBattleRevision) ?? _dm.MobHp(targetId) ?? target.RemainHp;
+        target.MaxHp = _dm.MobMaxHp(targetId) ?? target.MaxHp;
+    }
+
     public DpsReport GetDps()
     {
         _dm.TickDummyBattle(); // enforce the dummy duration hard-cut / idle-end / mode-off before reading state
@@ -483,6 +510,7 @@ public sealed class DpsCalculator
             && storageTarget != -1 && previousTarget > 0 && !_recentData.IsEmpty())
         {
             ProcessPendingPacketsBefore(previousTarget, ActivePacketCutoff());
+            FreezeTargetHp(previousTarget); // Refresh 보다 먼저 — 기여도 분모(fixedMax)가 얼린 MaxHp 를 보게 한다
             RefreshRecentReportFromCache(previousTarget, _recentData.Target);
             SaveRecentBattleLog();
             _recentDataSaved = true;
@@ -505,12 +533,8 @@ public sealed class DpsCalculator
                 if (previousTarget > 0)
                 {
                     ProcessPendingPacketsBefore(previousTarget, 0L);
+                    FreezeTargetHp(previousTarget);
                     RefreshRecentReportFromCache(previousTarget, _recentData.Target);
-                    if (_recentData.Target != null)
-                    {
-                        _recentData.Target.RemainHp = _dm.MobHp(previousTarget) ?? _recentData.Target.RemainHp;
-                        _recentData.Target.MaxHp = _dm.MobMaxHp(previousTarget) ?? _recentData.Target.MaxHp;
-                    }
                 }
             }
 
@@ -1243,6 +1267,13 @@ public sealed class DpsCalculator
 
     private void SaveRecentBattleLog()
     {
+        // 얼리는 자리는 여기 하나다. 저장 경로가 셋이라(타깃 전환·전투 종료·종료 드레인) 전이 지점에만 꽂으면
+        // 반드시 하나가 샌다 — 실제로 '전멸 직후 미터를 닫는' 경로가 그렇게 새고 있었다.
+        if (_recentData.Target is { } saving)
+        {
+            FreezeTargetHp(saving.Id);
+        }
+
         Dictionary<int, Dictionary<string, AnalyzedSkill>> skillDetails =
             _cachedSkillDetails.Count > 0 ? CloneSkillDetails(_cachedSkillDetails) : BuildSkillDetails(_recentData);
         Dictionary<int, List<OperatingData>> buffRates = BuildBuffRates(_recentData);

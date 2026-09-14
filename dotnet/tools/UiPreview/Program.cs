@@ -217,6 +217,19 @@ internal static class Program
                 }, grayOnCooldown: false);
                 Capture(() => new BuffOverlayPanel(buffLargeVm), palette, Path.Combine(outDir, "buffoverlay_large_Dark.png"));
 
+                // 종료 3초 전 점멸. 마스크가 켜진 프레임을 잡는다(BuffExpiryFlash 는 demand>0 에서 On 으로
+                // 시작한다) — 점멸이 "무엇인지 읽히되 확실히 어둡다"를 눈으로 확인하는 용도다. 쿨타임 회색과
+                // 겹친 슬롯(섬광베기)도 같이 둬서 둘이 포개졌을 때를 본다.
+                var buffExpiringVm = new BuffOverlayViewModel();
+                buffExpiringVm.Update(new List<WaffleMeter.Data.OwnerBuffView>
+                {
+                    new(18290000, "회전격", 2_400, 30_000, 2_400, false, true, false, false),   // 임박 → 점멸
+                    new(11400000, "축복", 45_000, 60_000, 45_000, true, true, false, false),    // 여유 → 평상
+                    new(13050000, "섬광베기", 1_200, 20_000, 1_200, false, true, true, false),  // 임박 + 쿨타임 회색
+                    new(19130000, "폭주", 5_400, 0, 5_400, false, true, false, true),           // 무기한 → 점멸 제외
+                }, grayOnCooldown: true, showLevel: true, expiryWarnMs: 3_000, expiryMinDurationMs: 4_000);
+                Capture(() => new BuffOverlayPanel(buffExpiringVm), palette, Path.Combine(outDir, "buffoverlay_expiring_Dark.png"));
+
                 // opaque/findable mode (투명 배경 off) — background + border so an empty window is locatable
                 var buffBgVm = new BuffOverlayViewModel { ShowBackground = true };
                 buffBgVm.Update(new List<WaffleMeter.Data.OwnerBuffView>(), grayOnCooldown: false);

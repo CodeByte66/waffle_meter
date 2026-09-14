@@ -216,7 +216,7 @@ sealed class Spy(DataManager dm) : IStreamProcessorSink, ICaptureGameData
     public void SaveNickname(int uid, string nickname, bool isExecutor, int server, int jobByte) { }
     public void SaveUserPower(int uid, int power) { }
     public void SaveSummon(int summonId, int ownerId) { }
-    public void SaveMobHp(int instanceId, int hp) { }
+    public void SaveMobHp(int instanceId, long hp) { }
     public void SaveUseBuff(int uid, int skillCode, long buffStart, long buffEnd, long duration, int actorId) => SaveUseBuffCapture(uid, skillCode, buffStart, buffEnd, duration, actorId);
     public readonly List<(int Skill, long Remaining, long At)> Cooldowns = new();
     public void SaveCooldown(int skillCode, long remainingMs, long arrivedAt, int actorId, bool fromCast = false) => Cooldowns.Add((skillCode, remainingMs, arrivedAt));

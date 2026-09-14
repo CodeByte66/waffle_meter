@@ -39,7 +39,7 @@ public sealed class TrialAffixParsingTests
         public void SaveNickname(int uid, string nickname, bool isExecutor, int server, int jobByte) { }
         public void SaveUserPower(int uid, int power) { }
         public void SaveSummon(int summonId, int ownerId) { }
-        public void SaveMobHp(int instanceId, int hp) { }
+        public void SaveMobHp(int instanceId, long hp) { }
         public void SaveAetherStatus(int baseVal, int bonus) { }
         public void SaveShugoKey(int baseVal, int bonus) { }
         public void SaveFieldBossTimers(IReadOnlyList<(int Code, long TargetMs)> timers) { }

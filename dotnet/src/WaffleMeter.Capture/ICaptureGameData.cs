@@ -33,12 +33,13 @@ public interface ICaptureGameData
     void SaveNickname(int uid, string nickname, bool isExecutor, int server, int jobByte);
     void SaveUserPower(int uid, int power);
     void SaveSummon(int summonId, int ownerId);
-    void SaveMobHp(int instanceId, int hp);
+    void SaveMobHp(int instanceId, long hp);
 
     /// <summary>0x8D00의 statId 7이 실어 오는 <b>권위 있는</b> 최대 HP. 종전에는 "관측된 현재 HP의 최댓값"을
     /// 최대치로 추정했는데, 이 값이 오면 그보다 정확하다(저장은 단조 증가라 낮은 값으로 덮이지 않는다).
-    /// 다만 보스의 6.9%에만 오므로 추정 경로는 그대로 남는다. 기본 no-op.</summary>
-    void SaveMobMaxHp(int instanceId, int maxHp) { }
+    /// 다만 보스의 6.9%에만 오므로 추정 경로는 그대로 남는다. 기본 no-op.
+    /// <para>HP는 <c>long</c>이다 — 실측 최대가 27억대라 int로는 21.47억에서 포화한다.</para></summary>
+    void SaveMobMaxHp(int instanceId, long maxHp) { }
 
     /// <summary>스폰(0x3641) 유실로 mobCode가 등록되지 않은 던전 보스를 HP 휴리스틱으로 되살린다 —
     /// 0x8D00이 미등록 엔티티에 대해 보스급 HP를 실어 오고, 그 엔티티가 교전 토글(0x8D21)을 쏜 적이 있으면
@@ -251,7 +252,7 @@ public sealed class NullCaptureGameData : ICaptureGameData
     public void SaveNickname(int uid, string nickname, bool isExecutor, int server, int jobByte) { }
     public void SaveUserPower(int uid, int power) { }
     public void SaveSummon(int summonId, int ownerId) { }
-    public void SaveMobHp(int instanceId, int hp) { }
+    public void SaveMobHp(int instanceId, long hp) { }
     public void SaveUseBuff(int uid, int skillCode, long buffStart, long buffEnd, long duration, int actorId) { }
     public void RequestOfficialCharacterLookup(int uid) { }
     public void SavePartyRoster(IReadOnlyList<(string Nickname, int Server, int Slot)> members) { }

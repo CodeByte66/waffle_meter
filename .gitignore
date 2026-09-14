@@ -100,6 +100,7 @@ dotnet/run-test2/
 ### Assets/ stays tracked — only the how/why is withheld.
 /CLAUDE.md
 /dotnet/tools/*.py
+__pycache__/
 
 ### Packet-debug capture logs (raw game packets = player nicknames/identities) — never commit, even if
 ### dropped in the repo root for analysis.
