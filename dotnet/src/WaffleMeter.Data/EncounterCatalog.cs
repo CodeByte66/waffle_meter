@@ -226,6 +226,36 @@ public sealed class EncounterCatalog
         return name.Trim().Length > 0 ? $"{name} ({info.VariantLabel})" : fallback;
     }
 
+    /// <summary>
+    /// <see cref="DisplayName"/> 과 같은 판정을 쓰되, 이름과 라벨을 <b>합치지 않고</b> 돌려준다.
+    /// 오버레이가 난이도를 칩으로 그리려면 괄호로 합쳐진 문자열을 되쪼갤 수 없기 때문이다.
+    ///
+    /// <para>⚠️ <see cref="DisplayName"/> 은 그대로 둔다 — 전투 기록·업로드가 합쳐진 문자열을 계속
+    /// 기대하고 테스트 20여 줄이 그 형태를 잠그고 있다. 여기는 순수 추가다.</para>
+    ///
+    /// <para>⚠️ 시련 override 게이트(<c>IsTrial</c>)도 똑같이 여기 안에 남긴다. 호출부가 라벨을 직접
+    /// 조립하게 만드는 순간 2026-08-11 회귀가 재현된다 — 시련 라벨이 초월 2단계 보스에 찍혔던 그 건.</para>
+    /// </summary>
+    public (string Name, string? Variant, string? Dungeon) DisplayParts(
+        int mobCode, string? mobName, string? variantOverride = null)
+    {
+        string fallback = mobName ?? string.Empty;
+        if (Lookup(mobCode) is not EncounterInfo info || !info.HasVariants || info.VariantLabel.Length == 0)
+        {
+            return (fallback, null, null);
+        }
+
+        if (info.IsTrial && !string.IsNullOrWhiteSpace(variantOverride))
+        {
+            info = info with { VariantLabel = variantOverride! };
+        }
+
+        string name = fallback.Trim().Length > 0 ? fallback : info.BossName;
+        return name.Trim().Length > 0
+            ? (name, info.VariantLabel, info.DungeonName)
+            : (fallback, null, null);
+    }
+
     private static string? NullableStr(JsonElement el, string name) =>
         el.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.String
             ? v.GetString()

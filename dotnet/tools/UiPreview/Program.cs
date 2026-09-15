@@ -40,6 +40,11 @@ internal static class Program
         var theme = new MeterColorTheme(props);
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
+        // 난이도 칩·서브라인은 인카운터 카탈로그가 있어야 그려진다. 안 넘기면 EncounterCatalog.Empty 가
+        // 되어 모든 코드가 미등록으로 나오고, 시안 대조에서 "칩이 안 뜬다"로 오인하게 된다.
+        var encounterCatalog = WaffleMeter.Data.EncounterCatalog.Load(
+            Path.Combine(AppContext.BaseDirectory, "json", "encounters.json"));
+
         // Preload skin palettes once (re-sourcing a ResourceDictionary mid-run is flaky).
         var skins = new[] { "Dark", "Midnight", "Slate", "Light" }.ToDictionary(
             s => s,
@@ -156,7 +161,7 @@ internal static class Program
                 {
                     settings.MeterLayoutId = lay.Id;
                     settings.RowHeight = lay.DefaultRowHeight;
-                    var lv = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+                    var lv = new OverlayViewModel("1.7.8", settings, theme, encounters: encounterCatalog) { Status = "캡처 중" };
                     lv.SetRecognized(true, "콘팡");
                     lv.Update(SampleMeterReport(now));
                     Capture(() => new OverlayWindow { DataContext = lv }, palette, Path.Combine(outDir, $"layout_{lay.Id}_Dark.png"));
@@ -2040,7 +2045,10 @@ internal static class Program
         {
             BattleStart = now - 145_300,
             BattleEnd = now,
-            Target = new MobInfo(999, new Mob(500, "크로메데의 심연", true), remainHp: 0, maxHp: 168_750_000),
+            // 카탈로그에 등록된 실제 보스(크라오 동굴 · 어려움 · 완성체 베르크). 난이도 칩·서브라인이
+            // 실제로 그려지는지 보려면 미등록 몹으로는 검증이 안 된다. 남은 HP 도 0 이 아니어야
+            // 게이지·처치예상이 나온다.
+            Target = new MobInfo(999, new Mob(2320171, "완성체 베르크", true), remainHp: 79_650_000, maxHp: 168_750_000),
             Contributors = new List<User>
             {
                 new(1, "콘팡", 1001, JobClass.SORCERER, isExecutor: true, power: 656_000),

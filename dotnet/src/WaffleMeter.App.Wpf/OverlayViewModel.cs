@@ -246,6 +246,35 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     private string _targetName = "-";
     public string TargetName { get => _targetName; private set => Set(ref _targetName, value); }
 
+    private string _targetVariantText = string.Empty;
+
+    /// <summary>난이도·단계 라벨만("어려움"). 보스칸이 칩으로 그린다.</summary>
+    public string TargetVariantText { get => _targetVariantText; private set => Set(ref _targetVariantText, value); }
+
+    private Visibility _targetVariantVisibility = Visibility.Collapsed;
+    public Visibility TargetVariantVisibility { get => _targetVariantVisibility; private set => Set(ref _targetVariantVisibility, value); }
+
+    private string _targetSubtitle = string.Empty;
+
+    /// <summary>"던전 · 난이도" 한 줄. 무대 보스칸이 이름 아래에 쓴다.</summary>
+    public string TargetSubtitle { get => _targetSubtitle; private set => Set(ref _targetSubtitle, value); }
+
+    private Visibility _targetSubtitleVisibility = Visibility.Collapsed;
+    public Visibility TargetSubtitleVisibility { get => _targetSubtitleVisibility; private set => Set(ref _targetSubtitleVisibility, value); }
+
+    private string _targetHpAmountText = string.Empty;
+
+    /// <summary>HP 수치만("1.28B / 2.71B") — 퍼센트 꼬리가 없다. 퍼센트를 따로 크게 그리는 레이아웃용.</summary>
+    public string TargetHpAmountText { get => _targetHpAmountText; private set => Set(ref _targetHpAmountText, value); }
+
+    private string _targetEtaText = string.Empty;
+
+    /// <summary>처치까지 남은 시간("M:SS"). 남은 HP ÷ 현재 파티 DPS.</summary>
+    public string TargetEtaText { get => _targetEtaText; private set => Set(ref _targetEtaText, value); }
+
+    private Visibility _targetEtaVisibility = Visibility.Collapsed;
+    public Visibility TargetEtaVisibility { get => _targetEtaVisibility; private set => Set(ref _targetEtaVisibility, value); }
+
     private string _targetHpPercentText = string.Empty;
 
     /// <summary>
@@ -623,9 +652,29 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         _lastReport = report;
         string? mobName = report.Target?.Mob.Name;
         bool hasTarget = !string.IsNullOrEmpty(mobName);
-        TargetName = hasTarget
-            ? _encounters.DisplayName(report.Target!.Mob.Code, mobName, _trialLabel())
-            : "타겟 인식 실패";
+        // 난이도를 칩으로 그리려면 이름과 라벨이 갈려 있어야 한다 — DisplayName 은 괄호로 합쳐서 준다.
+        // (합쳐진 형태는 전투 기록·업로드가 계속 쓰므로 그쪽은 그대로 둔다.)
+        if (hasTarget)
+        {
+            (string pName, string? pVariant, string? pDungeon) =
+                _encounters.DisplayParts(report.Target!.Mob.Code, mobName, _trialLabel());
+            TargetName = pName;
+            TargetVariantText = pVariant ?? string.Empty;
+            TargetVariantVisibility = string.IsNullOrEmpty(pVariant) ? Visibility.Collapsed : Visibility.Visible;
+            // 무대 서브라인 "던전 · 난이도". 페이즈는 미터에 데이터가 없어 넣지 않는다.
+            TargetSubtitle = string.Join(" · ",
+                new[] { pDungeon, pVariant }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            TargetSubtitleVisibility = TargetSubtitle.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        else
+        {
+            TargetName = "타겟 인식 실패";
+            TargetVariantText = string.Empty;
+            TargetVariantVisibility = Visibility.Collapsed;
+            TargetSubtitle = string.Empty;
+            TargetSubtitleVisibility = Visibility.Collapsed;
+        }
+
         TargetFailedVisibility = hasTarget ? Visibility.Collapsed : Visibility.Visible;
         if (report.Target is { MaxHp: > 0 } tgt)
         {
@@ -635,7 +684,16 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
             TargetHpRest = 1.0 - ratio;
             TargetHpText = FormatTargetHp(tgt.RemainHp, tgt.MaxHp, pct, _settings.TargetInfoDisplayMode);
             TargetHpPercentText = pct.ToString("F1", CultureInfo.InvariantCulture) + "%";
+            TargetHpAmountText = FormatTargetHpAmount(tgt.RemainHp, tgt.MaxHp, _settings.TargetInfoDisplayMode);
             TargetHpVisibility = hasTarget ? Visibility.Visible : Visibility.Collapsed;
+
+            // 처치까지 = 남은 HP ÷ 지금 파티 DPS. 미터만 낼 수 있는 숫자다.
+            // ⚠️ 보스 최대 HP 가 틀리면(포화·미측정) 이 값도 같이 틀린다 — 그래서 남은 HP 를 모르는
+            //    상황에서는 아예 감춘다. 틀린 값을 자신 있게 보여주는 것보다 안 보여주는 게 낫다.
+            double partyDps = report.Information.Values.Sum(i => i.Dps);
+            bool etaSane = partyDps > 0 && tgt.RemainHp > 0;
+            TargetEtaText = etaSane ? FormatDuration((long)(tgt.RemainHp / partyDps * 1000.0)) : string.Empty;
+            TargetEtaVisibility = etaSane ? Visibility.Visible : Visibility.Collapsed;
         }
         else
         {
@@ -643,6 +701,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
             TargetHpRest = 1.0;
             TargetHpText = string.Empty;
             TargetHpPercentText = string.Empty;
+            TargetHpAmountText = string.Empty;
+            TargetEtaText = string.Empty;
+            TargetEtaVisibility = Visibility.Collapsed;
             TargetHpVisibility = Visibility.Collapsed;
         }
 
@@ -970,6 +1031,16 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     }
 
     /// <summary>Boss HP readout per React targetInfoDisplayMode.</summary>
+    /// <summary><see cref="FormatTargetHp"/> 와 같은 표시 형식 분기를 쓰되 퍼센트 꼬리를 뺀다.</summary>
+    private static string FormatTargetHpAmount(long remain, long max, string mode) => mode switch
+    {
+        "percent" => string.Empty,
+        "remain_percent" => MeterFormat.FormatAmount(remain),
+        "remain_full_percent" => remain.ToString("N0"),
+        "hp_percent" => $"{MeterFormat.FormatAmount(remain)} / {MeterFormat.FormatAmount(max)}",
+        _ => $"{remain:N0} / {max:N0}",
+    };
+
     private static string FormatTargetHp(long remain, long max, double pct, string mode) => mode switch
     {
         "percent" => $"{pct:F1}%",

@@ -38,4 +38,13 @@
     <SolidColorBrush x:Key="Skin.TableHeadFg" Color="#FFF8FAFC"/>
     <SolidColorBrush x:Key="Skin.TableRowBg" Color="#BDFFFFFF"/>
     <SolidColorBrush x:Key="Skin.TableRowAlt" Color="#D1F1F5F9"/>
+
+    <!-- 보스칸 전용. ⚠️ 스킨 4종은 키 집합이 동일해야 한다(SkinManager 계약) — 하나라도 빠지면 그 스킨에서 죽는다.
+         레이아웃 스펙에는 색을 실을 수 없으므로 보스 칩·게이지 트랙·하단 레일 색은 전부 여기 있다. -->
+    <SolidColorBrush x:Key="Skin.BossChipBg" Color="#1FE11D48"/>
+    <SolidColorBrush x:Key="Skin.BossChipRing" Color="#66E11D48"/>
+    <SolidColorBrush x:Key="Skin.BossChipFg" Color="#FFBE123C"/>
+    <SolidColorBrush x:Key="Skin.BossPercentFg" Color="#FF9F1239"/>
+    <SolidColorBrush x:Key="Skin.GaugeTrack" Color="#1A0F172A"/>
+    <SolidColorBrush x:Key="Skin.BossRail" Color="#FFE11D48"/>
 </ResourceDictionary>

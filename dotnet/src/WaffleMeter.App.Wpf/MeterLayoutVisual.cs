@@ -89,15 +89,18 @@ public sealed class MeterLayoutVisual
         // ⚠️ Border 가 ClipToBounds 라 이 값이 모자라면 글자가 잘린 채 조용히 렌더된다(계기판에서 실제로 겪음).
         BossHeight = spec.BossStyle switch
         {
-            BossStyle.Band => 84.0,    // 이름 줄 + 20px 띠 + 여백
+            // ⚠️ 3단(이름줄 + 20px 띠 + HP줄)이 들어가므로 84 로는 마지막 줄이 잘린다.
+            BossStyle.Band => 104.0,
             BossStyle.Readout => 52.0, // 이름 11.5px + HP% 26px
-            _ => rowHeight + 6.0,      // 무대: 현행과 동일
+            // 아이콘 박스 30 + 이름 15.5 + 서브라인 10.5 + 하단 레일 4 + 패딩
+            _ => 70.0,
         };
         BossBandVisibility = spec.BossStyle == BossStyle.Band ? Visibility.Visible : Visibility.Collapsed;
         BossCanvasVisibility = spec.BossStyle == BossStyle.Canvas ? Visibility.Visible : Visibility.Collapsed;
         BossReadoutVisibility = spec.BossStyle == BossStyle.Readout ? Visibility.Visible : Visibility.Collapsed;
         // 전장·무대가 공유하는 한 줄 배치. 계기판만 완전히 다른 구성이라 그 여집합으로 둔다.
-        BossInlineVisibility = spec.BossStyle == BossStyle.Readout ? Visibility.Collapsed : Visibility.Visible;
+        // 전장은 3단, 무대는 카드형 — 둘이 공유하던 한 줄 배치를 갈랐다.
+        BossInlineVisibility = spec.BossStyle == BossStyle.Canvas ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public MeterLayout Spec { get; }

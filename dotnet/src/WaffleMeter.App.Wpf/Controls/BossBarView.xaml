@@ -1,4 +1,4 @@
-<UserControl x:Class="WaffleMeter.App.Wpf.Controls.BossBarView"
+﻿<UserControl x:Class="WaffleMeter.App.Wpf.Controls.BossBarView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:WaffleMeter.App.Wpf">
@@ -64,8 +64,20 @@
                     <Border Grid.Column="0" Background="{Binding BossBarBrush}" Opacity="0.55"/>
                 </Grid>
 
-                <!-- "fill" HP gauge (게이지 형태 = fill): 글자 뒤 낮은 불투명도 채움. -->
-                <Grid Visibility="{Binding TargetBarFillVisibility}">
+                <!-- "fill" HP gauge (게이지 형태 = fill): 글자 뒤 낮은 불투명도 채움.
+                     ⚠️ 전장은 20px 띠가 이미 HP 를 말하므로 여기 채움이 겹치면 이중으로 깔린다 —
+                     띠를 쓰는 레이아웃에서는 이 경로를 끈다(barStyle 설정 자체는 계속 유효하다). -->
+                <Grid Visibility="{Binding TargetBarFillVisibility}"
+                      IsHitTestVisible="False">
+                    <Grid.Style>
+                        <Style TargetType="Grid">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Layout.BossBandVisibility}" Value="Visible">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Style>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
                         <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
@@ -81,37 +93,48 @@
                     <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
                 </Grid>
 
-                <!-- ── 전장 / 무대 공통 한 줄 배치 ── -->
-                <Grid Visibility="{Binding Layout.BossInlineVisibility}">
+                <!-- ── 전장: 3단(이름줄 / 20px 띠 / HP숫자·처치까지·큰 HP%) ── -->
+                <Grid Visibility="{Binding Layout.BossBandVisibility}" Margin="2,0,2,0">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <Grid Grid.Row="0">
+
+                    <!-- 1줄: [난이도] 이름 -->
+                    <Grid Grid.Row="0" Margin="0,8,0,7">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,4,8,4" Background="{Binding BossBarBrush}"/>
-                        <Image Grid.Column="1" Source="{Binding BossIcon}" Width="20" Height="20" Margin="0,0,7,0" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="2" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
-                                   FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Grid.Column="3" Text="{Binding TargetHpText}" Foreground="{Binding CombatTimeBrush}" FontSize="12"
-                                   VerticalAlignment="Center" Margin="8,0,0,0" Visibility="{Binding TargetHpVisibility}"/>
+                        <!-- 난이도·단계 칩. 예전엔 이름 뒤 괄호에 묻혀 있었다 — EncounterCatalog.DisplayParts 가
+                             이름과 라벨을 갈라 준다. 미등록 보스는 라벨이 없어 칩이 접힌다. -->
+                        <Border Grid.Column="0" CornerRadius="4" Padding="6,1" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Background="{DynamicResource Skin.BossChipBg}" BorderThickness="1"
+                                BorderBrush="{DynamicResource Skin.BossChipRing}"
+                                Visibility="{Binding TargetVariantVisibility}">
+                            <TextBlock Text="{Binding TargetVariantText}" FontSize="10.5" FontWeight="Bold"
+                                       Foreground="{DynamicResource Skin.BossChipFg}"/>
+                        </Border>
+                        <TextBlock Grid.Column="1" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}"
+                                   FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
                     </Grid>
-                    <!-- 전장: 제 몫의 20px 게이지 띠. -->
-                    <Border Grid.Row="1" Height="20" CornerRadius="4" Margin="0,0,0,10" ClipToBounds="True"
-                            Background="{DynamicResource Skin.StatBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
-                            Visibility="{Binding Layout.BossBandVisibility}">
+
+                    <!-- 2줄: 20px 게이지 띠 + 25% 눈금. 남은 HP 가 색이 아니라 길이로 읽힌다. -->
+                    <Border Grid.Row="1" Height="20" CornerRadius="4" ClipToBounds="True"
+                            Background="{DynamicResource Skin.GaugeTrack}"
+                            BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
                                 <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
                             </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
-                            <!-- 25% 눈금 — 페이즈 전환 지점 가늠. -->
+                            <Grid Grid.Column="0">
+                                <Border Background="{Binding BossBarBrush}"/>
+                                <!-- 상단 1px 하이라이트 — 띠에 두께감을 준다. -->
+                                <Border Height="1" VerticalAlignment="Top" Background="#57FFFFFF"/>
+                            </Grid>
                             <UniformGrid Grid.ColumnSpan="2" Rows="1" Columns="4" IsHitTestVisible="False">
                                 <Border BorderBrush="#2BFFFFFF" BorderThickness="0,0,1,0"/>
                                 <Border BorderBrush="#2BFFFFFF" BorderThickness="0,0,1,0"/>
@@ -120,6 +143,74 @@
                             </UniformGrid>
                         </Grid>
                     </Border>
+
+                    <!-- 3줄: HP숫자 · 처치까지 ……… 큰 HP% -->
+                    <Grid Grid.Row="2" Margin="0,7,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding TargetHpAmountText}" FontSize="12.5"
+                                   Foreground="{DynamicResource Skin.MutedFg}" VerticalAlignment="Bottom"
+                                   Typography.NumeralAlignment="Tabular"/>
+                        <!-- 처치까지 = 남은 HP ÷ 지금 파티 DPS. 미터만 낼 수 있는 숫자다. -->
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Bottom"
+                                    Visibility="{Binding TargetEtaVisibility}">
+                            <TextBlock Text="처치까지 " FontSize="10.5" Foreground="{DynamicResource Skin.MutedFg}"/>
+                            <TextBlock Text="{Binding TargetEtaText}" FontSize="10.5" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource Skin.Accent}" Typography.NumeralAlignment="Tabular"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="3" Text="{Binding TargetHpPercentText}" FontSize="22" FontWeight="Bold"
+                                   Foreground="{DynamicResource Skin.BossPercentFg}" VerticalAlignment="Bottom"
+                                   Typography.NumeralAlignment="Tabular" Visibility="{Binding TargetHpVisibility}"/>
+                    </Grid>
+                </Grid>
+
+                <!-- ── 무대: 아이콘 박스 + 이름/서브라인 + 큰 HP% + 하단 레일 ── -->
+                <Grid Visibility="{Binding Layout.BossInlineVisibility}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Width="30" Height="30" CornerRadius="7" Margin="0,0,11,0"
+                            VerticalAlignment="Center" Background="{DynamicResource Skin.StatBg}"
+                            BorderThickness="1" BorderBrush="{DynamicResource Skin.IconRing}">
+                        <Image Source="{Binding BossIcon}" Stretch="Uniform" Margin="4"/>
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}"
+                                   FontWeight="SemiBold" FontSize="15.5" TextTrimming="CharacterEllipsis"/>
+                        <!-- "던전 · 난이도". 페이즈는 미터에 데이터가 없어 넣지 않는다. -->
+                        <TextBlock Text="{Binding TargetSubtitle}" Foreground="{DynamicResource Skin.MutedFg}"
+                                   FontSize="10.5" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"
+                                   Visibility="{Binding TargetSubtitleVisibility}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                Visibility="{Binding TargetHpVisibility}">
+                        <TextBlock Text="{Binding TargetHpPercentText}" Foreground="{DynamicResource Skin.Fg}"
+                                   FontWeight="Bold" FontSize="23" TextAlignment="Right"
+                                   Typography.NumeralAlignment="Tabular"/>
+                        <TextBlock Text="{Binding TargetHpAmountText}" Foreground="{DynamicResource Skin.MutedFg}"
+                                   FontSize="10.5" Margin="0,3,0,0" TextAlignment="Right"
+                                   Typography.NumeralAlignment="Tabular"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- 무대 하단 4px HP 레일 — 게이지 형태 설정과 무관하게 항상 있다(카드 배경 채움은
+                     방향만 말하고 정확한 값은 이 레일이 말한다). Padding 밖까지 되민다. -->
+                <Grid VerticalAlignment="Bottom" Height="4" Margin="-11,0,-11,0"
+                      Visibility="{Binding Layout.BossCanvasVisibility}">
+                    <Border Background="{DynamicResource Skin.GaugeTrack}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
+                            <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{DynamicResource Skin.BossRail}"/>
+                    </Grid>
                 </Grid>
 
                 <!-- ── 계기판: HP% 가 주인공 ── -->
