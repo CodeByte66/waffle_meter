@@ -424,6 +424,11 @@ public sealed class OverlayController
                 // UI 분리모드에선 "떠 있는 창"이 본체가 아니라 분리 창 둘이라 아무도 올려주지 않으면 게임을
                 // 처음 포커스할 때까지 화면이 빈 채로 남는다.
                 PresentMeter();
+                // ⚠️ ParkAnimations 도 같이 풀어야 한다. NameFxSheen 은 이제 창별 호스트를 집계하는데
+                // ('등록 호스트 ≥1 이고 전부 숨김이면 정지'), 분리 창 둘이 기동 직후 Park 되면서 hidden 으로
+                // 등록되기 때문이다. 본체가 SetParked(false) 로 자기 호스트를 세워 주지 않으면 전부 hidden 이
+                // 되어, 게임을 처음 포커스할 때까지 닉네임 연출이 얼어붙는다 — 분리모드를 안 쓰는 사람도.
+                ParkAnimations(false);
                 SyncCompanion(true);
                 return;
             }

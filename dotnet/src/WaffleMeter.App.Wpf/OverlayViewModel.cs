@@ -74,7 +74,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         _isLight = isLight ?? (() => false);
         _encounters = encounters ?? EncounterCatalog.Empty;
         RebuildBrushes();
-        theme.Changed += (_, _) =>
+        // 핸들러를 필드에 붙잡아 둔다 — 설정창의 미리보기 VM 은 창을 열 때마다 새로 만들어지므로,
+        // 떼어낼 수 없는 익명 구독이면 MeterColorTheme 이 죽은 VM 을 세션 내내 붙들고 리페인트한다.
+        _themeChanged = (_, _) =>
         {
             RebuildBrushes();
             if (_lastReport is { } report)
@@ -82,6 +84,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
                 Update(report); // repaint rows with the new colors
             }
         };
+        theme.Changed += _themeChanged;
         _status = $"waffle_meter {version}";
     }
 
@@ -94,6 +97,15 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// <see cref="NameFxSheen.SetPreviewDemand"/> 가 이미 담당한다.</para>
     /// </summary>
     private readonly bool _preview;
+
+    private readonly EventHandler _themeChanged;
+
+    /// <summary>
+    /// 이 뷰모델을 테마 이벤트에서 떼어낸다. 앱 수명 내내 하나인 본체 VM 은 부를 일이 없고, 설정창을 열 때마다
+    /// 새로 생기는 미리보기 VM 이 쓴다 — 안 떼면 설정창을 열었다 닫을 때마다 죽은 VM 이 하나씩 쌓여
+    /// 스킨을 한 번 바꿀 때마다 그 전부가 행을 다시 그린다.
+    /// </summary>
+    public void Detach() => _theme.Changed -= _themeChanged;
 
     /// <summary>
     /// Derives the per-row tier state FOR THE REPORT BEING RENDERED. Set once at startup.

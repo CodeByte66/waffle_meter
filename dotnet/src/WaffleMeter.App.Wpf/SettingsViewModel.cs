@@ -199,7 +199,13 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         // 미리보기는 '무엇이 바뀌었나'를 가리지 않는다 — 글꼴·투명도·티어·닉네임 효과·행 높이가 전부
         // 생김새를 바꾸는데, 세터마다 손으로 호출을 심으면 새 설정을 더할 때 하나씩 빠진다. 아직 안 만든
         // 미리보기는 그냥 통과하므로(RefreshLayoutPreview 의 null 가드) 평소엔 비용이 0 이다.
-        settings.PropertyChanged += (_, _) => RefreshLayoutPreview();
+        _settingsChanged = (_, _) => RefreshLayoutPreview();
+        settings.PropertyChanged += _settingsChanged;
+        // 미리보기도 본체와 같은 스킨 전환 배선을 탄다(App.xaml.cs 의 skinManager.Changed += RefreshSkin).
+        // 없으면 다크↔라이트를 바꿔도 미리보기 안의 DPS·퍼센트 색만 옛 스킨으로 남는다 — 스킨이 바뀌었는지
+        // 확인하려고 여는 화면에서 그게 틀린 답을 준다.
+        _skinChanged = () => _layoutPreview?.RefreshSkin();
+        skin.Changed += _skinChanged;
 
         _pendingReset = hotkeys.Reset;
         _pendingVisibility = hotkeys.Visibility;
@@ -712,6 +718,21 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         LayoutLocks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
     private OverlayViewModel? _layoutPreview;
+    private readonly System.ComponentModel.PropertyChangedEventHandler _settingsChanged;
+    private readonly Action _skinChanged;
+
+    /// <summary>
+    /// 설정창이 닫힐 때 구독을 떼어낸다. 이 뷰모델은 창을 열 때마다 **새로 만들어지므로**, 떼지 않으면
+    /// <see cref="MeterSettings"/> 와 <see cref="SkinManager"/> 가 죽은 뷰모델을 계속 붙들고 있다가
+    /// 설정 하나 바뀔 때마다 그동안 열었던 모든 미리보기를 다시 그린다(창을 열수록 느려진다).
+    /// </summary>
+    public void Detach()
+    {
+        _settings.PropertyChanged -= _settingsChanged;
+        _skin.Changed -= _skinChanged;
+        _layoutPreview?.Detach();
+        _layoutPreview = null;
+    }
 
     /// <summary>
     /// 레이아웃 미리보기. <b>진짜</b> <c>BossBarView</c>·<c>MeterRowsView</c> 를 표본 전투로 그린다 —
@@ -764,7 +785,12 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     public bool SplitUiMode
     {
         get => _settings.SplitUiMode;
-        set { _settings.SplitUiMode = value; OnPropertyChanged(); }
+        set
+        {
+            _settings.SplitUiMode = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TaskbarModeEnabled)); // 분리모드에선 작업표시줄 모드가 잠긴다
+        }
     }
     public bool IsMinimal { get => _settings.IsMinimal; set { _settings.IsMinimal = value; OnPropertyChanged(); } }
     public bool ShowCombatTimerInMinimal { get => _settings.ShowCombatTimerInMinimal; set { _settings.ShowCombatTimerInMinimal = value; OnPropertyChanged(); } }
@@ -1606,6 +1632,13 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     /// <summary>Taskbar / alt-tab mode: the overlay becomes a normal window (shows in taskbar + alt-tab,
     /// auto-hide suspended). Applied live + persisted; the header also exposes this as a toggle.</summary>
+    /// <summary>
+    /// UI 분리모드에서는 작업표시줄/Alt+Tab 모드를 잠근다. 이 설정은 <b>본체 창</b>의 ex-style 만 바꾸는데
+    /// 분리모드에선 그 창이 투명하게 내려가 있어, 켜면 눌러도 아무것도 안 뜨는 작업표시줄 항목이 생긴다
+    /// (분리 창들은 <c>OverlayPanelWindow.SyncInputStyle</c> 이 항상 APPWINDOW 를 지우므로 목록에 못 올라간다).
+    /// </summary>
+    public bool TaskbarModeEnabled => !_settings.SplitUiMode;
+
     public bool TaskbarMode
     {
         get => _settings.TaskbarMode;
@@ -2522,7 +2555,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         // ⚠️ 새 항목은 반드시 **맨 끝**에. 이 record 는 string/bool 이웃이 줄줄이라 중간에 끼우면
         // 컴파일이 통과하면서 값이 한 칸씩 밀린다. 빠뜨리면 "취소가 안 됨"이 아니라
         // **이미 저장됐고 되돌릴 수 없음**이 된다.
-        string MeterLayoutId)
+        string MeterLayoutId,
+        bool SplitUiMode)
     {
         public static Snapshot Capture(MeterSettings s, OverlayController c) => new(
             s.DisplayMode, s.DamageValueMode, s.RowDpsMetric, s.ContributionMode, s.NameDisplay,
@@ -2533,7 +2567,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             s.NameFxGauge,
             s.TierShow, s.TierEffects, s.TierShowOthers, s.TierShowSelfChip,
             s.BuffUiIconSize, s.CooldownUiIconSize, s.CooldownUiPerRow, s.CooldownUiTextColor,
-            s.MeterLayoutId);
+            s.MeterLayoutId,
+            s.SplitUiMode);
 
         public void Apply(MeterSettings s, OverlayController c)
         {
@@ -2583,6 +2618,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             s.CooldownUiPerRow = CooldownUiPerRow;
             s.CooldownUiTextColor = CooldownUiTextColor;
             s.MeterLayoutId = MeterLayoutId;
+            // 세터가 곧바로 파일에 쓰고 App 이 창까지 갈라 놓기 때문에, 여기 없으면 '취소'가 안 되는 게 아니라
+            // **이미 저장됐고 되돌릴 수 없는** 상태가 된다(이 record 맨 위 경고 그대로).
+            s.SplitUiMode = SplitUiMode;
             NameFxSheen.Rebuild(NameFxBrightnessPercent);
         }
     }

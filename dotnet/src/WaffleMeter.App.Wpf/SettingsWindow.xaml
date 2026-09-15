@@ -1112,11 +1112,16 @@
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding IsAutoHide}"/>
                         </Grid>
 
-                        <Grid Margin="0,0,0,14">
+                        <Grid Margin="0,0,0,14" IsEnabled="{Binding TaskbarModeEnabled}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
                                 <TextBlock Text="작업표시줄 / Alt+Tab 모드" Style="{StaticResource SettingTitle}"/>
                                 <TextBlock Text="오버레이를 일반 창으로 바꿔 작업표시줄·Alt+Tab에 표시합니다. (자동 숨김 해제)" Style="{StaticResource SettingDesc}"/>
+                                <!-- 분리모드에선 이 설정이 가리키는 본체 창이 화면에 없다 — 켜면 눌러도 아무것도
+                                     안 뜨는 항목만 생긴다. 게이지 형태·서버 표시와 같은 종류의 잠금이다. -->
+                                <TextBlock Text="UI 분리모드에서는 쓸 수 없습니다 — 이 설정이 가리키는 본체 창이 화면에 없습니다."
+                                           Style="{StaticResource SettingDesc}"
+                                           Visibility="{Binding TaskbarModeEnabled, Converter={StaticResource BoolToVisInverse}}"/>
                             </StackPanel>
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding TaskbarMode}"/>
                         </Grid>

@@ -264,6 +264,27 @@ public abstract class OverlayPanelWindow : Window, IReassertableOverlay
         BeginDrag();
     }
 
+    /// <summary>
+    /// 🔑 <see cref="Window.DragMove"/> 는 이동 루프가 끝난 뒤 <b>클라이언트 (0,0) 좌표로 합성
+    /// <c>WM_LBUTTONUP</c> 을 직접 보낸다</b>(WPF 구현). 창 표면 전체가 드래그 핸들인 창에서는 그 (0,0) 이
+    /// 헤더가 아니라 컨텐츠라, WPF 가 그 지점을 다시 히트테스트해 <b>클릭으로 오독</b>한다.
+    ///
+    /// <para>실제 증상: 무대 레이아웃은 패널 패딩이 0 이라 (0,0) 이 1위 행 안이고, 미터 행 창을 옮길 때마다
+    /// 1위 플레이어의 상세창이 열렸다 닫혔다 했다(행은 <c>MouseLeftButtonUp</c> 으로 클릭을 판정한다).</para>
+    ///
+    /// <para>사용자가 실제로 뗀 버튼은 이동 모달 루프가 이미 삼켰으므로, <c>_dragging</c> 인 동안 올라오는
+    /// Up 은 이 합성 메시지뿐이다 — Preview 단계에서 끊으면 버블링 자체가 일어나지 않는다.</para>
+    /// </summary>
+    protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e)
+    {
+        if (_dragging)
+        {
+            e.Handled = true;
+        }
+
+        base.OnPreviewMouseLeftButtonUp(e);
+    }
+
     private void BeginDrag()
     {
         double startLeft = Left, startTop = Top;

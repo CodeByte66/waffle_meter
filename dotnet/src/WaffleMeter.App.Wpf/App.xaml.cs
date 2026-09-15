@@ -40,6 +40,15 @@ public partial class App : Application
     /// </summary>
     private bool _splitRowsHeightManual;
 
+    /// <summary>
+    /// 분리 보스칸 창의 자동 높이 래치. ⚠️ 행 창·본체와 **각자** 가져야 한다 — 창 하나의 폭을 끌었다고
+    /// 다른 창의 자동 높이가 죽으면 안 된다.
+    /// <para>보스칸은 본체보다 오히려 전환에 민감하다: 높이가 레이아웃마다 52/70/104 로 달라지고,
+    /// 대기 카드(46)에서 전투 카드로 넘어갈 때도 자란다. 자동 높이가 죽은 채로 전투가 시작되면
+    /// BossBarView 가 <c>ClipToBounds</c> 라 HP 수치·처치까지·큰 HP% 가 조용히 잘린다.</para>
+    /// </summary>
+    private bool _splitBossHeightManual;
+
     private JoinRequestPanel? _joinPanel;
     private JoinRequestViewModel? _joinViewModel;
     private bool _joinPanelPositioned;
@@ -405,6 +414,7 @@ public partial class App : Application
             };
             settingsWindow.Closed += (_, _) =>
             {
+                svm.Detach(); // 설정·스킨 이벤트에서 떼어낸다 — 창마다 새 VM 이라 안 떼면 세션 내내 쌓인다
                 if (ReferenceEquals(_settingsWindow, settingsWindow))
                 {
                     _settingsWindow = null;
@@ -1393,7 +1403,9 @@ public partial class App : Application
             _detailUid = 0;
         };
         LoadWindowSize(services.Props, "detailWidth", "detailHeight", _detailWindow);
-        PlaceDetailWindow(owner, _detailWindow); // right of the meter, flipping left if it would clip off-screen
+        // 분리모드에선 owner(본체)가 투명하게 내려가 있다 — 그 자리를 기준으로 잡으면 사용자가 보지도 못한
+        // 좌표에 상세창이 뜬다. 눈에 보이는 창(보스칸)을 기준으로 삼는다.
+        PlaceDetailWindow(PanelAnchor(owner as OverlayWindow), _detailWindow); // right of the meter, flipping left if it would clip off-screen
         _detailWindow.Show();
         _controller?.RegisterOverlay(_detailWindow); // poll re-claims its topmost on alt-tab return to the game
         AttachScreenClamp(_detailWindow);
@@ -2323,11 +2335,30 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// 첫 실행에서 행 창을 보스칸 바로 아래로 내린다. 보스칸 높이는 레이아웃마다 다르고
+    /// <c>SizeToContent</c> 로 결정되므로 XAML 상수로는 맞출 수 없다 — 실측이 나온 첫 순간에 한 번만 하고
+    /// 스스로 떨어져 나간다(그 뒤로는 사용자가 정한 자리가 저장된다).
+    /// </summary>
+    private void StackRowsUnderBossOnce(object sender, SizeChangedEventArgs e)
+    {
+        if (_splitBoss is null || _splitRows is null || _splitBoss.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        _splitBoss.SizeChanged -= StackRowsUnderBossOnce;
+        _splitRows.Left = _splitBoss.Left;
+        _splitRows.Top = _splitBoss.Top + _splitBoss.ActualHeight + 8;
+    }
+
     /// <summary>패널이 <b>처음</b> 뜰 때 기댈 창. UI 분리모드에선 본체가 투명하게 내려가 있으므로 그 자리를
     /// 기준으로 잡으면 사용자가 보지도 못한 좌표에 패널이 나타난다 — 실제로 보이는 보스칸을 기준으로 삼는다.
     /// (한 번 자리를 정한 뒤로는 저장된 좌표를 쓰므로 여기 오지 않는다.)</summary>
-    private Window PanelAnchor(OverlayWindow overlay) =>
-        _settings?.SplitUiMode == true && _splitBoss is not null ? _splitBoss : overlay;
+    private Window PanelAnchor(OverlayWindow? overlay) =>
+        _settings?.SplitUiMode == true && _splitBoss is not null
+            ? _splitBoss
+            : (Window?)overlay ?? (Window?)_overlayWindow ?? _splitBoss!;
 
     /// <summary>Confine a window to its monitor while multi-monitor movement is off (off-screen guard).</summary>
     private void AttachScreenClamp(Window w)
@@ -3247,7 +3278,12 @@ public partial class App : Application
         LoadWindowWidth(services.Props, "splitBossWidth", _splitBoss);
         LoadWindowWidth(services.Props, "splitRowsWidth", _splitRows);
         LoadPanelPosition(services.Props, _splitBoss, "splitBossX", "splitBossY");
-        LoadPanelPosition(services.Props, _splitRows, "splitRowsX", "splitRowsY");
+        // 행 창의 XAML 기본 Top(120)은 보스칸이 전장 레이아웃에서 실제로 차지하는 높이(약 126)보다 낮아
+        // 첫 실행에서 두 창이 겹쳐 뜬다. 저장된 자리가 없을 때만, 보스칸이 실측된 뒤 그 아래로 내린다.
+        if (!LoadPanelPosition(services.Props, _splitRows, "splitRowsX", "splitRowsY"))
+        {
+            _splitBoss.SizeChanged += StackRowsUnderBossOnce;
+        }
         ClampWhenLoaded(_splitBoss);
         ClampWhenLoaded(_splitRows);
 
@@ -3278,12 +3314,26 @@ public partial class App : Application
                 _splitRows.SizeToContent = SizeToContent.Height;
             }
         });
-        AttachResize(_splitBoss, services.Props, "splitBossWidth", "splitBossHeight", widthOnly: true);
+        // 보스칸도 SizeToContent="Height" 라 행 창과 **똑같은** 복구가 필요하다. 이 훅이 없으면 리사이즈
+        // 띠를 한 번 클릭만 해도(WPF 는 방향·이동량과 무관하게 끈다) 그 세션 내내 높이가 굳는다.
+        AttachResize(_splitBoss, services.Props, "splitBossWidth", "splitBossHeight", widthOnly: true, onResizeEnd: e =>
+        {
+            _splitBossHeightManual = WindowResizePolicy.NextManual(
+                _splitBossHeightManual, e.HitCode, e.HeightBefore, e.HeightAfter);
+            if (!_splitBossHeightManual)
+            {
+                _splitBoss.SizeToContent = SizeToContent.Height;
+            }
+        });
 
         ApplySplitUiMode();
         _settings!.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(MeterSettings.SplitUiMode))
+            // ⚠️ 빈 이름을 반드시 받아야 한다. INotifyPropertyChanged 규약에서 string.Empty 는 "전 프로퍼티가
+            // 바뀌었다"는 뜻이고, 설정 코드 가져오기의 유일한 반영 경로인 MeterSettings.Reload() 가 정확히
+            // 그것만 발화한다. 이름만 비교하면 가져오기로 분리모드를 끌 때 두 창이 Park 되지 않은 채
+            // 본체까지 Present 되어 **같은 미터가 세 개** 남는다(다음 Fade 까지 계속).
+            if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(MeterSettings.SplitUiMode))
             {
                 Dispatcher.BeginInvoke(ApplySplitUiMode);
             }
@@ -3309,8 +3359,11 @@ public partial class App : Application
         // 전환 직후가 높이를 다시 재기 딱 좋은 시점이다.
         if (split)
         {
+            // 모드 재진입이 자동 높이의 구제 수단이다 — 굳은 창을 되살릴 다른 경로가 없다.
             _splitRowsHeightManual = false;
             _splitRows.SizeToContent = SizeToContent.Height;
+            _splitBossHeightManual = false;
+            _splitBoss.SizeToContent = SizeToContent.Height;
         }
         else if (_overlayWindow is not null)
         {

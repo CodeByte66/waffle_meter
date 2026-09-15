@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -1131,6 +1132,53 @@ internal static class Program
         Check("취소가 티어 장식 4키를 되돌린다",
             settings.TierShow && settings.TierEffects == "static" && settings.TierShowOthers && settings.TierShowSelfChip);
         Check("취소가 닉네임 효과·오드 표시도 되돌린다", settings.NameFxMode == "animated" && settings.ShowAetherStatus);
+
+        // 🔑 손으로 적은 위 목록은 **새 토글이 생길 때 같이 안 늘어난다** — SplitUiMode 가 정확히 그렇게
+        // 빠졌다(켜 보고 취소하면 분리모드가 켜진 채 영구 저장됐다). 그래서 Snapshot record 를 반사로 읽어
+        // 같은 이름의 bool 설정을 전부 뒤집었다 되돌려 본다. 항목을 record 에는 넣고 Apply 에는 안 넣는
+        // 어긋남까지 여기서 잡힌다(그 조합은 컴파일도 통과한다).
+        var snapType = typeof(SettingsViewModel).GetNestedType("Snapshot", BindingFlags.NonPublic);
+        if (snapType is null)
+        {
+            Check("Snapshot record 를 찾았다", false);
+        }
+        else
+        {
+            var bools = snapType.GetProperties()
+                .Select(sp => typeof(MeterSettings).GetProperty(sp.Name))
+                .Where(mp => mp is { CanRead: true, CanWrite: true } && mp.PropertyType == typeof(bool))
+                .ToArray();
+            Check($"Snapshot 의 bool 설정을 찾았다 ({bools.Length}개)", bools.Length >= 8);
+
+            var before = bools.ToDictionary(mp => mp!.Name, mp => (bool)mp!.GetValue(settings)!);
+            var roundTripVm = new SettingsViewModel(services, settings, theme, skin, controller, hotkeys, presets, new GameOptimizerService());
+            foreach (var mp in bools)
+            {
+                mp!.SetValue(settings, !before[mp.Name]); // 세터가 곧바로 파일에 쓴다 = 되돌릴 게 생긴다
+            }
+
+            roundTripVm.Revert();
+            string[] notRestored = bools
+                .Where(mp => (bool)mp!.GetValue(settings)! != before[mp.Name])
+                .Select(mp => mp!.Name)
+                .ToArray();
+            Check($"취소가 Snapshot 의 bool 설정을 전부 되돌린다{(notRestored.Length > 0 ? " — 빠진 것: " + string.Join(", ", notRestored) : "")}",
+                notRestored.Length == 0);
+            Check("SplitUiMode 가 그 목록에 들어 있다", bools.Any(mp => mp!.Name == "SplitUiMode"));
+            roundTripVm.Detach();
+        }
+
+        // 레이아웃은 bool 이 아니라 위 반사 검사에 안 걸린다 — 행 높이까지 함께 옮기므로 따로 확인한다.
+        // ⚠️ 행 높이도 같이 세워 둬야 한다. 스냅샷은 "창이 열린 순간"을 뜨는 것이지 배포 기본값이 아니라서,
+        // 앞선 검사들이 남긴 값(실제로 60이었다)을 그대로 되돌리는 게 정상 동작이다.
+        settings.MeterLayoutId = "battlefield";
+        settings.RowHeight = 36;
+        var layoutCancelVm = new SettingsViewModel(services, settings, theme, skin, controller, hotkeys, presets, new GameOptimizerService());
+        layoutCancelVm.MeterLayoutId = "stage";
+        layoutCancelVm.Revert();
+        Check($"취소가 레이아웃과 그 행 높이를 함께 되돌린다 (layout={settings.MeterLayoutId}, row={settings.RowHeight})",
+            settings.MeterLayoutId == "battlefield" && settings.RowHeight == 36);
+        layoutCancelVm.Detach();
 
         vm.ResetDefaults();
         Check("ResetDefaults", settings.DisplayMode == "dps_percent" && settings.RowHeight == 36 && skin.Current == "dark");
