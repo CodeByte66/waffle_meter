@@ -1,0 +1,46 @@
+<UserControl x:Class="WaffleMeter.App.Wpf.Controls.RowGaugeCell"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:WaffleMeter.App.Wpf"
+             x:Name="Root">
+    <!--
+        기여도 비율 게이지 + 후원자·랭커 게이지 스킨 장식. 저장소에서 GaugeBrush / GaugeOpacity /
+        GaugeFxLayer 를 배선하는 **유일한 자리**다. 호출부는 둘(미터 행, 설정창 미리보기)이고 둘 다
+        이 컨트롤을 쓴다 — 예전에는 설정창이 손으로 베낀 사본이라 실물과 어긋났다.
+
+        ⚠️ Brush·Opacity 타입 DependencyProperty 를 **일부러 노출하지 않는다.** 레이아웃이 채움
+        불투명도를 덮어쓸 자리가 API 에 없어야, 스킨 받은 행의 0.58(스킨 없음 0.3 — OverlayViewModel 이
+        행마다 계산)이 구조적으로 보존된다. 팔레트의 채도·하이라이트 폭이 그 뒤를 전제로 튜닝돼 있다.
+
+        ⚠️ 내부 트리 모양은 고정이다: 비율 2컬럼 Grid → Column 0 (ClipToBounds) → [채움 Border, 장식]
+        **형제**. GaugeFxLayer 를 다른 부모로 옮기지 마라 — 세로 StackPanel 같은 곳에 두면 높이가 0 이 돼
+        OnRender 가 h<=1 에서 조기 반환하고 장식이 조용히 사라진다.
+
+        게이지 브러시는 RelativeToBoundingBox 라 '한 타일 = 이 행의 기여도 폭'이다. 전폭 Border + Clip 으로
+        바꾸면 모든 행이 같은 주기가 되어 짧은 바에 그라디언트 머리만 남는다 — 상대 매핑을 택한 이유다.
+
+        컨버터는 여기서 다시 선언한다. DataTemplate/UserControl 안의 StaticResource 는 런타임 비주얼 트리가
+        아니라 **선언된 사전의 파싱 스코프**에서 해석되기 때문이다(Themes/PanelChrome.xaml 도 같은 이유로
+        자기 사전 안에 둔다).
+    -->
+    <UserControl.Resources>
+        <local:RatioToStarConverter x:Key="RatioToStar"/>
+        <local:DoubleToCornerRadiusConverter x:Key="Radius"/>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="{Binding BarRatio, Converter={StaticResource RatioToStar}}"/>
+            <ColumnDefinition Width="{Binding BarRest, Converter={StaticResource RatioToStar}}"/>
+        </Grid.ColumnDefinitions>
+        <Grid Grid.Column="0" ClipToBounds="True" MinHeight="{Binding MinBandHeight, ElementName=Root}">
+            <Border Background="{Binding GaugeBrush}" Opacity="{Binding GaugeOpacity}"
+                    CornerRadius="{Binding GaugeRadius, ElementName=Root, Converter={StaticResource Radius}}"/>
+            <local:GaugeFxLayer SkinId="{Binding GaugeSkinId}"
+                                IsFxEnabled="{Binding GaugeFxEnabled}"
+                                Seed="{Binding Id}"
+                                ContentExclusionLeft="{Binding ContentExclusionLeft, ElementName=Root}"
+                                CornerRadius="{Binding GaugeRadius, ElementName=Root}"/>
+        </Grid>
+    </Grid>
+</UserControl>

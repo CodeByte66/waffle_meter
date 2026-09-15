@@ -314,13 +314,8 @@ public partial class OverlayWindow : Window
 
     private void OnUpdateButton(object sender, RoutedEventArgs e) => UpdateRequested?.Invoke();
 
-    private void OnRowClick(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is FrameworkElement { DataContext: RowViewModel row } && DataContext is OverlayViewModel vm)
-        {
-            vm.ToggleSelection(row.Id);
-        }
-    }
+    // OnRowClick 은 Controls/MeterRowsView.xaml.cs 로 옮겼다 — 행 마크업이 그 UserControl 로 갔고,
+    // x:Class 가 있으므로 핸들러도 같은 파일에 있어야 XAML 이 찾는다.
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);

@@ -149,6 +149,21 @@ internal static class Program
                 }
                 settings.BarStyle = "fill";
 
+                // 레이아웃 3종 — 같은 리포트를 세 생김새로.
+                string savedLayout = settings.MeterLayoutId;
+                int savedRow = settings.RowHeight;
+                foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+                {
+                    settings.MeterLayoutId = lay.Id;
+                    settings.RowHeight = lay.DefaultRowHeight;
+                    var lv = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+                    lv.SetRecognized(true, "콘팡");
+                    lv.Update(SampleMeterReport(now));
+                    Capture(() => new OverlayWindow { DataContext = lv }, palette, Path.Combine(outDir, $"layout_{lay.Id}_Dark.png"));
+                }
+                settings.MeterLayoutId = savedLayout;
+                settings.RowHeight = savedRow;
+
                 // font test: a visually-distinct BUNDLED font must actually reach the row text (item 3).
                 string savedFont = settings.FontFamily;
                 settings.FontFamily = "Tmoney RoundWind ExtraBold";

@@ -1,0 +1,57 @@
+<UserControl x:Class="WaffleMeter.App.Wpf.Controls.BossBarView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:WaffleMeter.App.Wpf">
+    <!--
+        보스칸(타겟 정보). OverlayWindow.xaml 에서 수치 무변경으로 옮겨 왔다 — 분리모드에서 같은
+        UserControl 을 독립 창에 얹기 위해서다.
+
+        ⚠️ 보스칸에는 GaugeFxLayer 도 GaugeSkinId 도 없다. 게이지 스킨 장식은 **행에만** 붙으므로
+        보스칸 게이지를 어떻게 바꾸든 후원자·랭커 연출과는 물리적으로 무관하다.
+    -->
+    <UserControl.Resources>
+        <local:RatioToStarConverter x:Key="RatioToStar"/>
+        <local:OffsetConverter x:Key="Offset"/>
+    </UserControl.Resources>
+            <!-- target-info bar (React TargetInfo.tsx): above the rows, shown when there are rows -->
+            <Border CornerRadius="6" Padding="8,0" Margin="0,0,0,6" ClipToBounds="True"
+                    Height="{Binding Settings.RowHeight, Converter={StaticResource Offset}, ConverterParameter=6}"
+                    Background="{DynamicResource Skin.RowBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
+                    Visibility="{Binding TargetInfoVisibility}">
+                <Grid>
+                    <!-- "fill" HP gauge (게이지 형태 = fill): proportional cell fill behind the content at low
+                         opacity so the boss name stays readable — mirrors the meter row fill. -->
+                    <Grid Visibility="{Binding TargetBarFillVisibility}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
+                            <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{Binding BossBarBrush}" Opacity="0.3" CornerRadius="4"/>
+                    </Grid>
+                    <!-- "bar" HP gauge (게이지 형태 = bar): thin bottom HP-fill bar. "none" hides both. -->
+                    <Grid VerticalAlignment="Bottom" Height="2" Visibility="{Binding TargetBottomBarVisibility}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
+                            <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
+                    </Grid>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <!-- left accent rail -->
+                        <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,4,8,4" Background="{Binding BossBarBrush}"/>
+                        <Image Grid.Column="1" Source="{Binding BossIcon}" Width="20" Height="20" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="2" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
+                                   FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Grid.Column="3" Text="{Binding TargetHpText}" Foreground="{Binding CombatTimeBrush}" FontSize="12"
+                                   VerticalAlignment="Center" Margin="8,0,0,0" Visibility="{Binding TargetHpVisibility}"/>
+                    </Grid>
+                </Grid>
+            </Border>
+
+</UserControl>

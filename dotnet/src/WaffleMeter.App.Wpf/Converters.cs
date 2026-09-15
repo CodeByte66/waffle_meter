@@ -354,3 +354,20 @@ public sealed class RowHeightToFontSizeConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>
+/// 레이아웃 스펙의 <c>double</c> 반경을 <see cref="CornerRadius"/> 로 넓힌다. 한 값이 채움 Border 와
+/// <c>GaugeFxLayer.CornerRadius</c>(자기 클립 모양의 근거) 를 **동시에** 물어야 모서리가 어긋나지 않는다 —
+/// 둘을 따로 두면 무대(0)에서 장식만 둥근 노치를 남긴다.
+/// </summary>
+public sealed class DoubleToCornerRadiusConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        double v = value switch { int i => i, double d => d, _ => 0.0 };
+        return new CornerRadius(Math.Max(0.0, v));
+    }
+
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

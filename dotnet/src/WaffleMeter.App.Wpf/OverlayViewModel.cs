@@ -450,6 +450,15 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     private Visibility _targetInfoVisibility = Visibility.Collapsed;
     public Visibility TargetInfoVisibility { get => _targetInfoVisibility; private set => Set(ref _targetInfoVisibility, value); }
 
+    private MeterLayoutVisual _layout = MeterLayoutVisual.Default;
+
+    /// <summary>
+    /// 창 전체가 따르는 레이아웃 기하. 보스칸·행 목록·타이머가 전부 이걸 바인딩한다.
+    /// 행은 자기 <c>L</c> 을 따로 들고 있는데(DataTemplate 안에서는 행이 DataContext 라 창 프로퍼티에
+    /// 손이 안 닿는다), 둘은 매 <see cref="Update"/> 마다 같은 인스턴스로 맞춰진다.
+    /// </summary>
+    public MeterLayoutVisual Layout { get => _layout; private set => Set(ref _layout, value); }
+
     private Visibility _targetFailedVisibility = Visibility.Collapsed;
     public Visibility TargetFailedVisibility { get => _targetFailedVisibility; private set => Set(ref _targetFailedVisibility, value); }
 
@@ -518,6 +527,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         bool entire = _settings.UseEntireContribution;
         NameDisplay nameMode = _settings.NameDisplayMode;
         double rowHeight = _settings.RowHeight;
+        // 레이아웃 기하는 창 단위로 한 번만 만든다((id, rowHeight) 캐시).
+        MeterLayoutVisual layoutVisual = MeterLayoutVisual.For(_settings.MeterLayoutId, _settings.RowHeight);
+        Layout = layoutVisual;
         string barStyle = _settings.BarStyle; // "fill" (cell fill) / "bar" (thin bottom bar) / "none"
         Visibility fillVis = barStyle == "fill" ? Visibility.Visible : Visibility.Collapsed;
         Visibility barVis = barStyle == "bar" ? Visibility.Visible : Visibility.Collapsed;
@@ -711,7 +723,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
                 GaugeFxEnabled: gaugeSkinId is not null
                     && _settings.NameFxMode == "animated"
                     && !_settings.LowSpecMode
-                    && _settings.BarStyle == "fill");
+                    && _settings.BarStyle == "fill",
+                L: layoutVisual);
 
             if (i < Rows.Count)
             {
@@ -915,7 +928,10 @@ public sealed record RowViewModel(
     string? GaugeSkinId = null,
     /// <summary>Whether the decoration may animate on this row. Separate from having a skin, because 색상만
     /// (static), low-spec and <c>BarStyle != fill</c> all keep the colour fill and drop only the decoration.</summary>
-    bool GaugeFxEnabled = false);
+    bool GaugeFxEnabled = false,
+    /// <summary>이 행이 따르는 레이아웃의 기하. ⚠️**맨 끝에** 붙였다 — 이 record 는 같은 타입 이웃이
+    /// 많아서 중간에 파라미터를 끼우면 컴파일은 통과하면서 값이 한 칸씩 밀린다. null 이면 현행(전장) 수치.</summary>
+    MeterLayoutVisual? L = null);
 
 
 /// <summary>Per-row tier text. Separate from <see cref="TierBadge"/> (a shared singleton) because these values
