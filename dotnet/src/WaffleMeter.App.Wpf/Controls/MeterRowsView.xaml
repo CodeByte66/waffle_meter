@@ -22,8 +22,20 @@
                     크기 조절 시작 시점에 SizeToContent를 꺼버리는 것 — WindowResizePolicy 참조. -->
             <ScrollViewer VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
+            <!-- 대기 카드가 보스칸에 떠 있으면 같은 말이 두 번 나온다 — 그때는 이 줄을 숨긴다. -->
             <TextBlock Text="전투 대기 중" Foreground="{DynamicResource Skin.MutedFg}" HorizontalAlignment="Center"
-                       Margin="0,8" Visibility="{Binding PlaceholderVisibility}"/>
+                       Margin="0,8">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="{Binding PlaceholderVisibility}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IdleCardVisibility}" Value="Visible">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
             <ItemsControl ItemsSource="{Binding Rows}">
                 <ItemsControl.ItemTemplate>
@@ -32,9 +44,9 @@
                              GaugeFxLayer 의 유일한 높이 공급원이고(레이어의 MeasureOverride 는 0), 크롬만 0 으로
                              만든다. 아래 트리거의 Background 도 반드시 Transparent 여야 한다 — {x:Null} 이면
                              히트테스트가 죽어 행 클릭(상세창)과 hover 가 함께 조용히 사라진다. -->
-                        <Border CornerRadius="{Binding L.CardRadius}" Padding="{Binding L.CardPadding}"
-                                Margin="{Binding L.CardMargin}" Cursor="Hand" BorderThickness="{Binding L.CardBorder}"
-                                ClipToBounds="True" MouseLeftButtonUp="OnRowClick" MinHeight="{Binding L.RowMinHeight}"
+                        <Border CornerRadius="{Binding DataContext.Layout.CardRadius, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Padding="{Binding DataContext.Layout.CardPadding, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                Margin="{Binding DataContext.Layout.CardMargin, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Cursor="Hand" BorderThickness="{Binding DataContext.Layout.CardBorder, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                ClipToBounds="True" MouseLeftButtonUp="OnRowClick" MinHeight="{Binding DataContext.Layout.RowMinHeight, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                 Typography.NumeralAlignment="Tabular">
                             <Border.Style>
                                 <!-- Resting card fill + soft border (matches React .meter-row); hover lightens.
@@ -46,7 +58,7 @@
                                     <Setter Property="BorderBrush" Value="{Binding Tier.RowBorder}"/>
                                     <Style.Triggers>
                                         <!-- 계기판: 판때기를 지운다. Transparent 여야 클릭·hover 가 산다. -->
-                                        <DataTrigger Binding="{Binding L.HasCardChrome}" Value="False">
+                                        <DataTrigger Binding="{Binding DataContext.Layout.HasCardChrome, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="False">
                                             <Setter Property="Background" Value="Transparent"/>
                                             <Setter Property="BorderBrush" Value="Transparent"/>
                                         </DataTrigger>
@@ -83,10 +95,28 @@
                                          내부 구조는 controls:RowGaugeCell 이 소유한다 — 설정창 미리보기와
                                          **같은 컨트롤**이라 시안과 실물이 다시 어긋날 수 없다. -->
                                     <controls:RowGaugeCell Visibility="{Binding BarFillVisibility}"
-                                                           GaugeRadius="{Binding L.GaugeRadius}"
-                                                           ContentExclusionLeft="{Binding L.GaugeExclusionLeft}"
-                                                           MinBandHeight="{Binding L.FxBandHeight}"/>
+                                                           GaugeRadius="{Binding DataContext.Layout.GaugeRadius, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                                           ContentExclusionLeft="{Binding DataContext.Layout.GaugeExclusionLeft, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                                           MinBandHeight="{Binding DataContext.Layout.FxBandHeight, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
                                   <Grid>
+                                    <!-- 판때기가 없는 레이아웃(계기판)은 글자가 게임 화면 위에 바로 얹히므로
+                                         그림자가 가독성의 전부다. ⚠️효과는 **행당 하나**만 건다 — 글자마다
+                                         걸면 10행 × 4개 = 40개가 되고, 이 오버레이는 소프트웨어 렌더를
+                                         강제하고 있어 그 비용이 그대로 프레임에 실린다. 게이지 채움은
+                                         이 Grid 의 형제라 흐려지지 않는다. -->
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding DataContext.Layout.EtchText, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="True">
+                                                    <Setter Property="Effect">
+                                                        <Setter.Value>
+                                                            <DropShadowEffect ShadowDepth="1" BlurRadius="3" Opacity="0.95" Color="Black"/>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
@@ -98,16 +128,24 @@
                                     </Grid.ColumnDefinitions>
                                     <!-- left accent rail -->
                                     <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,2,8,2" VerticalAlignment="Stretch"
-                                            Background="{Binding FillBrush}" Opacity="{Binding AccentOpacity}"/>
+                                            Background="{Binding FillBrush}" Opacity="{Binding AccentOpacity}"
+                                            Visibility="{Binding DataContext.Layout.AccentRailVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
                                     <!-- rank — 던전 티어 tints the fill/ring/number. Every dimension (MinWidth,
                                          Height, Padding, Margin, BorderThickness, CornerRadius) is UNCHANGED:
                                          the window is SizeToContent="Height" and growing a badge by a pixel
                                          re-opens the auto-height regression that bit v2.7.5 and v2.8.1.
                                          Tier.IsNone restores the skin's own brushes so an untiered row (or the
                                          feature switched off) is pixel-identical to before across all 4 skins. -->
+                                    <!-- 무대: 카드 테두리가 없는 대신 큰 흐린 숫자가 행의 시작점을 만든다. -->
+                                    <TextBlock Grid.Column="1" Text="{Binding Rank}" VerticalAlignment="Center" Margin="0,0,9,0"
+                                               FontWeight="Bold" Foreground="{DynamicResource Skin.Fg}" TextAlignment="Left"
+                                               Opacity="{Binding DataContext.Layout.BareRankOpacity, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                               MinWidth="{Binding DataContext.Layout.BareRankWidth, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                               FontSize="{Binding DataContext.Layout.BareRankFontSize, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                               Visibility="{Binding DataContext.Layout.BareRankVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
                                     <Border Grid.Column="1" BorderThickness="1" SnapsToDevicePixels="True"
                                             CornerRadius="4" MinWidth="22" Height="20" Padding="4,0" Margin="0,0,6,0" VerticalAlignment="Center"
-                                            Visibility="{Binding L.RankChipVisibility}"
+                                            Visibility="{Binding DataContext.Layout.RankChipVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                             ToolTip="{Binding TierInfo.ToolTip}" ToolTipService.IsEnabled="{Binding TierInfo.HasToolTip}">
                                         <Border.Style>
                                             <Style TargetType="Border">
@@ -138,8 +176,13 @@
                                     <!-- job icon — the tier ring replaces Skin.IconRing; the second ring for the
                                          top three tiers is a size-less Grid child, so it contributes nothing to
                                          DesiredSize and the badge keeps its exact dimensions. -->
+                                    <!-- 무대: 22px 아이콘 대신 7px 직업색 점. 행이 낮아 아이콘이 답답해진다. -->
+                                    <Ellipse Grid.Column="2" Width="7" Height="7" Margin="0,0,9,0" VerticalAlignment="Center"
+                                             Fill="{Binding FillBrush}"
+                                             Visibility="{Binding DataContext.Layout.JobDotVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
                                     <Border Grid.Column="2" Background="{DynamicResource Skin.StatBg}" BorderThickness="1" SnapsToDevicePixels="True"
                                             CornerRadius="6" Margin="0,0,8,0" VerticalAlignment="Center"
+                                            Visibility="{Binding DataContext.Layout.JobIconVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                             Width="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.66:18'}"
                                             Height="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.66:18'}"
                                             ToolTip="{Binding TierInfo.ToolTip}" ToolTipService.IsEnabled="{Binding TierInfo.HasToolTip}">
@@ -172,10 +215,34 @@
                                                    FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.4:10'}"/>
                                         <!-- restored bracketed server tag; own element so masking/ellipsis can't eat it -->
                                         <TextBlock Text="{Binding ServerTag, StringFormat='[{0}]'}" Foreground="{Binding NameBrush}"
-                                                   VerticalAlignment="Center" Margin="3,0,0,0" Visibility="{Binding ServerTagVisibility}"
-                                                   FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.34:9'}"/>
-                                        <Border Background="{DynamicResource Skin.StatBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1" CornerRadius="4"
-                                                Padding="4,0" Margin="6,0,0,0" VerticalAlignment="Center" Visibility="{Binding PowerVisible}">
+                                                   VerticalAlignment="Center" Margin="3,0,0,0"
+                                                   FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.34:9'}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="{Binding ServerTagVisibility}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.Layout.ServerTagVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="Collapsed">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Border CornerRadius="4" Padding="4,0" Margin="6,0,0,0" VerticalAlignment="Center" Visibility="{Binding PowerVisible}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource Skin.StatBg}"/>
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.Layout.StatChrome, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="False">
+                                                            <Setter Property="Background" Value="Transparent"/>
+                                                            <Setter Property="BorderBrush" Value="Transparent"/>
+                                                            <Setter Property="BorderThickness" Value="0"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
                                             <TextBlock Text="{Binding PowerText}" Foreground="{Binding PowerBrush}"
                                                        FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.32:9'}"/>
                                         </Border>
@@ -188,19 +255,67 @@
                                          no shipped distribution row (표본 부족 — we never guess a number). -->
                                     <Border Grid.Column="4" Background="{Binding Tier.ChipBg}" BorderBrush="{Binding Tier.RankRing}" BorderThickness="1"
                                             CornerRadius="4" Padding="5,0" Margin="6,0,0,0" VerticalAlignment="Center" SnapsToDevicePixels="True"
-                                            Visibility="{Binding TierInfo.PercentVisibility}" ToolTip="{Binding TierInfo.ToolTip}">
+                                            ToolTip="{Binding TierInfo.ToolTip}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="{Binding TierInfo.PercentVisibility}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.Layout.TierChipVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="Collapsed">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
                                         <TextBlock Text="{Binding TierInfo.PercentText}" Foreground="{Binding Tier.ChipFg}" FontWeight="SemiBold"
                                                    FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.32:9'}"/>
                                     </Border>
-                                    <Border Grid.Column="5" Background="{DynamicResource Skin.StatBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
-                                            CornerRadius="4" Padding="5,0" Margin="6,0,4,0" VerticalAlignment="Center">
+                                    <Border Grid.Column="5" CornerRadius="4" Padding="5,0" Margin="6,0,4,0" VerticalAlignment="Center">
+                                        <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource Skin.StatBg}"/>
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.Layout.StatChrome, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="False">
+                                                            <Setter Property="Background" Value="Transparent"/>
+                                                            <Setter Property="BorderBrush" Value="Transparent"/>
+                                                            <Setter Property="BorderThickness" Value="0"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
                                         <TextBlock Text="{Binding DamageText}" Foreground="{Binding DamageBrush}"
                                                    FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.4:10'}"/>
                                     </Border>
-                                    <Border Grid.Column="6" Background="{DynamicResource Skin.StatBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
-                                            CornerRadius="4" Padding="5,0" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding PercentText}" Foreground="{Binding PercentBrush}" MinWidth="40" TextAlignment="Center"
-                                                   FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.4:10'}"/>
+                                    <Border Grid.Column="6" CornerRadius="4" Padding="5,0" VerticalAlignment="Center">
+                                        <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource Skin.StatBg}"/>
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.Layout.StatChrome, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="False">
+                                                            <Setter Property="Background" Value="Transparent"/>
+                                                            <Setter Property="BorderBrush" Value="Transparent"/>
+                                                            <Setter Property="BorderThickness" Value="0"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                        <TextBlock Text="{Binding PercentText}" MinWidth="40" TextAlignment="Center"
+                                                   FontSize="{Binding RowHeight, Converter={StaticResource FontSize}, ConverterParameter='0.4:10'}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{Binding PercentBrush}"/>
+                                                    <Style.Triggers>
+                                                        <!-- 무대: 배지 상자가 없으니 색이 그 자리를 대신한다. -->
+                                                        <DataTrigger Binding="{Binding DataContext.Layout.PercentUsesJobColor, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="True">
+                                                            <Setter Property="Foreground" Value="{Binding FillBrush}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </Border>
                                   </Grid>
                                 </Grid>

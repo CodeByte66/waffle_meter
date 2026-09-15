@@ -422,6 +422,72 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         RecognizedStatus = !detected
             ? string.Empty
             : string.IsNullOrWhiteSpace(nickname) ? "· 캐릭터 인식됨" : $"· {nickname} 인식됨";
+        RefreshIdleCard();
+    }
+
+    private string _selfNicknameText = string.Empty;
+
+    /// <summary>대기화면(보스칸)에 띄우는 본인 닉네임.</summary>
+    public string SelfNicknameText { get => _selfNicknameText; private set => Set(ref _selfNicknameText, value); }
+
+    private string _selfMetaText = string.Empty;
+
+    /// <summary>"권성 · 에페소" — 직업과 서버를 한 줄로.</summary>
+    public string SelfMetaText { get => _selfMetaText; private set => Set(ref _selfMetaText, value); }
+
+    private string _selfPowerText = string.Empty;
+
+    /// <summary>본인 전투력("780.0k"). 값이 없으면 빈 문자열이라 칸이 조용히 비어 있다.</summary>
+    public string SelfPowerText { get => _selfPowerText; private set => Set(ref _selfPowerText, value); }
+
+    private Visibility _selfPowerVisibility = Visibility.Collapsed;
+    public Visibility SelfPowerVisibility { get => _selfPowerVisibility; private set => Set(ref _selfPowerVisibility, value); }
+
+    private ImageSource? _selfJobIcon;
+    public ImageSource? SelfJobIcon { get => _selfJobIcon; private set => Set(ref _selfJobIcon, value); }
+
+    private Brush _selfJobBrush = Brushes.Gray;
+    public Brush SelfJobBrush { get => _selfJobBrush; private set => Set(ref _selfJobBrush, value); }
+
+    private Visibility _idleCardVisibility = Visibility.Collapsed;
+
+    /// <summary>
+    /// 전투가 없을 때 보스칸 자리에 띄우는 본인 캐릭터 카드. 지금까지 대기 상태의 미터는 "전투 대기 중"
+    /// 한 줄만 있는 빈 판이었다 — 그 자리를 인식된 캐릭터 정보로 채운다.
+    /// </summary>
+    public Visibility IdleCardVisibility { get => _idleCardVisibility; private set => Set(ref _idleCardVisibility, value); }
+
+    private Visibility _bossSlotVisibility = Visibility.Collapsed;
+
+    /// <summary>보스칸 자리가 무엇이든(타겟 정보 또는 대기 카드) 보여야 하는가.</summary>
+    public Visibility BossSlotVisibility { get => _bossSlotVisibility; private set => Set(ref _bossSlotVisibility, value); }
+
+    private void RefreshIdleCard()
+    {
+        bool idle = TargetInfoVisibility != Visibility.Visible;
+        bool known = !string.IsNullOrWhiteSpace(_selfNickname);
+        IdleCardVisibility = idle && known ? Visibility.Visible : Visibility.Collapsed;
+        BossSlotVisibility = TargetInfoVisibility == Visibility.Visible || IdleCardVisibility == Visibility.Visible
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (!known)
+        {
+            return;
+        }
+
+        string? job = _selfJob is { } j ? j.ClassName() : null;
+        SelfNicknameText = _selfNickname ?? string.Empty;
+        string server = _selfServer > 0 ? ServerNames.GetServerLabel(_selfServer) : string.Empty;
+        // 카드가 뜨는 상황이 곧 '전투 대기 중'이라 상태를 여기 한 줄에 합친다 — 아래 플레이스홀더
+        // 문구는 같은 말을 두 번 하게 되므로 카드가 있을 때 숨긴다.
+        string who = string.IsNullOrEmpty(server) ? (job ?? string.Empty)
+            : string.IsNullOrEmpty(job) ? server : $"{job} · {server}";
+        SelfMetaText = string.IsNullOrEmpty(who) ? "전투 대기 중" : $"{who} · 전투 대기 중";
+        SelfPowerText = _selfPower > 0 ? MeterFormat.FormatPower(_selfPower) : string.Empty;
+        SelfPowerVisibility = _selfPower > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SelfJobIcon = JoinIcons.Job(job);
+        SelfJobBrush = JoinPanelPalette.For(job).Accent;
     }
 
     private Visibility _clickThroughVisibility = Visibility.Collapsed;
@@ -554,7 +620,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         bool entire = _settings.UseEntireContribution;
         NameDisplay nameMode = _settings.NameDisplayMode;
         double rowHeight = _settings.RowHeight;
-        // 레이아웃 기하는 창 단위로 한 번만 만든다((id, rowHeight) 캐시).
+        // 레이아웃 기하는 창 단위로 한 번만 만든다((id, rowHeight) 캐시). 행은 이 값을 굽지 않고
+        // RelativeSource 로 직접 본다.
         MeterLayoutVisual layoutVisual = RefreshLayout();
         string barStyle = _settings.BarStyle; // "fill" (cell fill) / "bar" (thin bottom bar) / "none"
         Visibility fillVis = barStyle == "fill" ? Visibility.Visible : Visibility.Collapsed;
@@ -739,7 +806,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
                 Tier: badge,
                 TierInfo: tierInfo,
                 NameFillBrush: fx.IsNone ? nameBrush : fx.NameFill,
-                GaugeOpacity: gaugeSkin is null ? 0.3 : 0.58,
+                // 스킨 없는 행만 레이아웃이 정한 불투명도를 쓴다. 스킨이 붙은 행은 0.58 고정 —
+                // 레이아웃이 이걸 덮으면 돈 내고 산 게이지 스킨이 희미해지고 입자만 둥둥 뜬다.
+                GaugeOpacity: gaugeSkin is null ? layoutVisual.PlainFillOpacity : 0.58,
                 GaugeBrush: gaugeSkin ?? (_theme.BarColorMode == "job"
                     ? (isUser ? _userBar : jobBar)
                     : (isUser ? _userBar : contribution < 3 ? _errorBar : contribution < 5 ? _warningBar : _normalBar)),
@@ -749,8 +818,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
                 GaugeFxEnabled: gaugeSkinId is not null
                     && _settings.NameFxMode == "animated"
                     && !_settings.LowSpecMode
-                    && _settings.BarStyle == "fill",
-                L: layoutVisual);
+                    && _settings.BarStyle == "fill");
 
             if (i < Rows.Count)
             {
@@ -786,6 +854,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         // "타겟 인식 실패" bar or a 00:00 timer before a nameable fight is on screen.
         bool minimal = _settings.IsMinimal;
         TargetInfoVisibility = hasCombatRows && (!minimal || _settings.ShowTargetInfoInMinimal) ? Visibility.Visible : Visibility.Collapsed;
+        // 타겟 가시성이 바뀌면 대기 카드가 들어갈지 말지도 같이 다시 판단해야 한다.
+        RefreshIdleCard();
         CombatTimerVisibility = durationMs > 0 && hasCombatRows && (!minimal || _settings.ShowCombatTimerInMinimal)
             ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -954,10 +1024,12 @@ public sealed record RowViewModel(
     string? GaugeSkinId = null,
     /// <summary>Whether the decoration may animate on this row. Separate from having a skin, because 색상만
     /// (static), low-spec and <c>BarStyle != fill</c> all keep the colour fill and drop only the decoration.</summary>
-    bool GaugeFxEnabled = false,
-    /// <summary>이 행이 따르는 레이아웃의 기하. ⚠️**맨 끝에** 붙였다 — 이 record 는 같은 타입 이웃이
-    /// 많아서 중간에 파라미터를 끼우면 컴파일은 통과하면서 값이 한 칸씩 밀린다. null 이면 현행(전장) 수치.</summary>
-    MeterLayoutVisual? L = null);
+    bool GaugeFxEnabled = false);
+
+// 레이아웃 기하는 행에 굽지 않는다. 구웠더니 설정에서 레이아웃을 바꿔도 다음 Update(report) 까지
+// 옛 기하가 남았고, 전투가 없으면 리포트가 안 와서 "대기 중" 화면의 행이 영영 안 바뀌었다.
+// 지금은 행 템플릿이 창의 OverlayViewModel.Layout 을 RelativeSource 로 직접 본다 — 출처가 하나라
+// 낡을 수가 없다.
 
 
 /// <summary>Per-row tier text. Separate from <see cref="TierBadge"/> (a shared singleton) because these values

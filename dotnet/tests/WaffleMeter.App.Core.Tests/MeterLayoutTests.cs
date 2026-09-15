@@ -1,4 +1,4 @@
-using WaffleMeter.App.Core;
+﻿using WaffleMeter.App.Core;
 using Xunit;
 
 namespace WaffleMeter.App.Core.Tests;
@@ -42,9 +42,9 @@ public class MeterLayoutTests
     /// 번져 반투명 스킨에서 배지를 물들이고, 과하면 짧은 바에서 장식이 통째로 잘린다.
     /// </summary>
     [Theory]
-    [InlineData("battlefield", 36, 70.0)] // 11 + 28 + (23 + 8) — 기존 리터럴 72 와 2 차이(리터럴이 어림값이었다)
-    [InlineData("dashboard", 28, 37.0)]   // 11 + 0  + (18 + 8) — 순위칩이 없다
-    [InlineData("stage", 34, 69.0)]       // 11 + 28 + (22 + 8)
+    [InlineData("battlefield", 36, 70.0)] // rail 11 + 순위칩 28 + 아이콘(23+8) — 기존 리터럴 72 는 어림값이었다
+    [InlineData("dashboard", 28, 11.0)]   // rail 11 만 — 순위칩·아이콘·점이 전부 없다
+    [InlineData("stage", 34, 27.0)]       // rail 11 + 직업 점(7+9) — 칩도 아이콘도 없다
     public void GaugeExclusionLeft_matches_the_real_left_cluster(string id, int rowHeight, double expected)
     {
         Assert.Equal(expected, MeterLayout.GaugeExclusionLeft(id, rowHeight), 3);

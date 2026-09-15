@@ -1,4 +1,4 @@
-namespace WaffleMeter.App.Core;
+﻿namespace WaffleMeter.App.Core;
 
 /// <summary>보스칸이 HP를 그리는 방식. 레이아웃마다 하나씩 고른다.</summary>
 public enum BossStyle
@@ -36,7 +36,18 @@ public sealed record MeterLayout(
     bool ShowRankChip,
     double GaugeRadius,
     BossStyle BossStyle,
-    bool RequiresFillGauge)
+    bool RequiresFillGauge,
+    bool ShowJobIcon,
+    bool ShowJobDot,
+    bool ShowServerTag,
+    bool ShowTierChip,
+    bool ShowStatChrome,
+    bool ShowPanelBackground,
+    bool LargeRankNumeral,
+    bool EtchText,
+    bool PercentUsesJobColor,
+    bool ShowAccentRail,
+    double PlainFillOpacity)
 {
     // ── 행 왼쪽 클러스터의 실제 치수 (OverlayWindow.xaml 행 템플릿에서 그대로 옮긴 값) ──
     // 이 상수들이 실물과 어긋나면 게이지 장식이 순위칩·직업아이콘 뒤로 번진다.
@@ -67,7 +78,18 @@ public sealed record MeterLayout(
         ShowRankChip: true,
         GaugeRadius: 4.0,
         BossStyle: BossStyle.Band,
-        RequiresFillGauge: false);
+        RequiresFillGauge: false,
+        ShowJobIcon: true,
+        ShowJobDot: false,
+        ShowServerTag: true,
+        ShowTierChip: true,
+        ShowStatChrome: true,
+        ShowPanelBackground: true,
+        LargeRankNumeral: false,
+        EtchText: false,
+        ShowAccentRail: true,
+        PercentUsesJobColor: false,
+        PlainFillOpacity: 0.3);
 
     /// <summary>
     /// 02 계기판 — 카드 크롬을 전부 0 으로 만든다. ⚠️Border 자체를 지우면 안 된다: 그 Border 의
@@ -88,7 +110,18 @@ public sealed record MeterLayout(
         ShowRankChip: false,
         GaugeRadius: 2.0,
         BossStyle: BossStyle.Readout,
-        RequiresFillGauge: true);
+        RequiresFillGauge: true,
+        ShowJobIcon: false,
+        ShowJobDot: false,
+        ShowServerTag: false,
+        ShowTierChip: false,
+        ShowStatChrome: false,
+        ShowPanelBackground: false,
+        LargeRankNumeral: false,
+        EtchText: true,
+        ShowAccentRail: false,
+        PercentUsesJobColor: false,
+        PlainFillOpacity: 0.42);
 
     /// <summary>03 무대 — 틈 없는 판 하나. 행 사이는 하단 1px 헤어라인만 남는다.</summary>
     public static readonly MeterLayout Stage = new(
@@ -101,10 +134,21 @@ public sealed record MeterLayout(
         CardRadius: 0.0,
         CardMarginV: 0.0,
         HasCardChrome: true,
-        ShowRankChip: true,
+        ShowRankChip: false,  // 칩 대신 큰 흐린 숫자를 쓴다
         GaugeRadius: 0.0,
         BossStyle: BossStyle.Canvas,
-        RequiresFillGauge: true);
+        RequiresFillGauge: true,
+        ShowJobIcon: false,
+        ShowJobDot: true,
+        ShowServerTag: true,
+        ShowTierChip: false,
+        ShowStatChrome: false,
+        ShowPanelBackground: true,
+        LargeRankNumeral: true,
+        EtchText: false,
+        ShowAccentRail: false,
+        PercentUsesJobColor: true,
+        PlainFillOpacity: 0.22);
 
     public static readonly IReadOnlyList<MeterLayout> All = [Battlefield, Dashboard, Stage];
 
@@ -155,6 +199,12 @@ public sealed record MeterLayout(
             left += RankChipWidth + RankChipGap;
         }
 
-        return left + JobIconSize(rowHeight) + JobIconGap;
+        if (l.ShowJobIcon)
+        {
+            return left + JobIconSize(rowHeight) + JobIconGap;
+        }
+
+        // 직업 점(무대)은 7px + 간격 9. 아이콘도 점도 없으면(계기판) 왼쪽 묶음은 rail 뿐이다.
+        return l.ShowJobDot ? left + 7.0 + 9.0 : left;
     }
 }

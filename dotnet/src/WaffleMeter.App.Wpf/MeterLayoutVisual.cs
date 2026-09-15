@@ -37,6 +37,22 @@ public sealed class MeterLayoutVisual
         FxBandHeight = MeterLayout.FxBandHeight(spec.Id, rowHeight);
         RowMinHeight = rowHeight;
         RankChipVisibility = spec.ShowRankChip ? Visibility.Visible : Visibility.Collapsed;
+        JobIconVisibility = spec.ShowJobIcon ? Visibility.Visible : Visibility.Collapsed;
+        JobDotVisibility = spec.ShowJobDot ? Visibility.Visible : Visibility.Collapsed;
+        ServerTagVisibility = spec.ShowServerTag ? Visibility.Visible : Visibility.Collapsed;
+        TierChipVisibility = spec.ShowTierChip ? Visibility.Visible : Visibility.Collapsed;
+        // 순위칩이 없는 레이아웃은 맨 숫자로 순위를 보인다 — 아예 빼면 몇 등인지 알 수 없다.
+        BareRankVisibility = spec.ShowRankChip ? Visibility.Collapsed : Visibility.Visible;
+        // 무대는 카드 테두리가 없어 큰 흐린 숫자가 행의 시작점 노릇을 하고, 계기판은 작고 또렷하게.
+        BareRankOpacity = spec.LargeRankNumeral ? 0.28 : 0.75;
+        BareRankFontSize = spec.LargeRankNumeral
+            ? Math.Max(13.0, Math.Floor(rowHeight * 0.44))
+            : Math.Max(9.0, Math.Floor(rowHeight * 0.36));
+        BareRankWidth = spec.LargeRankNumeral ? 18.0 : 13.0;
+        // 무대는 직업 점이, 계기판은 게이지 채움 자체가 직업색을 이미 말한다 — 레일은 중복이다.
+        AccentRailVisibility = spec.ShowAccentRail ? Visibility.Visible : Visibility.Collapsed;
+        // 배지 상자를 지우면 숫자만 남는다. 상자를 없애는 레이아웃은 투명 배경 + 테두리 0.
+        StatChrome = spec.ShowStatChrome;
 
         // 보스칸 높이는 레이아웃마다 다르다. 행 높이에 연동하던 현행(rowHeight+6)은 무대만 유지한다 —
         // 전장은 20px 게이지 띠가 한 줄 더 들어가고, 계기판은 26px HP% 가 주인공이라 둘 다 담을 수 없다.
@@ -81,6 +97,44 @@ public sealed class MeterLayoutVisual
     public double RowMinHeight { get; }
 
     public Visibility RankChipVisibility { get; }
+
+    public Visibility JobIconVisibility { get; }
+
+    /// <summary>무대는 22px 직업아이콘 대신 7px 색 점으로 직업을 표시한다.</summary>
+    public Visibility JobDotVisibility { get; }
+
+    public Visibility ServerTagVisibility { get; }
+
+    public Visibility TierChipVisibility { get; }
+
+    /// <summary>순위칩을 안 쓰는 레이아웃의 맨 순위 숫자.</summary>
+    public Visibility BareRankVisibility { get; }
+
+    public double BareRankOpacity { get; }
+
+    public double BareRankFontSize { get; }
+
+    public double BareRankWidth { get; }
+
+    public Visibility AccentRailVisibility { get; }
+
+    /// <summary>딜·비중 배지에 상자(배경+테두리)를 씌울지. 계기판·무대는 맨 숫자로 둔다.</summary>
+    public bool StatChrome { get; }
+
+    /// <summary>글자에 그림자를 넣을지. 판때기가 없는 계기판은 이게 가독성의 전부다.</summary>
+    public bool EtchText => Spec.EtchText;
+
+    /// <summary>비중%를 직업색으로 칠할지(무대).</summary>
+    public bool PercentUsesJobColor => Spec.PercentUsesJobColor;
+
+    /// <summary>창 배경(판때기)을 그릴지. 계기판은 게임 위에 글자만 새긴다.</summary>
+    public bool ShowPanelBackground => Spec.ShowPanelBackground;
+
+    /// <summary>
+    /// 게이지 스킨이 **없는** 행의 채움 불투명도. ⚠️스킨이 있는 행은 항상 0.58 이다 — 팔레트의 채도·
+    /// 하이라이트 폭이 그 뒤를 전제로 튜닝돼 있어서, 레이아웃이 이걸 덮으면 돈 낸 스킨이 희미해진다.
+    /// </summary>
+    public double PlainFillOpacity => Spec.PlainFillOpacity;
 
     public bool HasCardChrome => Spec.HasCardChrome;
 

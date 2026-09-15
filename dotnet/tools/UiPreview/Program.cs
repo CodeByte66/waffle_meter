@@ -178,6 +178,21 @@ internal static class Program
                 idle.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
                 Capture(() => new OverlayWindow { DataContext = idle }, palette, Path.Combine(outDir, "meter_idle_Dark.png"));
 
+                // 대기 카드: 인식된 본인 캐릭터가 보스칸 자리를 채운다(예전엔 빈 판이었다).
+                foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+                {
+                    settings.MeterLayoutId = lay.Id;
+                    settings.RowHeight = lay.DefaultRowHeight;
+                    var idleCard = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+                    idleCard.SetRecognized(true, "와플구이", selfId: 7, server: 1001,
+                        job: WaffleMeter.Data.JobClass.FIGHTER, power: 780_000);
+                    idleCard.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                    Capture(() => new OverlayWindow { DataContext = idleCard }, palette,
+                        Path.Combine(outDir, $"idle_{lay.Id}_Dark.png"));
+                }
+                settings.MeterLayoutId = "battlefield";
+                settings.RowHeight = 36;
+
                 // Detail window: one shot per tab (the sample report carries frozen skill/buff snapshots, so the
                 // tables render exactly as they do for a saved battle).
                 var calc = new WaffleMeter.Data.DpsCalculator(new WaffleMeter.Data.DataManager(), () => { });
