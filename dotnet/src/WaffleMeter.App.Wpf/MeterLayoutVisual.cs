@@ -67,7 +67,7 @@ public sealed class MeterLayoutVisual
         // 무대는 카드 테두리가 없어 큰 흐린 숫자가 행의 시작점 노릇을 하고, 계기판은 작고 또렷하게.
         // 0.28 은 그 행에서 가장 흐린 서버 태그(MutedFg 68%)보다도 2.4배 흐렸다 — 배경치고 진하고
         // 읽을 글자치고 흐린, 어느 쪽도 아닌 값. 0.50 이면 위계는 지키면서 판독은 된다.
-        BareRankOpacity = spec.LargeRankNumeral ? 0.50 : 0.75;
+        BareRankOpacity = spec.LargeRankNumeral ? 0.50 : 0.55;
         // 34px 행에서 성립하는 역할은 '큰 장식'이 아니라 '작고 또렷한 색인'이다. 0.44 배(=14px)는
         // 본문 13px 과 1px 차이라 크기 대비를 못 만들었다.
         BareRankFontSize = spec.LargeRankNumeral
@@ -76,7 +76,9 @@ public sealed class MeterLayoutVisual
         // MinWidth 가 아니라 고정폭이어야 세 자리에서도 이름 좌표가 흔들리지 않는다. 무대는 카드
         // 테두리도 아이콘도 없어 이름의 좌측 정렬선이 행을 정렬하는 유일한 수직선이다.
         BareRankWidth = spec.LargeRankNumeral ? MeterLayout.BareRankWideWidth : 13.0;
-        BareRankGap = spec.LargeRankNumeral ? MeterLayout.BareRankWideGap : 9.0;
+        NameFontSize = MeterLayout.NameSize(spec, rowHeight);
+        StatFontSize = MeterLayout.StatSize(spec, rowHeight);
+        BareRankGap = spec.LargeRankNumeral ? MeterLayout.BareRankWideGap : 4.0;
         BareRankAlignment = spec.LargeRankNumeral ? TextAlignment.Right : TextAlignment.Left;
         BareRankWeight = spec.LargeRankNumeral ? FontWeights.SemiBold : FontWeights.Bold;
         // 무대는 직업 점이, 계기판은 게이지 채움 자체가 직업색을 이미 말한다 — 레일은 중복이다.
@@ -148,6 +150,12 @@ public sealed class MeterLayoutVisual
     public double BareRankFontSize { get; }
 
     public double BareRankWidth { get; }
+
+    /// <summary>행 이름 글자 크기. 시안이 절대값을 지정한 레이아웃은 행 높이와 무관하게 고정된다.</summary>
+    public double NameFontSize { get; }
+
+    /// <summary>딜·비중 숫자 크기.</summary>
+    public double StatFontSize { get; }
 
     public double BareRankGap { get; }
 

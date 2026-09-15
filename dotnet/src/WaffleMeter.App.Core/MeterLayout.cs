@@ -51,6 +51,8 @@ public sealed record MeterLayout(
     bool ShowAccentRail,
     bool GaugeFillGradient,
     bool GaugeFullBleedRight,
+    double NameFontSize,
+    double StatFontSize,
     double PlainFillOpacity)
 {
     // ── 행 왼쪽 클러스터의 실제 치수 (OverlayWindow.xaml 행 템플릿에서 그대로 옮긴 값) ──
@@ -68,7 +70,7 @@ public sealed record MeterLayout(
     public const double BareRankWideWidth = 14.0;
     public const double BareRankWideGap = 10.0;
     private const double BareRankNarrowWidth = 13.0;
-    private const double BareRankNarrowGap = 9.0;
+    private const double BareRankNarrowGap = 4.0;
 
     /// <summary>
     /// 맨 순위 숫자가 차지하는 총 폭(숫자 + 오른쪽 여백). 숫자를 안 쓰는 레이아웃은 0 이다 —
@@ -95,6 +97,16 @@ public sealed record MeterLayout(
     /// 한다(<c>RowHeightToFontSizeConverter</c> = <c>Math.Max(min, Math.Floor(h * mult))</c>).
     /// 여기서 반올림 방식이 갈리면 장식 여백이 1~2px 어긋난다.
     /// </summary>
+    /// <summary>
+    /// 이름·수치 글자 크기. 0 이면 행 높이에서 파생한다(전장 = 현행 동작 유지).
+    /// 계기판·무대는 시안이 절대값을 지정하므로 행 높이와 무관하게 고정한다.
+    /// </summary>
+    public static double NameSize(MeterLayout l, int rowHeight) =>
+        l.NameFontSize > 0 ? l.NameFontSize : Math.Max(10.0, Math.Floor(rowHeight * 0.4));
+
+    public static double StatSize(MeterLayout l, int rowHeight) =>
+        l.StatFontSize > 0 ? l.StatFontSize : Math.Max(10.0, Math.Floor(rowHeight * 0.4));
+
     public static double JobIconSize(int rowHeight) => Math.Max(18.0, Math.Floor(rowHeight * 0.66));
 
     /// <summary>01 전장 — 행은 현행과 수치가 완전히 같다. 기존 사용자의 기본값이자 되돌리기 기준.</summary>
@@ -123,6 +135,8 @@ public sealed record MeterLayout(
         LargeRankNumeral: false,
         EtchText: false,
         GaugeFillGradient: false,
+        NameFontSize: 0.0,
+        StatFontSize: 0.0,
         GaugeFullBleedRight: false,
         ShowAccentRail: true,
         PercentUsesJobColor: false,
@@ -142,7 +156,7 @@ public sealed record MeterLayout(
         CardPaddingH: 8.0,
         CardBorderV: 0.0,
         CardRadius: 0.0,
-        CardMarginV: 2.0,   // 리본이 딱 붙으면 답답하다 — 숨 쉴 틈을 준다
+        CardMarginV: 1.0,   // 리본이 딱 붙으면 답답하다 — 숨 쉴 틈을 준다
         HasCardChrome: false,
         ShowRankChip: false,
         GaugeRadius: 2.0,
@@ -159,6 +173,8 @@ public sealed record MeterLayout(
         LargeRankNumeral: false,
         EtchText: true,
         GaugeFillGradient: false,
+        NameFontSize: 13.0,
+        StatFontSize: 12.0,
         GaugeFullBleedRight: false,
         ShowAccentRail: false,
         PercentUsesJobColor: false,
@@ -190,6 +206,8 @@ public sealed record MeterLayout(
         LargeRankNumeral: true,
         EtchText: false,
         GaugeFillGradient: true,
+        NameFontSize: 13.5,
+        StatFontSize: 12.5,
         GaugeFullBleedRight: true,
         ShowAccentRail: false,
         PercentUsesJobColor: true,
