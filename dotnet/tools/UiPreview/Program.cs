@@ -32,6 +32,12 @@ internal static class Program
         {
             Source = new Uri("pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/PanelChrome.xaml"),
         });
+        // 미터 루트 크롬(MeterRootChrome). 본체와 분리모드의 두 창이 이 StaticResource 를 찾는다 —
+        // 안 합치면 분리 창 캡처가 XamlParseException 으로만 죽고 이유가 안 보인다.
+        app.Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/MeterChrome.xaml"),
+        });
 
         VerifySettings();
 
@@ -166,6 +172,22 @@ internal static class Program
                     lv.Update(SampleMeterReport(now));
                     Capture(() => new OverlayWindow { DataContext = lv }, palette, Path.Combine(outDir, $"layout_{lay.Id}_Dark.png"));
                 }
+
+                // UI 분리모드 — 같은 VM 인스턴스를 두 창이 나눠 그린다(본체와 같은 배선). 레이아웃별로
+                // 보스칸/미터 행을 따로 뽑아, 헤더·푸터가 사라진 뒤에도 각 조각이 혼자 서는지 본다.
+                foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+                {
+                    settings.MeterLayoutId = lay.Id;
+                    settings.RowHeight = lay.DefaultRowHeight;
+                    var sv = new OverlayViewModel("1.7.8", settings, theme, encounters: encounterCatalog) { Status = "캡처 중" };
+                    sv.SetRecognized(true, "콘팡");
+                    sv.Update(SampleMeterReport(now));
+                    Capture(() => new SplitBossWindow { DataContext = sv }, palette,
+                        Path.Combine(outDir, $"split_boss_{lay.Id}_Dark.png"));
+                    Capture(() => new SplitRowsWindow { DataContext = sv }, palette,
+                        Path.Combine(outDir, $"split_rows_{lay.Id}_Dark.png"));
+                }
+
                 settings.MeterLayoutId = savedLayout;
                 settings.RowHeight = savedRow;
 

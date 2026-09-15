@@ -1,0 +1,49 @@
+﻿<local:OverlayPanelWindow x:Class="WaffleMeter.App.Wpf.SplitBossWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:WaffleMeter.App.Wpf"
+        xmlns:controls="clr-namespace:WaffleMeter.App.Wpf.Controls"
+        Title="waffle_meter 보스칸"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ResizeMode="CanResize"
+        SizeToContent="Height"
+        Width="460" MinWidth="280" MinHeight="40"
+        Left="40" Top="40"
+        UseLayoutRounding="True"
+        FontFamily="Segoe UI">
+    <!--
+        UI 분리모드의 보스칸 창. 본체와 **같은 OverlayViewModel 인스턴스**를 DataContext 로 받는다 —
+        두 번째 VM 을 만들면 NameFxSheen.SetDemand 가 대입이라 서로의 수요를 지워 한쪽 창 연출이
+        ~500ms 주기로 간헐 정지한다.
+
+        헤더는 없앴고 살아남는 건 셋뿐이다: 잠금 인디케이터 · 전투 기록 · 설정.
+        나머지(투명도·테마·초기화·파티신청·작업표시줄·허수아비·업데이트)는 전부 설정 창에 자리가 있다.
+        분리모드의 목적이 "최소한의 정보로 인게임에 집중"이라 여기서 늘리지 않는다.
+
+        ⚠️ 잠금은 **버튼이 아니라 인디케이터**다(IsHitTestVisible=False). 클릭스루는 창 전체에
+        WS_EX_TRANSPARENT 를 걸기 때문에, 잠긴 창의 버튼은 어차피 누를 수 없다 — 토글은 Ctrl+T 와
+        트레이 메뉴가 담당한다.
+    -->
+    <!-- 헤더가 없으므로 창 표면 전체가 드래그 핸들이다. 4px 임계를 넘겨야 승격하므로 제자리 클릭은
+         아래(행/버튼)로 그대로 간다 — OverlayPanelWindow.OnDragSurfaceDown 주석 참고. -->
+    <Border Style="{StaticResource MeterRootChrome}"
+            MouseLeftButtonDown="OnDragSurfaceDown" MouseMove="OnDragSurfaceMove"
+            MouseLeftButtonUp="OnDragSurfaceUp">
+        <Grid>
+            <controls:BossBarView/>
+            <!-- 우상단 컨트롤. 보스칸 위에 겹쳐 올린다 — 칸이 고정 높이라 줄을 더하면 내용이 잘린다. -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,3,4,0" Panel.ZIndex="5">
+                <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="#FFD400"
+                           VerticalAlignment="Center" Margin="2,0,6,0" IsHitTestVisible="False"
+                           ToolTip="클릭스루 잠금 — 입력이 게임으로 통과 중"
+                           Visibility="{Binding ClickThroughVisibility}"/>
+                <Button Style="{StaticResource HeaderIconButton}" Content="&#xE81C;" Click="OnHistory" ToolTip="전투 기록"/>
+                <Button Style="{StaticResource HeaderIconButton}" Content="&#xE713;" Click="OnSettings" ToolTip="설정"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</local:OverlayPanelWindow>

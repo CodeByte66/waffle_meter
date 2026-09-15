@@ -200,63 +200,9 @@
                  '정리' 삼아 제거하지 마라 — v2.8.1 이 그렇게 오진했다. -->
             <controls:MeterRowsView Grid.Row="2"/>
 
-            <!-- combat-timer pill (React CombatTimer.tsx): below the rows -->
-            <Border Grid.Row="3" Visibility="{Binding CombatTimerVisibility}">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="CornerRadius" Value="6"/>
-                        <Setter Property="Padding" Value="8,3"/>
-                        <Setter Property="Margin" Value="{Binding Layout.SectionGapAbove}"/>
-                        <Setter Property="Background" Value="{DynamicResource Skin.RowBg}"/>
-                        <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
-                        <Setter Property="BorderThickness" Value="1"/>
-                        <Style.Triggers>
-                            <!-- 한 덩어리: 알약이 아니라 판에 이어 붙는 띠가 된다. -->
-                            <DataTrigger Binding="{Binding Layout.SeamlessSections}" Value="True">
-                                <Setter Property="CornerRadius" Value="0"/>
-                                <Setter Property="Padding" Value="11,5"/>
-                                <Setter Property="Background" Value="{DynamicResource Skin.TableHeadBg}"/>
-                                <Setter Property="BorderThickness" Value="0,1,0,0"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <Ellipse Grid.Column="0" Width="8" Height="8" Fill="{Binding CombatStatusBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBlock Grid.Column="1" Text="{Binding CombatStatusText}" Foreground="{Binding CombatStatusBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <!-- 이번 전투 상위 X.X% (self only). It lives HERE and not on the row because the row's
-                         420px default width is already fully spent on name/server/power — a chip there gets
-                         clipped at the column boundary. This is also the honest place for it: it is one
-                         number about one fight, not a per-player column. -->
-                    <Border Grid.Column="2" HorizontalAlignment="Left" Margin="10,0,0,0" VerticalAlignment="Center"
-                            BorderThickness="1" CornerRadius="4" Padding="6,0" SnapsToDevicePixels="True"
-                            Background="{Binding SelfTierChipBg}" BorderBrush="{Binding SelfTierChipRing}"
-                            Visibility="{Binding SelfTierChipVisibility}" ToolTip="{Binding SelfTierChipToolTip}">
-                        <!-- FontSize 10 + zero vertical padding keeps the first line inside the timer row's
-                             existing line height. -->
-                        <StackPanel>
-                            <TextBlock Text="{Binding SelfTierChipText}" Foreground="{Binding SelfTierChipFg}"
-                                       FontSize="10" FontWeight="SemiBold"/>
-                            <!-- 무엇과 비교한 값인지. 인라인으로 붙는다 — 툴팁에만 두면 전체 구간으로 폴백된
-                                 사람이 그 사실을 모른 채 지나간다. 서버가 전투력 구간 분포를 아직 안 내보내면
-                                 "전체 전투력 기준"이 뜨고, 내보내기 시작하면 같은 자리 문구만 바뀐다.
-                                 LineHeight를 글자 크기에 맞춰 눌러 두 번째 줄이 더하는 높이를 최소로 잡는다. -->
-                            <TextBlock Text="{Binding SelfTierChipBasis}" Foreground="{Binding SelfTierChipFg}"
-                                       Visibility="{Binding SelfTierChipBasisVisibility}"
-                                       FontSize="9" Opacity="0.75" LineHeight="10" LineStackingStrategy="BlockLineHeight"
-                                       Margin="0,-1,0,0"/>
-                        </StackPanel>
-                    </Border>
-                    <TextBlock Grid.Column="3" Text="{Binding Duration}" Foreground="{Binding CombatTimeBrush}" FontSize="12" FontWeight="SemiBold"
-                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                </Grid>
-            </Border>
+            <!-- combat-timer pill (React CombatTimer.tsx): below the rows. 마크업은
+                 Controls/CombatTimerBar.xaml 로 옮겼다 — 분리모드의 행 창이 같은 띠를 그대로 쓴다. -->
+            <controls:CombatTimerBar Grid.Row="3"/>
 
             <Grid Grid.Row="4" Margin="{Binding Layout.SectionGapAbove}">
                 <!-- 두 트리거가 한 Style 안에 있어야 한다 — Grid.Style 은 한 번만 설정할 수 있다.

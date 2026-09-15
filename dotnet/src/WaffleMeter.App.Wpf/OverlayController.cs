@@ -100,6 +100,13 @@ public sealed class OverlayController
     private OverlayPanelWindow? _companion;
     private Func<bool>? _companionEnabled;
 
+    // UI 분리모드의 두 창. 컴패니언 슬롯과 **다른 배선**이다 — 컴패니언은 자기 토글로 미터와 함께 뜨는
+    // '추가' 창이지만, 이 둘은 미터 본체를 **대신한다**. 그래서 필드도 따로 둔다(컴패니언 슬롯은 하나뿐이고
+    // 버프 오버레이가 점유 중이다 — 여기 끼워 넣으면 버프 오버레이가 조용히 자동 숨김에서 빠진다).
+    private OverlayPanelWindow? _splitBoss;
+    private OverlayPanelWindow? _splitRows;
+    private Func<bool>? _splitEnabled;
+
     /// <summary>Register a companion overlay to present/fade in lockstep with the meter (gated by
     /// <paramref name="enabled"/>). Unlike a plain registered overlay, its visibility fully tracks the meter.</summary>
     public void SetCompanion(OverlayPanelWindow overlay, Func<bool> enabled)
@@ -134,6 +141,69 @@ public sealed class OverlayController
             _companion.Fade();
         }
     }
+
+    /// <summary>UI 분리모드의 보스칸/미터 행 창을 등록한다. 모드가 켜져 있는 동안 이 둘이 미터 본체를
+    /// <b>대신</b> 화면에 뜬다 — 자동 숨김·트레이 숨김·클릭스루가 전부 본체와 같은 판단을 탄다.
+    /// <para>🔑 본체를 <c>Window.Hide()</c> 로 숨기지 않는 이유: 표시 여부의 주인은 300ms 폴이고, 폴은 매 틱
+    /// <c>Present()</c>(= Opacity 1) 를 부른다. WPF 의 Hide 는 Visibility 라 Present 가 되살리지 못하고,
+    /// 반대로 <c>SetTaskbarMode</c> 의 raw <c>ShowWindow</c> 는 WPF 몰래 되살린다 — 두 방향 모두 어긋난다.
+    /// 대신 본체를 <c>Fade()</c>(Opacity 0 + 클릭 통과) 로 두면 한 축만 남는다.</para></summary>
+    public void SetSplitWindows(OverlayPanelWindow boss, OverlayPanelWindow rows, Func<bool> enabled)
+    {
+        _splitBoss = boss;
+        _splitRows = rows;
+        _splitEnabled = enabled;
+        RegisterOverlay(boss); // 게임이 자기 최상위를 다시 세울 때 같이 되올라온다
+        RegisterOverlay(rows);
+    }
+
+    /// <summary>분리모드 on/off 를 반영한다. 실제 표시 여부는 폴이 소유하므로, 여기선 이제 쓰지 않는 쪽만
+    /// 내려두고 즉시 재폴해서 새 상태를 그리게 한다.</summary>
+    public void SetSplitUiMode(bool split)
+    {
+        if (!split)
+        {
+            // Park: 최상위 밴드에서까지 빼낸다. 위치·크기는 그대로라 다시 켜면 그 자리로 돌아온다.
+            _splitBoss?.Park();
+            _splitRows?.Park();
+        }
+        else
+        {
+            _window.Fade();
+        }
+
+        Poll();
+    }
+
+    /// <summary>"미터를 화면에 올린다" 의 단일 창구. 분리모드면 본체 대신 두 창을 올린다.</summary>
+    private void PresentMeter()
+    {
+        if (_splitEnabled?.Invoke() == true && _splitBoss is not null && _splitRows is not null)
+        {
+            _window.Fade(); // 본체는 분리모드 내내 투명·클릭 통과 (Hide 가 아니다 — 위 주석 참고)
+            _splitBoss.SetClickThrough(_window.ClickThrough); // Ctrl+T 가 본체만 잠그고 끝나지 않게
+            _splitRows.SetClickThrough(_window.ClickThrough);
+            _splitBoss.Present(true);
+            _splitRows.Present(true);
+            return;
+        }
+
+        _window.Present();
+    }
+
+    /// <summary>"미터를 화면에서 내린다" 의 단일 창구. 어느 모드든 세 창 전부 내린다 — 모드를 바꾸는 순간에
+    /// 걸친 창이 남지 않도록 조건 없이 셋 다 부른다(Fade 는 멱등).</summary>
+    private void FadeMeter()
+    {
+        _window.Fade();
+        _splitBoss?.Fade();
+        _splitRows?.Fade();
+    }
+
+    /// <summary>화면에 실제로 떠 있는 미터 창이 내려가 있는가. 분리모드에선 본체가 항상 faded 라 본체를 보면
+    /// 언제나 "숨김"으로 읽혀 Ctrl+H 가 한 방향으로만 동작한다.</summary>
+    private bool MeterParked =>
+        _splitEnabled?.Invoke() == true && _splitRows is not null ? _splitRows.DiagParked : _window.DiagParked;
 
     public void Start()
     {
@@ -171,7 +241,7 @@ public sealed class OverlayController
             }
 
             _parkPending = 0;
-            _window.Present();                 // un-fade if auto-hidden, then...
+            PresentMeter();                    // un-fade if auto-hidden, then...
             _window.ReassertTopmostIfBuried(); // ...re-claim above the topmost the game just re-asserted
             ReassertOverlaysIfBuried();
             SyncCompanion(true);               // the buff overlay returns with the meter on alt-tab return
@@ -227,7 +297,7 @@ public sealed class OverlayController
         // early-returns on !IsVisible so it can't repair a bool the hotkey left out of step — keying off the
         // window's real park state makes one press always do the visible-correct thing, so Ctrl+H can't get
         // stuck "hidden" (the reported "hide, then the same key won't bring it back" bug).
-        bool parked = _window.DiagParked;
+        bool parked = MeterParked;
         LogToggle(parked ? "SHOW" : "HIDE");
         if (parked)
         {
@@ -242,7 +312,7 @@ public sealed class OverlayController
     public void HideToTray()
     {
         IsVisible = false;
-        _window.Fade();
+        FadeMeter();
         ParkAnimations(true);
     }
 
@@ -278,14 +348,14 @@ public sealed class OverlayController
             _aionEverFocused = false;
         }
 
-        _window.Present();
+        PresentMeter();
         ParkAnimations(false);
     }
 
     /// <summary>Tray "input recover": force the overlay back on top, interactive.</summary>
     public void Present()
     {
-        _window.Present();
+        PresentMeter();
         ParkAnimations(false);
     }
 
@@ -332,7 +402,7 @@ public sealed class OverlayController
             ParkAnimations(false);
             // "항상 표시": hold HWND_TOPMOST regardless of foreground. (The old Present(fg == Aion) demoted to
             // non-topmost on every Self/Other/Unknown excursion, thrashing z-order = the intermittent flicker.)
-            _window.Present();
+            PresentMeter();
             _window.ReassertTopmostIfBuried(); // re-claim if a borderless game re-asserted its own topmost above us
             ReassertOverlaysIfBuried();        // ...and any open panel/detail window buried the same way (alt-tab return)
             SyncCompanion(true);
@@ -350,6 +420,10 @@ public sealed class OverlayController
                 // Startup grace: don't park the meter before the game has ever been focused — it stays shown,
                 // so the buff overlay must show with it (this early-return used to skip the companion, leaving
                 // the buff overlay hidden at launch until the game was focused / settings was opened).
+                // PresentMeter 도 같은 이유로 필요하다: 기본 모드에선 본체가 이미 떠 있어 이 줄이 멱등이지만,
+                // UI 분리모드에선 "떠 있는 창"이 본체가 아니라 분리 창 둘이라 아무도 올려주지 않으면 게임을
+                // 처음 포커스할 때까지 화면이 빈 채로 남는다.
+                PresentMeter();
                 SyncCompanion(true);
                 return;
             }
@@ -361,7 +435,7 @@ public sealed class OverlayController
                 _parkPending = 0;
                 MeterShown = true;
                 ParkAnimations(false);
-                _window.Present();
+                PresentMeter();
                 _window.ReassertTopmostIfBuried(); // re-claim if the game re-topped above us
                 ReassertOverlaysIfBuried();        // ...and any open panel/detail window (e.g. left open across an alt-tab)
                 SyncCompanion(true);
@@ -373,7 +447,7 @@ public sealed class OverlayController
                 _parkPending = 0;
                 MeterShown = true;
                 ParkAnimations(false);
-                _window.Present();
+                PresentMeter();
                 _window.ReassertTopmostIfBuried();
                 ReassertOverlaysIfBuried();
                 SyncCompanion(true);
@@ -389,7 +463,7 @@ public sealed class OverlayController
                 if (_parkPending < ParkGraceTicks && ++_parkPending == ParkGraceTicks)
                 {
                     MeterShown = false;
-                    _window.Fade();
+                    FadeMeter();
                     ParkAnimations(true);
                     SyncCompanion(false); // the buff overlay fades off screen together with the meter
                 }

@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -38,6 +38,8 @@ public abstract class OverlayPanelWindow : Window, IReassertableOverlay
 
     private IntPtr _handle;
     private bool _dragging;
+    private Point _surfacePress;     // 표면 드래그: 누른 지점 (임계값 판정용)
+    private bool _surfaceArmed;      // 누른 뒤 아직 드래그로 승격되지 않은 상태
     private readonly TopmostReasserter _reasserter = new();
     private bool? _presentedTopMost; // last applied present state; null = parked -> ReassertTopmostIfBuried no-ops
     private bool _faded;             // auto-hidden (opacity 0) but STILL topmost — mirrors OverlayWindow.Fade
@@ -166,6 +168,10 @@ public abstract class OverlayPanelWindow : Window, IReassertableOverlay
         SyncInputStyle();
     }
 
+    /// <summary>패널이 화면에서 내려가 있는가(Fade/Park 둘 다 참). <see cref="OverlayWindow.DiagParked"/> 와
+    /// 같은 뜻이며, UI 분리모드에서 "지금 보이는 미터"가 본체가 아닐 때 토글이 볼 상태다.</summary>
+    public bool DiagParked => _faded || Opacity == 0.0;
+
     /// <summary>True while a drag started from the panel's drag handle is in flight. Anything that repositions
     /// the panel on its own schedule has to sit out the drag — moving it mid-drag yanks it out from under the
     /// cursor (the same reason the topmost re-assert and the input-style sync below skip it).</summary>
@@ -211,25 +217,73 @@ public abstract class OverlayPanelWindow : Window, IReassertableOverlay
     {
         if (e.ButtonState == MouseButtonState.Pressed)
         {
-            double startLeft = Left, startTop = Top;
-            _dragging = true;
-            try
-            {
-                DragMove();
-            }
-            finally
-            {
-                _dragging = false;
-            }
+            BeginDrag();
+        }
+    }
 
-            SyncInputStyle(); // re-assert once now the drag has settled
-            // 실제로 움직였을 때만 알린다. 이동 0인 클릭은 위치를 "새로 정한 것"이 아닌데, 버프 오버레이는
-            // 창 전체가 드래그 핸들이고 폭이 자라 일시적으로 클램프돼 있을 수 있어서 — 그 좌표를 저장해
-            // 버리면 사용자가 정한 자리가 클릭 한 번에 사라진다.
-            if (Math.Abs(Left - startLeft) > 0.5 || Math.Abs(Top - startTop) > 0.5)
-            {
-                PositionChanged?.Invoke(Left, Top);
-            }
+    /// <summary>
+    /// 창 표면 전체를 드래그 핸들로 쓰되, <b>실제로 움직였을 때만</b> 드래그로 승격한다. 헤더가 없는 창
+    /// (UI 분리모드의 보스칸·미터 행)이 이걸 쓴다.
+    ///
+    /// <para>🔑 <c>MouseLeftButtonDown</c> 에서 바로 <c>DragMove</c> 를 부르면 안 된다. DragMove 는 버튼이
+    /// 떨어질 때까지 도는 모달 이동 루프라 뒤이을 <c>MouseLeftButtonUp</c> 을 통째로 삼킨다 — 미터 행은
+    /// 클릭 판정을 Up 에서 하므로(<c>MeterRowsView.OnRowClick</c>) 행을 눌러도 상세가 안 열리게 된다.
+    /// 그래서 Down 에선 좌표만 적어 두고, 4px 넘게 움직인 순간에만 승격한다.</para>
+    ///
+    /// <para>버블링 이벤트로 다는 것도 요점이다 — 버튼은 <c>MouseLeftButtonDown</c> 을 Handled 로 삼키므로
+    /// 전투기록/설정 버튼 위에서는 여기까지 오지 않는다(누르고 살짝 흔들었다고 창이 끌려가지 않는다).</para>
+    /// </summary>
+    protected void OnDragSurfaceDown(object sender, MouseButtonEventArgs e)
+    {
+        _surfacePress = e.GetPosition(this);
+        _surfaceArmed = true;
+    }
+
+    protected void OnDragSurfaceUp(object sender, MouseButtonEventArgs e) => _surfaceArmed = false;
+
+    protected void OnDragSurfaceMove(object sender, MouseEventArgs e)
+    {
+        if (!_surfaceArmed)
+        {
+            return;
+        }
+
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            _surfaceArmed = false; // 창 밖에서 버튼을 뗐다 — 다음 누름까지 무장 해제
+            return;
+        }
+
+        Point now = e.GetPosition(this);
+        if (Math.Abs(now.X - _surfacePress.X) < 4.0 && Math.Abs(now.Y - _surfacePress.Y) < 4.0)
+        {
+            return; // 아직 클릭일 수 있다
+        }
+
+        _surfaceArmed = false;
+        BeginDrag();
+    }
+
+    private void BeginDrag()
+    {
+        double startLeft = Left, startTop = Top;
+        _dragging = true;
+        try
+        {
+            DragMove();
+        }
+        finally
+        {
+            _dragging = false;
+        }
+
+        SyncInputStyle(); // re-assert once now the drag has settled
+        // 실제로 움직였을 때만 알린다. 이동 0인 클릭은 위치를 "새로 정한 것"이 아닌데, 버프 오버레이는
+        // 창 전체가 드래그 핸들이고 폭이 자라 일시적으로 클램프돼 있을 수 있어서 — 그 좌표를 저장해
+        // 버리면 사용자가 정한 자리가 클릭 한 번에 사라진다.
+        if (Math.Abs(Left - startLeft) > 0.5 || Math.Abs(Top - startTop) > 0.5)
+        {
+            PositionChanged?.Invoke(Left, Top);
         }
     }
 

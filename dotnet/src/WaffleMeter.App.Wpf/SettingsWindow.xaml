@@ -477,6 +477,15 @@
                                       ItemTemplate="{StaticResource OptionItemTemplate}" SelectedValuePath="Value" SelectedValue="{Binding MeterLayoutId}"/>
                         </Grid>
 
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="UI 분리모드" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="보스칸과 미터 행을 각각 독립된 창으로 떼어내 화면 어디에나 둘 수 있습니다. 켜면 본체 창은 숨고 헤더·푸터가 사라집니다 — 전투 기록과 설정은 보스칸 오른쪽 위 버튼으로, 나머지 기능은 설정 창 안에서 씁니다. 전투 타이머 한 줄은 행 창 아래에 남습니다. 두 창은 빈 곳을 끌어 옮기고, 자리를 잃으면 화면 탭의 &quot;미터기 위치&quot; 되돌리기로 함께 돌아옵니다." Style="{StaticResource SettingDesc}"/>
+                            </StackPanel>
+                            <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding SplitUiMode}"/>
+                        </Grid>
+
                         <Grid Margin="0,0,0,14" IsEnabled="{Binding BarStyleEnabled}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
@@ -1073,7 +1082,7 @@
                             </StackPanel>
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding MultiMonitorMode}"/>
                         </Grid>
-                        <TextBlock Text="드래그로 옮긴 창들을 기본 위치로 되돌립니다." Style="{StaticResource SettingDesc}" Margin="0,0,0,8"/>
+                        <TextBlock Text="드래그로 옮긴 창들을 기본 위치로 되돌립니다. &quot;미터기 위치&quot;는 UI 분리모드의 보스칸·미터 행 창까지 함께 데려옵니다." Style="{StaticResource SettingDesc}" Margin="0,0,0,8"/>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="미터기 위치" Click="OnResetMeterPosition" Margin="0,0,8,0"/>
                             <Button Content="파티 신청 위치" Click="OnResetJoinPosition" Margin="0,0,8,0"/>

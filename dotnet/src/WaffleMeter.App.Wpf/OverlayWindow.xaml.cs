@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -66,6 +66,14 @@ public partial class OverlayWindow : Window
     /// <summary>Raise <see cref="AetherListRequested"/> from outside — the tray menu offers the same toggle,
     /// because the badge is hidden while 오드 표시 is off or before this session's first broadcast.</summary>
     public void RequestAetherList() => AetherListRequested?.Invoke();
+
+    /// <summary>
+    /// 전투 기록 / 설정을 바깥에서 요청한다 — 분리모드의 보스칸 창이 헤더를 대신해 쓴다.
+    /// 핸들러(토글·위치 계산)는 App 에 하나뿐이므로 같은 이벤트로 흘려보낸다.
+    /// </summary>
+    public void RequestHistory() => HistoryRequested?.Invoke();
+
+    public void RequestSettings() => SettingsRequested?.Invoke();
 
     /// <summary>Header update badge clicked (App shows the restart toast on demand).</summary>
     public event Action? UpdateRequested;

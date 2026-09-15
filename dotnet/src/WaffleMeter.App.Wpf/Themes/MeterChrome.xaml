@@ -1,0 +1,62 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:local="clr-namespace:WaffleMeter.App.Wpf">
+    <!--
+        미터 루트 크롬. 본체 창과 분리모드의 두 창이 **같은 껍데기**를 쓰게 하려고 뽑았다.
+
+        🔑 여기 있는 넷을 복제하지 않으면 분리 창만 다른 폰트·다른 배율·다른 배경으로 뜬다.
+           ① 폰트   TextElement.FontFamily — 사용자 지정 글꼴이 자식 전부에 상속된다
+           ② 배율   LayoutTransform ScaleTransform — 미터 크기(%) 설정
+           ③ 배경   Skin.OverlayBgColor + MeterOpacity, 또는 계기판의 라디얼 스크림
+           ④ 여백   레이아웃별 PanelPadding
+
+        ⚠️ 투명도를 Window.Opacity 로 구현하지 마라. 0 에서 창이 클릭 불가가 되고 글자까지 사라진다 —
+           MeterOpacity 는 **배경 브러시에만** 걸린다(OverlayWindow 주석의 오래된 경고).
+
+        ⚠️ 배경 기본값을 Border.Background 속성으로 직접 쓰면 로컬 값이라 아래 트리거가 절대 못 이긴다.
+           기본값도 Setter 로 내려야 한다(이 프로젝트에서 세 번 밟은 함정).
+    -->
+    <local:FontFamilyConverter x:Key="Chrome.FontConv"/>
+    <local:PercentToScaleConverter x:Key="Chrome.PercentScale"/>
+
+    <Style x:Key="MeterRootChrome" TargetType="Border">
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Padding" Value="{Binding Layout.PanelPadding}"/>
+        <Setter Property="TextElement.FontFamily"
+                Value="{Binding Settings.FontFamily, Converter={StaticResource Chrome.FontConv}}"/>
+        <Setter Property="Background">
+            <Setter.Value>
+                <SolidColorBrush Color="{DynamicResource Skin.OverlayBgColor}" Opacity="{Binding Settings.MeterOpacity}"/>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="LayoutTransform">
+            <Setter.Value>
+                <ScaleTransform ScaleX="{Binding Settings.MeterScalePercent, Converter={StaticResource Chrome.PercentScale}}"
+                                ScaleY="{Binding Settings.MeterScalePercent, Converter={StaticResource Chrome.PercentScale}}"/>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <!-- 계기판: 불투명 판때기 대신 라디얼 스크림. 바깥이 완전히 투명해져 창 모양 자체가 사라진다. -->
+            <DataTrigger Binding="{Binding Layout.ScrimPanel}" Value="True">
+                <Setter Property="Background">
+                    <Setter.Value>
+                        <RadialGradientBrush Center="0.24,0.46" GradientOrigin="0.24,0.46"
+                                             RadiusX="0.72" RadiusY="1.25"
+                                             Opacity="{Binding Settings.MeterOpacity}">
+                            <GradientStop Color="{DynamicResource Skin.ScrimCore}" Offset="0"/>
+                            <GradientStop Color="{DynamicResource Skin.ScrimEdge}" Offset="0.6"/>
+                            <GradientStop Color="Transparent" Offset="0.86"/>
+                        </RadialGradientBrush>
+                    </Setter.Value>
+                </Setter>
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Layout.ShowPanelBackground}" Value="False"/>
+                    <Condition Binding="{Binding Layout.ScrimPanel}" Value="False"/>
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent"/>
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+</ResourceDictionary>

@@ -1,0 +1,40 @@
+﻿<local:OverlayPanelWindow x:Class="WaffleMeter.App.Wpf.SplitRowsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:WaffleMeter.App.Wpf"
+        xmlns:controls="clr-namespace:WaffleMeter.App.Wpf.Controls"
+        Title="waffle_meter 미터 행"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ResizeMode="CanResize"
+        SizeToContent="Height"
+        Width="460" MinWidth="280" MinHeight="40"
+        Left="40" Top="120"
+        UseLayoutRounding="True"
+        FontFamily="Segoe UI">
+    <!--
+        UI 분리모드의 미터 행 창. 본체와 **같은 OverlayViewModel 인스턴스**를 받는다(두 번째 VM 금지 —
+        SetDemand 가 대입이라 서로의 수요를 지운다).
+
+        전투 타이머는 이 창에 붙어 온다(보스칸이 아니라 행 쪽이 경과 시간의 주인이다).
+
+        ⚠️ SizeToContent="Height" 라서 본체와 **같은 자동 높이 회귀**를 진다. 크기를 조절하면 WPF 가
+        방향과 무관하게 SizeToContent 를 꺼 버리므로, 드래그가 끝난 뒤 다시 켜야 한다. 그 상태는
+        본체의 _meterHeightManual 과 **공유하면 안 된다** — 본체 폭을 끌었다고 이 창의 자동 높이가
+        죽으면 안 되기 때문이다(App 쪽에 자기 필드를 둔다).
+    -->
+    <!-- 헤더가 없으므로 창 표면 전체가 드래그 핸들이다. 4px 임계를 넘겨야 승격하므로 제자리 클릭은
+         아래(행/버튼)로 그대로 간다 — OverlayPanelWindow.OnDragSurfaceDown 주석 참고. -->
+    <Border Style="{StaticResource MeterRootChrome}"
+            MouseLeftButtonDown="OnDragSurfaceDown" MouseMove="OnDragSurfaceMove"
+            MouseLeftButtonUp="OnDragSurfaceUp">
+        <StackPanel>
+            <controls:MeterRowsView/>
+            <!-- 전투 타이머. 본체 푸터는 분리모드에서 사라지므로 상태 표시는 이 한 줄이 전부다.
+                 본체와 같은 컨트롤을 쓴다 — 여기에 따로 적으면 상위 X.X% 칩과 레이아웃별 변형이 빠진다. -->
+            <controls:CombatTimerBar/>
+        </StackPanel>
+    </Border>
+</local:OverlayPanelWindow>

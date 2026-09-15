@@ -682,6 +682,16 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     /// 고른 값이 그대로 되살아난다.
     /// </summary>
     public bool BarStyleEnabled => !MeterLayout.For(_settings.MeterLayoutId).RequiresFillGauge;
+
+    /// <summary>
+    /// UI 분리모드. 켜면 보스칸과 미터 행이 독립 창으로 떨어져 나가고 본체는 숨는다.
+    /// 레이아웃과 직교하는 축이라 3×2 여섯 조합이 전부 성립한다.
+    /// </summary>
+    public bool SplitUiMode
+    {
+        get => _settings.SplitUiMode;
+        set { _settings.SplitUiMode = value; OnPropertyChanged(); }
+    }
     public bool IsMinimal { get => _settings.IsMinimal; set { _settings.IsMinimal = value; OnPropertyChanged(); } }
     public bool ShowCombatTimerInMinimal { get => _settings.ShowCombatTimerInMinimal; set { _settings.ShowCombatTimerInMinimal = value; OnPropertyChanged(); } }
     public bool ShowTargetInfoInMinimal { get => _settings.ShowTargetInfoInMinimal; set { _settings.ShowTargetInfoInMinimal = value; OnPropertyChanged(); } }

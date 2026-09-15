@@ -31,6 +31,15 @@ public partial class App : Application
     private DetailWindow? _detailWindow;
     private DetailsViewModel? _detailViewModel;
     private int _detailUid;
+    private SplitBossWindow? _splitBoss;
+    private SplitRowsWindow? _splitRows;
+
+    /// <summary>
+    /// 분리 행 창의 자동 높이 래치. ⚠️ 본체의 <c>_meterHeightManual</c> 과 **공유하면 안 된다** —
+    /// 본체 폭을 한 번 끌었다고 이 창의 자동 높이가 죽으면 안 되기 때문이다.
+    /// </summary>
+    private bool _splitRowsHeightManual;
+
     private JoinRequestPanel? _joinPanel;
     private JoinRequestViewModel? _joinViewModel;
     private bool _joinPanelPositioned;
@@ -344,6 +353,10 @@ public partial class App : Application
             {
                 window.SetClickThrough(!window.ClickThrough);
                 _buffOverlay?.SetClickThrough(window.ClickThrough); // buff overlay follows the meter at once
+                // 분리모드의 두 창도 즉시 따라온다. 폴이 매 틱 같은 값을 다시 밀어주긴 하지만(PresentMeter),
+                // 300ms 뒤에 잠기는 건 "눌렀는데 안 먹었다"로 읽힌다.
+                _splitBoss?.SetClickThrough(window.ClickThrough);
+                _splitRows?.SetClickThrough(window.ClickThrough);
             }),
             // 허수아비 mode toggle marshals to the UI thread (it raises PropertyChanged that WPF bindings read);
             // the reset only flips a volatile flag on the engine, so it's fine straight off the listener thread.
@@ -431,6 +444,11 @@ public partial class App : Application
 
         // Party join-request panel (Kotlin JoinRequest family -> React JoinRequestPanel).
         WireJoinPanel(services, window);
+
+        // UI 분리모드: 보스칸/미터 행을 떼어낸 두 창. 토글이 꺼져 있어도 지금 만들어 둔다 —
+        // HWND 와 ex-style(NOACTIVATE|TOOLWINDOW)은 켜지는 순간이 아니라 미리 세워 둬야
+        // 첫 Present 에서 포커스를 한 번 훔치지 않는다.
+        SetUpSplitWindows(services, viewModel, window);
 
         // Battle-history panel (React HistoryPanel): the 기록 header button toggles it.
         WireHistoryPanel(services, window, viewModel);
@@ -1412,6 +1430,7 @@ public partial class App : Application
         // 필드로 두는 이유: 설정 임포트가 이 인스턴스를 Reload 해야 하고, JoinRequestViewModel 과
         // SkillSettingsViewModel 이 같은 HashSet 을 참조로 들고 있다.
         _skillVisibility = new SkillVisibility(services.Props);
+
         _joinViewModel = new JoinRequestViewModel(
             _settings!, _skillVisibility.Codes, services.Tier);
         _joinPanel = new JoinRequestPanel { DataContext = _joinViewModel };
@@ -1460,8 +1479,9 @@ public partial class App : Application
         {
             if (!_joinPanelPositioned)
             {
-                _joinPanel.Left = overlay.Left;
-                _joinPanel.Top = overlay.Top + overlay.ActualHeight + 8;
+                Window anchor = PanelAnchor(overlay);
+                _joinPanel.Left = anchor.Left;
+                _joinPanel.Top = anchor.Top + anchor.ActualHeight + 8;
             }
 
             _joinPanel.Present(true);
@@ -1633,8 +1653,9 @@ public partial class App : Application
 
             if (!_historyPanelPositioned)
             {
-                _historyPanel.Left = overlay.Left + overlay.ActualWidth + 8;
-                _historyPanel.Top = overlay.Top;
+                Window anchor = PanelAnchor(overlay);
+                _historyPanel.Left = anchor.Left + anchor.ActualWidth + 8;
+                _historyPanel.Top = anchor.Top;
             }
 
             _historyPanelVisible = true;
@@ -1750,8 +1771,9 @@ public partial class App : Application
             {
                 // Offset from the history panel's dock spot: both are topmost, so identical defaults would
                 // stack this exactly on top of an open 전투 기록 and read as that panel having changed.
-                _aetherPanel.Left = overlay.Left + overlay.ActualWidth + 8;
-                _aetherPanel.Top = overlay.Top + 40;
+                Window anchor = PanelAnchor(overlay);
+                _aetherPanel.Left = anchor.Left + anchor.ActualWidth + 8;
+                _aetherPanel.Top = anchor.Top + 40;
             }
 
             RefreshAetherRoster(services);
@@ -2230,6 +2252,25 @@ public partial class App : Application
                 services.Props.SetProperty("windowY", string.Empty);
                 overlay.Left = 40;
                 overlay.Top = 40;
+                // 분리모드의 두 창도 같이 데려온다. 이 버튼이 유일한 구제 수단이라(분리 창은 자기 위치만
+                // 저장한다) 여기서 빠지면 화면 밖으로 끌고 나간 창을 되찾을 방법이 없다. 위아래로 세워
+                // 겹치지 않게 둔다 — 본체가 서 있던 자리와 같은 세로 줄.
+                services.Props.SetProperty("splitBossX", string.Empty);
+                services.Props.SetProperty("splitBossY", string.Empty);
+                services.Props.SetProperty("splitRowsX", string.Empty);
+                services.Props.SetProperty("splitRowsY", string.Empty);
+                if (_splitBoss is { } sb)
+                {
+                    sb.Left = 40;
+                    sb.Top = 40;
+                }
+
+                if (_splitRows is { } sr)
+                {
+                    sr.Left = 40;
+                    sr.Top = 40 + (_splitBoss?.ActualHeight ?? 110) + 8;
+                }
+
                 break;
             case "join":
                 services.Props.SetProperty("joinPanelX", string.Empty);
@@ -2237,8 +2278,9 @@ public partial class App : Application
                 _joinPanelPositioned = false;
                 if (_joinPanel is { } jp && jp.Opacity > 0)
                 {
-                    jp.Left = overlay.Left;
-                    jp.Top = overlay.Top + overlay.ActualHeight + 8;
+                    Window anchor = PanelAnchor(overlay);
+                    jp.Left = anchor.Left;
+                    jp.Top = anchor.Top + anchor.ActualHeight + 8;
                 }
 
                 break;
@@ -2248,8 +2290,9 @@ public partial class App : Application
                 _historyPanelPositioned = false;
                 if (_historyPanel is { } hp && _historyPanelVisible)
                 {
-                    hp.Left = overlay.Left + overlay.ActualWidth + 8;
-                    hp.Top = overlay.Top;
+                    Window anchor = PanelAnchor(overlay);
+                    hp.Left = anchor.Left + anchor.ActualWidth + 8;
+                    hp.Top = anchor.Top;
                 }
 
                 break;
@@ -2270,14 +2313,21 @@ public partial class App : Application
 
                     if (_aetherPanelVisible)
                     {
-                        ap.Left = overlay.Left + overlay.ActualWidth + 8;
-                        ap.Top = overlay.Top + 40;
+                        Window anchor = PanelAnchor(overlay);
+                        ap.Left = anchor.Left + anchor.ActualWidth + 8;
+                        ap.Top = anchor.Top + 40;
                     }
                 }
 
                 break;
         }
     }
+
+    /// <summary>패널이 <b>처음</b> 뜰 때 기댈 창. UI 분리모드에선 본체가 투명하게 내려가 있으므로 그 자리를
+    /// 기준으로 잡으면 사용자가 보지도 못한 좌표에 패널이 나타난다 — 실제로 보이는 보스칸을 기준으로 삼는다.
+    /// (한 번 자리를 정한 뒤로는 저장된 좌표를 쓰므로 여기 오지 않는다.)</summary>
+    private Window PanelAnchor(OverlayWindow overlay) =>
+        _settings?.SplitUiMode == true && _splitBoss is not null ? _splitBoss : overlay;
 
     /// <summary>Confine a window to its monitor while multi-monitor movement is off (off-screen guard).</summary>
     private void AttachScreenClamp(Window w)
@@ -2302,7 +2352,8 @@ public partial class App : Application
     private void ClampAllWindows()
     {
         bool allow = _settings?.MultiMonitorMode ?? false;
-        foreach (Window? w in new Window?[] { _overlayWindow, _joinPanel, _historyPanel, _aetherPanel, _skillFlyout, _cooldownFlyout, _detailWindow })
+        foreach (Window? w in new Window?[]
+                 { _overlayWindow, _splitBoss, _splitRows, _joinPanel, _historyPanel, _aetherPanel, _skillFlyout, _cooldownFlyout, _detailWindow })
         {
             if (w != null)
             {
@@ -3162,5 +3213,109 @@ public partial class App : Application
         _engine?.Dispose();
         TtsSpeech.Shutdown(); // the voice players keep the clip they last played open
         base.OnExit(e);
+    }
+
+    /// <summary>
+    /// UI 분리모드의 두 창을 만든다. 보스칸과 미터 행을 본체에서 떼어내 화면 어디에나 둘 수 있게 한다.
+    ///
+    /// <para>🔑 두 창 모두 본체와 <b>같은 <see cref="OverlayViewModel"/> 인스턴스</b>를 쓴다. 두 번째
+    /// VM 을 만들면 <c>NameFxSheen.SetDemand</c>·<c>TierSheen.SetDemand</c> 가 카운트를 **대입**하기
+    /// 때문에 ~500ms 주기로 서로의 수요를 지워 한쪽 창 연출이 간헐 정지한다.</para>
+    ///
+    /// <para>⚠️ <c>OverlayController.SetCompanion</c> 슬롯은 **쓰지 않는다** — 필드가 하나뿐이고
+    /// 버프 오버레이가 점유 중이라, 여기 넣으면 버프 오버레이가 조용히 자동 숨김에서 빠진다.
+    /// 최상위 재선점만 필요하므로 <c>RegisterOverlay</c> 로 충분하다.</para>
+    /// </summary>
+    private void SetUpSplitWindows(MeterServices services, OverlayViewModel viewModel, OverlayWindow window)
+    {
+        _splitBoss = new SplitBossWindow { DataContext = viewModel };
+        _splitRows = new SplitRowsWindow { DataContext = viewModel };
+
+        foreach (OverlayPanelWindow w in new OverlayPanelWindow[] { _splitBoss, _splitRows })
+        {
+            w.Show();
+            w.Park(); // HWND + ex-style 만 세우고 숨긴 채 대기 — 모드가 켜질 때 폴이 Present 한다
+            AttachScreenClamp(w);
+        }
+
+        // 표시 여부의 주인은 자동 숨김 폴이다. 여기서 직접 Show/Hide 하면 폴과 매 틱 싸운다 —
+        // 컨트롤러에 넘겨 본체와 **같은 판단**(게임 포커스·트레이 숨김·클릭스루)을 타게 한다.
+        // RegisterOverlay 도 이 안에서 한다.
+        _controller?.SetSplitWindows(_splitBoss, _splitRows, () => _settings?.SplitUiMode ?? false);
+
+        // 폭만 복원한다 — 높이를 대입하면 SizeToContent 가 재는 값을 덮어 자동 높이가 죽는다.
+        LoadWindowWidth(services.Props, "splitBossWidth", _splitBoss);
+        LoadWindowWidth(services.Props, "splitRowsWidth", _splitRows);
+        LoadPanelPosition(services.Props, _splitBoss, "splitBossX", "splitBossY");
+        LoadPanelPosition(services.Props, _splitRows, "splitRowsX", "splitRowsY");
+        ClampWhenLoaded(_splitBoss);
+        ClampWhenLoaded(_splitRows);
+
+        _splitBoss.PositionChanged += (left, top) =>
+        {
+            services.Props.SetProperty("splitBossX", left.ToString("0", CultureInfo.InvariantCulture));
+            services.Props.SetProperty("splitBossY", top.ToString("0", CultureInfo.InvariantCulture));
+        };
+        _splitRows.PositionChanged += (left, top) =>
+        {
+            services.Props.SetProperty("splitRowsX", left.ToString("0", CultureInfo.InvariantCulture));
+            services.Props.SetProperty("splitRowsY", top.ToString("0", CultureInfo.InvariantCulture));
+        };
+
+        // 헤더가 사라진 자리를 메우는 두 진입점.
+        // 핸들러(토글·위치 계산)는 App 에 하나뿐이다 — 본체의 같은 이벤트로 흘려보낸다.
+        _splitBoss.HistoryRequested += window.RequestHistory;
+        _splitBoss.SettingsRequested += window.RequestSettings;
+
+        // ⚠️ 자동 높이: WPF 는 크기 조절이 **시작되는 순간** 방향과 무관하게 SizeToContent 를 끈다.
+        // 핸들을 막지 말고(CLAUDE.md) 드래그가 끝난 뒤 다시 켠다. 본체와 래치를 공유하지 않는다.
+        AttachResize(_splitRows, services.Props, "splitRowsWidth", "splitRowsHeight", widthOnly: true, onResizeEnd: e =>
+        {
+            _splitRowsHeightManual = WindowResizePolicy.NextManual(
+                _splitRowsHeightManual, e.HitCode, e.HeightBefore, e.HeightAfter);
+            if (!_splitRowsHeightManual)
+            {
+                _splitRows.SizeToContent = SizeToContent.Height;
+            }
+        });
+        AttachResize(_splitBoss, services.Props, "splitBossWidth", "splitBossHeight", widthOnly: true);
+
+        ApplySplitUiMode();
+        _settings!.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MeterSettings.SplitUiMode))
+            {
+                Dispatcher.BeginInvoke(ApplySplitUiMode);
+            }
+        };
+    }
+
+    /// <summary>
+    /// 분리모드 on/off 를 반영한다. 창을 올리고 내리는 일은 <see cref="OverlayController"/> 가 한다 —
+    /// 여기서 직접 Show/Hide 하면 300ms 자동 숨김 폴과 매 틱 싸운다.
+    /// <para>⚠️ 끌 때 분리 창의 위치·폭은 <b>지우지 않는다</b> — 다시 켜면 그 자리로 돌아와야 한다.</para>
+    /// </summary>
+    private void ApplySplitUiMode()
+    {
+        if (_settings is null || _splitBoss is null || _splitRows is null)
+        {
+            return;
+        }
+
+        bool split = _settings.SplitUiMode;
+        _controller?.SetSplitUiMode(split);
+
+        // 자동 높이를 양쪽 다 되살린다 — 모드 전환은 행 수를 바꾸지 않아 ShouldReautoFit 으로는 안 풀리고,
+        // 전환 직후가 높이를 다시 재기 딱 좋은 시점이다.
+        if (split)
+        {
+            _splitRowsHeightManual = false;
+            _splitRows.SizeToContent = SizeToContent.Height;
+        }
+        else if (_overlayWindow is not null)
+        {
+            _meterHeightManual = false;
+            _overlayWindow.SizeToContent = SizeToContent.Height;
+        }
     }
 }

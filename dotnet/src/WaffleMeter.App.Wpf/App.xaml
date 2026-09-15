@@ -1,4 +1,4 @@
-<Application x:Class="WaffleMeter.App.Wpf.App"
+﻿<Application x:Class="WaffleMeter.App.Wpf.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
@@ -7,6 +7,8 @@
                 <!-- Shared overlay chrome (close/icon buttons). The skin palette is inserted at index 0
                      at runtime by SkinManager; this stays merged so StaticResource lookups resolve. -->
                 <ResourceDictionary Source="pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/PanelChrome.xaml"/>
+                <!-- 미터 루트 크롬(폰트·배율·배경·여백). 본체와 분리 창 2개가 같은 껍데기를 쓴다. -->
+                <ResourceDictionary Source="pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/MeterChrome.xaml"/>
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>
