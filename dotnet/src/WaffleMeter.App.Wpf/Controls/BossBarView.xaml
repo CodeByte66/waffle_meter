@@ -64,34 +64,13 @@
                     <Border Grid.Column="0" Background="{Binding BossBarBrush}" Opacity="0.55"/>
                 </Grid>
 
-                <!-- "fill" HP gauge (게이지 형태 = fill): 글자 뒤 낮은 불투명도 채움.
-                     ⚠️ 전장은 20px 띠가 이미 HP 를 말하므로 여기 채움이 겹치면 이중으로 깔린다 —
-                     띠를 쓰는 레이아웃에서는 이 경로를 끈다(barStyle 설정 자체는 계속 유효하다). -->
-                <Grid Visibility="{Binding TargetBarFillVisibility}"
-                      IsHitTestVisible="False">
-                    <Grid.Style>
-                        <Style TargetType="Grid">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Layout.BossBandVisibility}" Value="Visible">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Grid.Style>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
-                        <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
-                    </Grid.ColumnDefinitions>
-                    <Border Grid.Column="0" Background="{Binding BossBarBrush}" Opacity="0.3" CornerRadius="4"/>
-                </Grid>
-                <!-- "bar" HP gauge: 하단 얇은 바. "none" 이면 둘 다 숨는다. -->
-                <Grid VerticalAlignment="Bottom" Height="2" Visibility="{Binding TargetBottomBarVisibility}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
-                        <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
-                    </Grid.ColumnDefinitions>
-                    <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
-                </Grid>
+                <!-- 옛 보스 게이지 경로(barStyle fill/bar)는 걷어냈다.
+                     이제 레이아웃마다 보스 HP 를 제 방식으로 그린다 — 전장은 20px 띠, 계기판은 3px 레일,
+                     무대는 카드 배경 + 하단 레일. 그 위에 옛 경로가 한 겹 더 깔리면서 **보스칸 전체가
+                     붉게 칠해졌다**(HP 칸만 줄어야 하는데 카드가 통째로 물들었다).
+                     ⚠️ 트리거로 가리려 했다가 실패했다: Visibility 가 로컬 값이면 Style 트리거가 절대
+                     못 이긴다. 가리는 게 아니라 경로를 없애는 게 맞다.
+                     `게이지 형태`(barStyle) 설정은 **행**에 대해 계속 유효하다. -->
 
                 <!-- ── 전장: 3단(이름줄 / 20px 띠 / HP숫자·처치까지·큰 HP%) ── -->
                 <Grid Visibility="{Binding Layout.BossBandVisibility}" Margin="2,0,2,0">
@@ -130,11 +109,15 @@
                                 <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
                                 <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
                             </Grid.ColumnDefinitions>
-                            <Grid Grid.Column="0">
-                                <Border Background="{Binding BossBarBrush}"/>
+                            <!-- ⚠️ 채움에도 반경을 준다. 트랙 Border 의 ClipToBounds 는 **사각형**으로만
+                                 자르기 때문에 둥근 모서리를 따라가지 않는다 — 각진 채움을 넣으면 트랙의
+                                 둥근 꼭지점 밖으로 모서리가 삐져나온다. 3 은 트랙 4 보다 1 작아 안쪽에
+                                 자연스럽게 앉는다. -->
+                            <Border Grid.Column="0" CornerRadius="3" ClipToBounds="True"
+                                    Background="{Binding BossBarBrush}">
                                 <!-- 상단 1px 하이라이트 — 띠에 두께감을 준다. -->
-                                <Border Height="1" VerticalAlignment="Top" Background="#57FFFFFF"/>
-                            </Grid>
+                                <Border Height="1" VerticalAlignment="Top" Margin="2,0" Background="#57FFFFFF"/>
+                            </Border>
                             <UniformGrid Grid.ColumnSpan="2" Rows="1" Columns="4" IsHitTestVisible="False">
                                 <Border BorderBrush="#2BFFFFFF" BorderThickness="0,0,1,0"/>
                                 <Border BorderBrush="#2BFFFFFF" BorderThickness="0,0,1,0"/>

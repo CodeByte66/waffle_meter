@@ -100,12 +100,16 @@
                     <DataTrigger Binding="{Binding Layout.ScrimPanel}" Value="True">
                         <Setter Property="Background">
                             <Setter.Value>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1" Opacity="{Binding Settings.MeterOpacity}">
-                                    <GradientStop Color="{DynamicResource Skin.OverlayBgColor}" Offset="0"/>
-                                    <GradientStop Color="{DynamicResource Skin.OverlayBgColor}" Offset="0.62"/>
-                                    <!-- 0 까지 떨어뜨리면 바닥에 놓인 푸터가 묻힌다 — 55% 쯤 남긴다. -->
-                                    <GradientStop Color="{DynamicResource Skin.OverlayBgFade}" Offset="1"/>
-                                </LinearGradientBrush>
+                                <!-- ⚠️ 세로 선형으로는 부족했다 — 가장자리가 여전히 판때기로 남아
+                                     "기존 UI 와 다를 게 없다"는 말을 들었다. 시안은 **라디얼**이고
+                                     바깥이 완전히 투명해져 창 모양 자체가 사라진다. -->
+                                <RadialGradientBrush Center="0.24,0.46" GradientOrigin="0.24,0.46"
+                                                     RadiusX="0.72" RadiusY="1.25"
+                                                     Opacity="{Binding Settings.MeterOpacity}">
+                                    <GradientStop Color="{DynamicResource Skin.ScrimCore}" Offset="0"/>
+                                    <GradientStop Color="{DynamicResource Skin.ScrimEdge}" Offset="0.6"/>
+                                    <GradientStop Color="Transparent" Offset="0.86"/>
+                                </RadialGradientBrush>
                             </Setter.Value>
                         </Setter>
                     </DataTrigger>

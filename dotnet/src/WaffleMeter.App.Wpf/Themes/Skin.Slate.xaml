@@ -46,4 +46,9 @@
     <SolidColorBrush x:Key="Skin.BossPercentFg" Color="#FFFECDD3"/>
     <SolidColorBrush x:Key="Skin.GaugeTrack" Color="#8C141619"/>
     <SolidColorBrush x:Key="Skin.BossRail" Color="#FFFB7185"/>
+
+    <!-- 계기판 라디얼 스크림. 판때기를 깔지 않으면서 글자 뒤만 눌러 준다 —
+         가장자리는 완전히 투명해져 "창"이 아니라 "게임 위에 얹힌 글자"로 읽힌다. -->
+    <Color x:Key="Skin.ScrimCore">#D11B1E23</Color>
+    <Color x:Key="Skin.ScrimEdge">#521B1E23</Color>
 </ResourceDictionary>
