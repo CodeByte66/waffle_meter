@@ -36,14 +36,19 @@ public sealed class MeterLayoutVisual
         GaugeRadius = spec.GaugeRadius;
         // 좌측은 모든 행이 같은 x 에서 출발하는 **축**이라 둥글리면 연속된 세로선에 노치가 줄줄이
         // 생긴다. 우측은 값의 **종단**이라 둥글려야 "여기서 끝난다"가 생긴다.
-        GaugeCorner = spec.GaugeFullBleedRight
+        // 채움이 행 왼쪽 끝에 붙는 레이아웃은 좌측을 직각으로 둔다 — 가장자리에 닿아 있으므로
+        // 둥글리면 카드 모서리와 어긋난 반달이 생긴다. 반대로 들여놓은 채움은 사방을 둥글린다.
+        GaugeCorner = spec.GaugeFullBleedRight && MeterLayout.GaugeInsetLeft(spec) <= 0.0
             ? new CornerRadius(0, spec.GaugeRadius, spec.GaugeRadius, 0)
             : new CornerRadius(spec.GaugeRadius);
         // 왼쪽은 순위 거터만큼 들여 숫자가 채움 위에 절대 오지 않게 하고(기여도와 무관하게 배경 고정),
         // 오른쪽은 카드 Padding 만큼 되밀어 카드 가장자리까지 채운다. Border 가 ClipToBounds 라 그 밖으로는 못 나간다.
-        GaugeBleed = spec.GaugeFullBleedRight
-            ? new Thickness(MeterLayout.GaugeInsetLeft(spec), 0, -spec.CardPaddingH, 0)
-            : default;
+        // 순위 숫자가 있으면 그만큼 들이고, 없으면 카드 가장자리까지 되민다(시안은 채움이 행 끝에
+        // 닿는다 — 패딩 안쪽에서 시작하면 그 경계가 '잘린 단면'으로 읽힌다).
+        double inset = MeterLayout.GaugeInsetLeft(spec);
+        GaugeBleed = new Thickness(
+            inset > 0.0 ? inset : (spec.GaugeFullBleedRight ? -spec.CardPaddingH : 0.0), 0,
+            spec.GaugeFullBleedRight ? -spec.CardPaddingH : 0.0, 0);
         // 채움 전체가 26% 알파면 바가 어디서 끝나는지가 흐린 색 경계 하나에만 실린다.
         // 같은 색 72% 2px 세로선이 그 경계를 판독점으로 만든다. 스킨 행은 팔레트가 이미 자기
         // 하이라이트를 갖고 있어 제외한다(RowGaugeCell 쪽에서 GaugeSkinId 로 가른다).

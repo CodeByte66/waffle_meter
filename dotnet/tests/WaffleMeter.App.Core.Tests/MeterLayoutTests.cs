@@ -44,8 +44,8 @@ public class MeterLayoutTests
     [Theory]
     // 🔑 전장 70 은 회귀 앵커다 — 이 값이 변하면 계산식이 틀린 것이다(기존 사용자 화면이 안 바뀌어야 한다).
     [InlineData("battlefield", 36, 70.0)] // rail 11 + 순위칩 28 + 아이콘(23+8)
-    [InlineData("dashboard", 28, 22.0)]   // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
-    [InlineData("stage", 34, 0.0)]        // 점(7+9) − 게이지 인셋(점 몫 16) = 0. 게이지가 좌측 묶음 바로 뒤에서 시작한다
+    [InlineData("dashboard", 28, 0.0)]     // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
+    [InlineData("stage", 34, 16.0)]       // 점(7+9). 채움은 행 끝에 붙으므로 인셋 0 — 점 뒤만 비운다
     public void GaugeExclusionLeft_matches_the_real_left_cluster(string id, int rowHeight, double expected)
     {
         Assert.Equal(expected, MeterLayout.GaugeExclusionLeft(id, rowHeight), 3);
@@ -132,15 +132,16 @@ public class MeterLayoutTests
 
     /// <summary>행 간격은 어느 레이아웃에서도 음수가 아니어야 한다.</summary>
     /// <summary>
-    /// 🔑 직업 점은 채움과 같은 색이라 채움 위에 올라가면 보이지 않는다. 전폭 블리드 레이아웃은
-    /// 순위 숫자를 빼더라도 점 몫만큼은 반드시 게이지를 들여야 한다.
+    /// 순위 숫자를 쓰는 레이아웃은 그 숫자가 채움 경계에 걸리지 않도록 채움을 들여야 한다 —
+    /// 작은 고정 글리프는 기여도에 따라 배경이 갈리면 행마다 다르게 읽힌다.
+    /// (직업 점은 100% 불투명이라 26% 워시 위에서도 보이므로 들일 필요가 없다.)
     /// </summary>
     [Fact]
-    public void Full_bleed_layouts_keep_the_job_dot_off_the_fill()
+    public void Layouts_with_a_rank_numeral_inset_the_fill_past_it()
     {
-        foreach (MeterLayout l in MeterLayout.All.Where(x => x.GaugeFullBleedRight && x.ShowJobDot))
+        foreach (MeterLayout l in MeterLayout.All.Where(x => x.ShowRankNumeral))
         {
-            Assert.True(MeterLayout.GaugeInsetLeft(l) >= 16.0, l.Id);
+            Assert.True(MeterLayout.GaugeInsetLeft(l) >= 20.0, l.Id);
         }
     }
 

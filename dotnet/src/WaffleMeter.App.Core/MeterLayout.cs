@@ -80,14 +80,15 @@ public sealed record MeterLayout(
         : BareRankNarrowWidth + BareRankNarrowGap;
 
     /// <summary>
-    /// 게이지 자체가 왼쪽으로 들어간 폭. 전폭 블리드 레이아웃은 왼쪽 묶음(순위 숫자 + 직업 점)만큼
-    /// 들여, 그 요소들이 채움 위에 절대 오지 않게 한다.
-    /// <para>🔑 직업 점은 채움과 <b>같은 색</b>이라 채움 위에 올라가면 사라진다 — 숫자를 빼도 점 몫은
-    /// 반드시 남겨야 한다.</para>
+    /// 게이지 채움이 왼쪽으로 들어간 폭. <b>순위 숫자 몫만</b> 들인다.
+    /// <para>🔑 직업 점 몫까지 들였더니 채움이 행 중간에서 시작해 세로로 칼로 자른 단면이 그대로
+    /// 보였다("게이지 앞부분이 툭 잘린 느낌"). 시안은 채움이 행 왼쪽 끝에서 시작하고 점·이름이 그
+    /// 위에 얹힌다 — 단면이 없으니 잘릴 것도 없다.</para>
+    /// <para>점이 사라질 걱정은 과했다: 채움은 26% 워시이고 점은 100% 라, 같은 색이어도 대비가
+    /// 충분하다. 반면 순위 <b>숫자</b>는 작은 고정 글리프라 채움 경계가 그 위를 지나면 행마다 배경이
+    /// 갈린다 — 그건 여전히 들여야 한다.</para>
     /// </summary>
-    public static double GaugeInsetLeft(MeterLayout l) =>
-        !l.GaugeFullBleedRight ? 0.0
-        : BareRankGutter(l) + (l.ShowJobDot ? JobDotSize + JobDotGap : 0.0);
+    public static double GaugeInsetLeft(MeterLayout l) => BareRankGutter(l);
 
     /// <summary>
     /// 직업아이콘 한 변. XAML 이 <c>ConverterParameter='0.66:18'</c> 로 계산하는 값과 **같은 산술**이어야
