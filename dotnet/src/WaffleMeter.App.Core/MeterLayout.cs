@@ -112,10 +112,16 @@ public sealed record MeterLayout(
 
     public static double JobIconSize(int rowHeight) => Math.Max(18.0, Math.Floor(rowHeight * 0.66));
 
+    // ── 이름 대응표 ────────────────────────────────────────────────────────────────
+    //   TYPE A = battlefield (전장)   TYPE B = dashboard (계기판)   TYPE C = stage (무대)
+    // 화면에 나가는 이름은 Label 뿐이고, Id 와 이 파일 아래의 설계 주석은 개발 당시의 한국어 별칭을
+    // 그대로 쓴다. ⚠️ Id 는 settings.properties 에 저장된 값이라 절대 바꾸지 마라 — 바꾸는 순간
+    // 사용자가 고른 레이아웃이 고아가 되어 전원이 기본값으로 되돌아간다.
+
     /// <summary>01 전장 — 행은 현행과 수치가 완전히 같다. 기존 사용자의 기본값이자 되돌리기 기준.</summary>
     public static readonly MeterLayout Battlefield = new(
         Id: "battlefield",
-        Label: "전장",
+        Label: "TYPE A",
         DefaultRowHeight: 36,
         CardPaddingV: 3.0,   // Padding="5,3"
         CardPaddingH: 5.0,
@@ -158,7 +164,7 @@ public sealed record MeterLayout(
     /// </summary>
     public static readonly MeterLayout Dashboard = new(
         Id: "dashboard",
-        Label: "계기판",
+        Label: "TYPE B",
         DefaultRowHeight: 28,
         CardPaddingV: 0.0,
         CardPaddingH: 8.0,
@@ -196,7 +202,7 @@ public sealed record MeterLayout(
     /// <summary>03 무대 — 틈 없는 판 하나. 행 사이는 하단 1px 헤어라인만 남는다.</summary>
     public static readonly MeterLayout Stage = new(
         Id: "stage",
-        Label: "무대",
+        Label: "TYPE C",
         DefaultRowHeight: 34,
         CardPaddingV: 3.0,
         CardPaddingH: 11.0,
