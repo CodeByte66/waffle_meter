@@ -1,4 +1,5 @@
 ﻿using System.Collections.ObjectModel;
+using System.Globalization;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -243,6 +244,16 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
 
     private string _targetName = "-";
     public string TargetName { get => _targetName; private set => Set(ref _targetName, value); }
+
+    private string _targetHpPercentText = string.Empty;
+
+    /// <summary>
+    /// HP 퍼센트만("47.2%"). 계기판 레이아웃이 이 숫자를 29px 주인공으로 쓰기 때문에 사용자의
+    /// <c>targetInfoDisplayMode</c> 와 무관해야 한다 — 그 설정이 hp_full_percent 면
+    /// <see cref="TargetHpText"/> 에는 "1,234,567 / 2,345,678  52.3%" 가 들어가고, 그걸 29px 로
+    /// 키우면 칸을 넘긴다. (percent 분기 자체는 FormatTargetHp 에 이미 있지만 설정에 종속된다.)
+    /// </summary>
+    public string TargetHpPercentText { get => _targetHpPercentText; private set => Set(ref _targetHpPercentText, value); }
 
     private string _targetHpText = string.Empty;
     public string TargetHpText { get => _targetHpText; private set => Set(ref _targetHpText, value); }
@@ -504,6 +515,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
             TargetHpRatio = ratio;
             TargetHpRest = 1.0 - ratio;
             TargetHpText = FormatTargetHp(tgt.RemainHp, tgt.MaxHp, pct, _settings.TargetInfoDisplayMode);
+            TargetHpPercentText = pct.ToString("F1", CultureInfo.InvariantCulture) + "%";
             TargetHpVisibility = hasTarget ? Visibility.Visible : Visibility.Collapsed;
         }
         else
@@ -511,6 +523,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
             TargetHpRatio = 0;
             TargetHpRest = 1.0;
             TargetHpText = string.Empty;
+            TargetHpPercentText = string.Empty;
             TargetHpVisibility = Visibility.Collapsed;
         }
 

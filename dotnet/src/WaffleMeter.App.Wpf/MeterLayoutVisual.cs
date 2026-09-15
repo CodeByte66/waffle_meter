@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Windows;
 using WaffleMeter.App.Core;
 
@@ -38,11 +38,20 @@ public sealed class MeterLayoutVisual
         RowMinHeight = rowHeight;
         RankChipVisibility = spec.ShowRankChip ? Visibility.Visible : Visibility.Collapsed;
 
-        // 전장만 보스칸이 고정 높이다(20px 독립 게이지 띠 + 두 줄 텍스트). 나머지는 현행대로 행 높이에 연동.
-        BossHeight = spec.BossStyle == BossStyle.Band ? 84.0 : rowHeight + 6.0;
+        // 보스칸 높이는 레이아웃마다 다르다. 행 높이에 연동하던 현행(rowHeight+6)은 무대만 유지한다 —
+        // 전장은 20px 게이지 띠가 한 줄 더 들어가고, 계기판은 26px HP% 가 주인공이라 둘 다 담을 수 없다.
+        // ⚠️ Border 가 ClipToBounds 라 이 값이 모자라면 글자가 잘린 채 조용히 렌더된다(계기판에서 실제로 겪음).
+        BossHeight = spec.BossStyle switch
+        {
+            BossStyle.Band => 84.0,    // 이름 줄 + 20px 띠 + 여백
+            BossStyle.Readout => 52.0, // 이름 11.5px + HP% 26px
+            _ => rowHeight + 6.0,      // 무대: 현행과 동일
+        };
         BossBandVisibility = spec.BossStyle == BossStyle.Band ? Visibility.Visible : Visibility.Collapsed;
         BossCanvasVisibility = spec.BossStyle == BossStyle.Canvas ? Visibility.Visible : Visibility.Collapsed;
         BossReadoutVisibility = spec.BossStyle == BossStyle.Readout ? Visibility.Visible : Visibility.Collapsed;
+        // 전장·무대가 공유하는 한 줄 배치. 계기판만 완전히 다른 구성이라 그 여집합으로 둔다.
+        BossInlineVisibility = spec.BossStyle == BossStyle.Readout ? Visibility.Collapsed : Visibility.Visible;
     }
 
     public MeterLayout Spec { get; }
@@ -85,6 +94,9 @@ public sealed class MeterLayoutVisual
     public Visibility BossCanvasVisibility { get; }
 
     public Visibility BossReadoutVisibility { get; }
+
+    /// <summary>계기판이 아닌 레이아웃(전장·무대)이 쓰는 한 줄 배치의 가시성.</summary>
+    public Visibility BossInlineVisibility { get; }
 
     public static MeterLayoutVisual For(string? id, int rowHeight)
     {

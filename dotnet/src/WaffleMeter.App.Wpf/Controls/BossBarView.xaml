@@ -1,57 +1,159 @@
-<UserControl x:Class="WaffleMeter.App.Wpf.Controls.BossBarView"
+﻿<UserControl x:Class="WaffleMeter.App.Wpf.Controls.BossBarView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:WaffleMeter.App.Wpf">
     <!--
-        보스칸(타겟 정보). OverlayWindow.xaml 에서 수치 무변경으로 옮겨 왔다 — 분리모드에서 같은
-        UserControl 을 독립 창에 얹기 위해서다.
+        보스칸(타겟 정보). 레이아웃 3종이 HP 를 서로 다르게 그린다:
+          전장(Band)   — 글자 아래에 20px 독립 게이지 띠를 따로 세운다. 높이 84 고정.
+          계기판(Readout) — 판때기를 지우고 HP% 를 29px 주인공으로. 게이지는 얇은 레일.
+          무대(Canvas)  — 게이지가 카드 배경 전체를 채운다.
 
-        ⚠️ 보스칸에는 GaugeFxLayer 도 GaugeSkinId 도 없다. 게이지 스킨 장식은 **행에만** 붙으므로
-        보스칸 게이지를 어떻게 바꾸든 후원자·랭커 연출과는 물리적으로 무관하다.
+        ⚠️ 기존 fill/bar 게이지 경로를 **제거하지 않는다**. 사용자의 '게이지 형태'(barStyle) 설정이
+        계속 유효해야 하고, 그건 레이아웃과 다른 축이다.
+
+        ⚠️ 보스칸에는 GaugeFxLayer 도 GaugeSkinId 도 없다 — 게이지 스킨 장식은 행에만 붙는다.
+        따라서 여기 게이지를 어떻게 바꾸든 후원자·랭커 연출과는 물리적으로 무관하다.
     -->
     <UserControl.Resources>
         <local:RatioToStarConverter x:Key="RatioToStar"/>
         <local:OffsetConverter x:Key="Offset"/>
     </UserControl.Resources>
-            <!-- target-info bar (React TargetInfo.tsx): above the rows, shown when there are rows -->
-            <Border CornerRadius="6" Padding="8,0" Margin="0,0,0,6" ClipToBounds="True"
-                    Height="{Binding Settings.RowHeight, Converter={StaticResource Offset}, ConverterParameter=6}"
-                    Background="{DynamicResource Skin.RowBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
-                    Visibility="{Binding TargetInfoVisibility}">
-                <Grid>
-                    <!-- "fill" HP gauge (게이지 형태 = fill): proportional cell fill behind the content at low
-                         opacity so the boss name stays readable — mirrors the meter row fill. -->
-                    <Grid Visibility="{Binding TargetBarFillVisibility}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
-                            <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
-                        </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Background="{Binding BossBarBrush}" Opacity="0.3" CornerRadius="4"/>
-                    </Grid>
-                    <!-- "bar" HP gauge (게이지 형태 = bar): thin bottom HP-fill bar. "none" hides both. -->
-                    <Grid VerticalAlignment="Bottom" Height="2" Visibility="{Binding TargetBottomBarVisibility}">
+
+    <Border CornerRadius="6" Padding="8,0" Margin="0,0,0,6" ClipToBounds="True"
+            Height="{Binding Layout.BossHeight}"
+            Background="{DynamicResource Skin.RowBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
+            Visibility="{Binding TargetInfoVisibility}">
+        <Border.Style>
+            <Style TargetType="Border">
+                <Style.Triggers>
+                    <!-- 계기판은 판때기를 지운다. 글자는 아래에서 그림자로 버틴다. -->
+                    <DataTrigger Binding="{Binding Layout.BossReadoutVisibility}" Value="Visible">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderBrush" Value="Transparent"/>
+                        <Setter Property="Padding" Value="4,0"/>
+                    </DataTrigger>
+                    <!-- 무대는 각진 판 하나로 이어진다. -->
+                    <DataTrigger Binding="{Binding Layout.BossCanvasVisibility}" Value="Visible">
+                        <Setter Property="CornerRadius" Value="0"/>
+                        <Setter Property="Padding" Value="11,0"/>
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </Border.Style>
+
+        <Grid>
+            <!-- 무대: 게이지가 카드 배경 전체. Padding 밖까지 깔리도록 Margin 으로 되민다. -->
+            <Grid Visibility="{Binding Layout.BossCanvasVisibility}" Margin="-11,0,-11,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
+                    <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="{Binding BossBarBrush}" Opacity="0.55"/>
+            </Grid>
+
+            <!-- "fill" HP gauge (게이지 형태 = fill): proportional cell fill behind the content at low
+                 opacity so the boss name stays readable — mirrors the meter row fill. -->
+            <Grid Visibility="{Binding TargetBarFillVisibility}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
+                    <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="{Binding BossBarBrush}" Opacity="0.3" CornerRadius="4"/>
+            </Grid>
+            <!-- "bar" HP gauge (게이지 형태 = bar): thin bottom HP-fill bar. "none" hides both. -->
+            <Grid VerticalAlignment="Bottom" Height="2" Visibility="{Binding TargetBottomBarVisibility}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
+                    <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
+            </Grid>
+
+            <!-- ═══ 전장 / 무대 공통 한 줄 배치 ═══ -->
+            <Grid Visibility="{Binding Layout.BossInlineVisibility}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <!-- left accent rail -->
+                    <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,4,8,4" Background="{Binding BossBarBrush}"/>
+                    <Image Grid.Column="1" Source="{Binding BossIcon}" Width="20" Height="20" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
+                               FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Grid.Column="3" Text="{Binding TargetHpText}" Foreground="{Binding CombatTimeBrush}" FontSize="12"
+                               VerticalAlignment="Center" Margin="8,0,0,0" Visibility="{Binding TargetHpVisibility}"/>
+                </Grid>
+                <!-- 전장: 제 몫의 20px 게이지 띠. 남은 HP 가 색이 아니라 길이로 읽힌다. -->
+                <Border Grid.Row="1" Height="20" CornerRadius="4" Margin="0,0,0,10" ClipToBounds="True"
+                        Background="{DynamicResource Skin.StatBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
+                        Visibility="{Binding Layout.BossBandVisibility}">
+                    <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
                             <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
                         </Grid.ColumnDefinitions>
                         <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
+                        <!-- 25% 눈금 — 페이즈 전환 지점 가늠. 게이지 위에 얹혀 길이를 읽게 돕는다. -->
+                        <UniformGrid Grid.ColumnSpan="2" Rows="1" Columns="4" IsHitTestVisible="False">
+                            <Border BorderBrush="#2BFFFFFF" BorderThickness="0,0,1,0"/>
+                            <Border BorderBrush="#2BFFFFFF" BorderThickness="0,0,1,0"/>
+                            <Border BorderBrush="#2BFFFFFF" BorderThickness="0,0,1,0"/>
+                            <Border/>
+                        </UniformGrid>
                     </Grid>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <!-- left accent rail -->
-                        <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,4,8,4" Background="{Binding BossBarBrush}"/>
-                        <Image Grid.Column="1" Source="{Binding BossIcon}" Width="20" Height="20" Margin="0,0,7,0" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="2" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
-                                   FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Grid.Column="3" Text="{Binding TargetHpText}" Foreground="{Binding CombatTimeBrush}" FontSize="12"
-                                   VerticalAlignment="Center" Margin="8,0,0,0" Visibility="{Binding TargetHpVisibility}"/>
-                    </Grid>
-                </Grid>
-            </Border>
+                </Border>
+            </Grid>
 
+            <!-- ═══ 계기판: HP% 가 주인공 ═══ -->
+            <Grid Visibility="{Binding Layout.BossReadoutVisibility}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.MutedFg}"
+                           FontWeight="SemiBold" FontSize="11.5" TextTrimming="CharacterEllipsis" Margin="0,2,0,0">
+                    <TextBlock.Effect>
+                        <DropShadowEffect ShadowDepth="1" BlurRadius="3" Opacity="0.95" Color="Black"/>
+                    </TextBlock.Effect>
+                </TextBlock>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding TargetHpPercentText}" Foreground="{DynamicResource Skin.Fg}"
+                               FontWeight="Bold" FontSize="26" VerticalAlignment="Center" MinWidth="96"
+                               Typography.NumeralAlignment="Tabular">
+                        <TextBlock.Effect>
+                            <DropShadowEffect ShadowDepth="1" BlurRadius="4" Opacity="0.95" Color="Black"/>
+                        </TextBlock.Effect>
+                    </TextBlock>
+                    <Border Grid.Column="1" Height="3" CornerRadius="2" VerticalAlignment="Center" Margin="10,0"
+                            Background="#24FFFFFF" ClipToBounds="True">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{Binding TargetHpRatio, Converter={StaticResource RatioToStar}}"/>
+                                <ColumnDefinition Width="{Binding TargetHpRest, Converter={StaticResource RatioToStar}}"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
+                        </Grid>
+                    </Border>
+                    <TextBlock Grid.Column="2" Text="{Binding TargetHpText}" Foreground="{Binding CombatTimeBrush}" FontSize="10.5"
+                               VerticalAlignment="Center" Visibility="{Binding TargetHpVisibility}">
+                        <TextBlock.Effect>
+                            <DropShadowEffect ShadowDepth="1" BlurRadius="3" Opacity="0.95" Color="Black"/>
+                        </TextBlock.Effect>
+                    </TextBlock>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
 </UserControl>
