@@ -112,8 +112,11 @@ public class MeterLayoutTests
     }
 
     /// <summary>
-    /// 카드 크롬이 없는 레이아웃은 반경·테두리·여백이 전부 0 이어야 한다. 하나라도 남으면
+    /// 카드 크롬이 없는 레이아웃은 반경·테두리·세로 패딩이 0 이어야 한다. 하나라도 남으면
     /// '배경 없음'인데 테두리만 뜨는 어중간한 상태가 된다.
+    /// <para>⚠️ <c>CardMarginV</c> 는 여기 포함하지 않는다 — 그건 카드 <b>바깥</b>의 행 간격이라
+    /// 크롬이 아니다. 크롬 없는 리본도 서로 딱 붙으면 답답해서 간격은 따로 가질 수 있다
+    /// (계기판이 실제로 0 → 2 로 바뀌었고, 그때 이 테스트가 둘을 뭉뚱그린 걸 잡아냈다).</para>
     /// </summary>
     [Fact]
     public void Chromeless_layout_zeroes_every_card_dimension()
@@ -122,9 +125,15 @@ public class MeterLayoutTests
         {
             Assert.Equal(0.0, layout.CardBorderV);
             Assert.Equal(0.0, layout.CardRadius);
-            Assert.Equal(0.0, layout.CardMarginV);
             Assert.Equal(0.0, layout.CardPaddingV);
         }
+    }
+
+    /// <summary>행 간격은 어느 레이아웃에서도 음수가 아니어야 한다.</summary>
+    [Fact]
+    public void Row_gaps_are_never_negative()
+    {
+        Assert.All(MeterLayout.All, l => Assert.True(l.CardMarginV >= 0.0));
     }
 
     /// <summary>기본 행 높이는 설정 슬라이더 범위(24~80) 안이어야 한다 — 레이아웃 전환이 값을 덮으므로.</summary>
