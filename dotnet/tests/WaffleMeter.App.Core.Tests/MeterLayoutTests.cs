@@ -44,7 +44,7 @@ public class MeterLayoutTests
     [Theory]
     // 🔑 전장 70 은 회귀 앵커다 — 이 값이 변하면 계산식이 틀린 것이다(기존 사용자 화면이 안 바뀌어야 한다).
     [InlineData("battlefield", 36, 70.0)] // rail 11 + 순위칩 28 + 아이콘(23+8)
-    [InlineData("dashboard", 28, 0.0)]     // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
+    [InlineData("dashboard", 28, 0.0)]    // 거터(13+4) − 인셋(거터) = 0   // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
     [InlineData("stage", 34, 16.0)]       // 점(7+9). 채움은 행 끝에 붙으므로 인셋 0 — 점 뒤만 비운다
     public void GaugeExclusionLeft_matches_the_real_left_cluster(string id, int rowHeight, double expected)
     {
@@ -141,7 +141,12 @@ public class MeterLayoutTests
     {
         foreach (MeterLayout l in MeterLayout.All.Where(x => x.ShowRankNumeral))
         {
-            Assert.True(MeterLayout.GaugeInsetLeft(l) >= 20.0, l.Id);
+            // 불변식은 "숫자가 차지하는 폭만큼은 비워져 있다"이지 특정 픽셀 수가 아니다 —
+            // 임의의 하한(20)을 박아 뒀더니 간격을 9 → 4 로 줄이자마자 설계가 멀쩡한데 테스트만 깨졌다.
+            Assert.True(
+                MeterLayout.GaugeInsetLeft(l) >= MeterLayout.BareRankGutter(l),
+                $"{l.Id}: inset {MeterLayout.GaugeInsetLeft(l)} < gutter {MeterLayout.BareRankGutter(l)}");
+            Assert.True(MeterLayout.BareRankGutter(l) > 0.0, l.Id);
         }
     }
 
