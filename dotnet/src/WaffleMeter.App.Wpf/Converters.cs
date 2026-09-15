@@ -371,3 +371,30 @@ public sealed class DoubleToCornerRadiusConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>
+/// 스킨 색(<c>Skin.OverlayBgColor</c> 같은 <see cref="Color"/> 리소스)의 알파만 눌러 돌려준다.
+/// 그라디언트 스크림이 바닥에서 완전 투명까지 떨어지면 푸터가 묻히므로, 마지막 정지점을 0 이 아니라
+/// 일정 비율로 남기는 데 쓴다. 파라미터는 0~1 배율(기본 0.45).
+/// </summary>
+public sealed class ColorAlphaConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is not Color c)
+        {
+            return Colors.Transparent;
+        }
+
+        double k = 0.45;
+        if (parameter is string p)
+        {
+            double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out k);
+        }
+
+        return Color.FromArgb((byte)Math.Clamp(c.A * k, 0, 255), c.R, c.G, c.B);
+    }
+
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

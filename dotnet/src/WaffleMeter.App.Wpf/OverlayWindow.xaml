@@ -93,11 +93,30 @@
                     </Setter.Value>
                 </Setter>
                 <Style.Triggers>
-                    <!-- 계기판은 판때기 자체가 없다. 게임 위에 글자만 새기는 게 이 레이아웃의 정체성이라
-                         창 배경을 지운다 — 대신 글자에 그림자가 들어간다(Layout.EtchText). -->
-                    <DataTrigger Binding="{Binding Layout.ShowPanelBackground}" Value="False">
-                        <Setter Property="Background" Value="Transparent"/>
+                    <!-- 계기판: 불투명 판때기를 지우되 완전 투명으로는 두지 않는다. 밝은 맵에서 글자가
+                         곤란해진다는 실측 피드백이 있었고, 그렇다고 판을 깔면 이 레이아웃의 정체성이
+                         사라진다. 위가 진하고 아래로 옅어지는 **그라디언트 스크림**이 그 사이를 잡는다 —
+                         보스 HP% 와 상단 행이 가장 진한 바탕을 받고, 아래로 갈수록 게임이 비친다. -->
+                    <DataTrigger Binding="{Binding Layout.ScrimPanel}" Value="True">
+                        <Setter Property="Background">
+                            <Setter.Value>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1" Opacity="{Binding Settings.MeterOpacity}">
+                                    <GradientStop Color="{DynamicResource Skin.OverlayBgColor}" Offset="0"/>
+                                    <GradientStop Color="{DynamicResource Skin.OverlayBgColor}" Offset="0.62"/>
+                                    <!-- 0 까지 떨어뜨리면 바닥에 놓인 푸터가 묻힌다 — 55% 쯤 남긴다. -->
+                                    <GradientStop Color="{DynamicResource Skin.OverlayBgFade}" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Setter.Value>
+                        </Setter>
                     </DataTrigger>
+                    <!-- 스크림도 판때기도 없는 레이아웃이 생기면 완전 투명. -->
+                    <MultiDataTrigger>
+                        <MultiDataTrigger.Conditions>
+                            <Condition Binding="{Binding Layout.ShowPanelBackground}" Value="False"/>
+                            <Condition Binding="{Binding Layout.ScrimPanel}" Value="False"/>
+                        </MultiDataTrigger.Conditions>
+                        <Setter Property="Background" Value="Transparent"/>
+                    </MultiDataTrigger>
                 </Style.Triggers>
             </Style>
         </Border.Style>
@@ -208,6 +227,21 @@
             </Border>
 
             <Grid Grid.Row="4" Margin="0,6,0,0">
+                <!-- 판때기가 없는/옅어지는 레이아웃에서는 푸터가 스크림 끝자락에 놓여 묻힌다.
+                     칸 전체에 그림자 하나를 걸어 배경과 무관하게 읽히게 한다. -->
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Layout.EtchText}" Value="True">
+                                <Setter Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect ShadowDepth="1" BlurRadius="3" Opacity="0.95" Color="Black"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -224,10 +258,18 @@
                     <!-- Clickable: opens the per-character 오드 list. MouseLeftButtonUp on the Border (not a
                          Button) matches the row-click pattern above and keeps the footer's height unchanged —
                          a Button's default template would add chrome and risk the SizeToContent regression. -->
-                    <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" VerticalAlignment="Center" Cursor="Hand"
-                            Background="{DynamicResource Skin.StatBg}" Visibility="{Binding AetherVisibility}"
-                            MouseLeftButtonUp="OnAetherBadgeClick"
-                            ToolTip="{Binding AetherToolTip}">
+                    <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" VerticalAlignment="Center" Cursor="Hand" Visibility="{Binding AetherVisibility}"
+                            MouseLeftButtonUp="OnAetherBadgeClick" ToolTip="{Binding AetherToolTip}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{DynamicResource Skin.StatBg}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Layout.StatChrome}" Value="False">
+                                        <Setter Property="Background" Value="Transparent"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
                         <StackPanel Orientation="Horizontal">
                             <Image Source="pack://application:,,,/WaffleMeter.App.Wpf;component/Icons/ode.png"
                                    Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,4,0"
@@ -236,8 +278,17 @@
                         </StackPanel>
                     </Border>
                     <!-- 슈고 페스타 열쇠: a gold key icon + base(+bonus) -->
-                    <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" VerticalAlignment="Center"
-                            Background="{DynamicResource Skin.StatBg}" Visibility="{Binding ShugoKeyVisibility}" ToolTip="슈고 페스타 열쇠">
+                    <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" VerticalAlignment="Center" Visibility="{Binding ShugoKeyVisibility}" ToolTip="슈고 페스타 열쇠">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{DynamicResource Skin.StatBg}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Layout.StatChrome}" Value="False">
+                                        <Setter Property="Background" Value="Transparent"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M 3,0 A 3,3 0 1 0 3.01,0 M 4,4 L 4,10 M 4,7 L 6.5,7" Stroke="#FFD98A" StrokeThickness="1.4"
                                   Width="10" Height="11" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,4,0"/>
@@ -245,8 +296,17 @@
                         </StackPanel>
                     </Border>
                     <!-- server latency (ping) -->
-                    <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" VerticalAlignment="Center"
-                            Background="{DynamicResource Skin.StatBg}" Visibility="{Binding PingVisibility}" ToolTip="게임 서버 응답속도">
+                    <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" VerticalAlignment="Center" Visibility="{Binding PingVisibility}" ToolTip="게임 서버 응답속도">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{DynamicResource Skin.StatBg}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Layout.StatChrome}" Value="False">
+                                        <Setter Property="Background" Value="Transparent"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
                         <TextBlock Text="{Binding PingText}" Foreground="{DynamicResource Skin.MutedFg}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </Border>
                 </StackPanel>

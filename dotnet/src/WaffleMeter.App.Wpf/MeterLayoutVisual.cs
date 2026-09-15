@@ -131,6 +131,12 @@ public sealed class MeterLayoutVisual
     public bool ShowPanelBackground => Spec.ShowPanelBackground;
 
     /// <summary>
+    /// 판때기 대신 **그라디언트 스크림**을 깔지. 완전 투명은 밝은 맵에서 글자가 곤란해지고, 불투명
+    /// 판때기는 계기판의 정체성을 지운다 — 위가 진하고 아래로 옅어지는 스크림이 그 사이를 잡는다.
+    /// </summary>
+    public bool ScrimPanel => Spec.ScrimPanel;
+
+    /// <summary>
     /// 게이지 스킨이 **없는** 행의 채움 불투명도. ⚠️스킨이 있는 행은 항상 0.58 이다 — 팔레트의 채도·
     /// 하이라이트 폭이 그 뒤를 전제로 튜닝돼 있어서, 레이아웃이 이걸 덮으면 돈 낸 스킨이 희미해진다.
     /// </summary>
