@@ -76,6 +76,14 @@ public sealed class MeterLayoutVisual
         // MinWidth 가 아니라 고정폭이어야 세 자리에서도 이름 좌표가 흔들리지 않는다. 무대는 카드
         // 테두리도 아이콘도 없어 이름의 좌측 정렬선이 행을 정렬하는 유일한 수직선이다.
         BareRankWidth = spec.LargeRankNumeral ? MeterLayout.BareRankWideWidth : 13.0;
+        PowerBadgeVisibility = spec.ShowPowerBadge ? Visibility.Visible : Visibility.Collapsed;
+        // 무대는 헤더·보스·행·타이머·푸터가 틈 없이 이어지는 한 덩어리다 — 구역 간 간격도 패널
+        // 안쪽 여백도 0 이고, 구역을 가르는 건 1px 헤어라인뿐이다.
+        SectionGapBelow = new Thickness(0, 0, 0, spec.SectionGap);
+        SectionGapAbove = new Thickness(0, spec.SectionGap, 0, 0);
+        PanelPadding = new Thickness(spec.PanelPadH, spec.PanelPadV, spec.PanelPadH, spec.PanelPadV);
+        SeamlessSections = spec.SectionGap <= 0.0;
+        SectionDividerVisibility = SeamlessSections ? Visibility.Visible : Visibility.Collapsed;
         NameFontSize = MeterLayout.NameSize(spec, rowHeight);
         StatFontSize = MeterLayout.StatSize(spec, rowHeight);
         BareRankGap = spec.LargeRankNumeral ? MeterLayout.BareRankWideGap : 4.0;
@@ -152,6 +160,20 @@ public sealed class MeterLayoutVisual
     public double BareRankWidth { get; }
 
     /// <summary>행 이름 글자 크기. 시안이 절대값을 지정한 레이아웃은 행 높이와 무관하게 고정된다.</summary>
+    public Visibility PowerBadgeVisibility { get; }
+
+    public Thickness SectionGapBelow { get; }
+
+    public Thickness SectionGapAbove { get; }
+
+    /// <summary>루트 패널 안쪽 여백. 한 덩어리 레이아웃은 0 이라 구역이 가장자리까지 닿는다.</summary>
+    public Thickness PanelPadding { get; }
+
+    /// <summary>구역 사이에 틈이 없는가(무대). 그러면 대신 헤어라인으로 가른다.</summary>
+    public bool SeamlessSections { get; }
+
+    public Visibility SectionDividerVisibility { get; }
+
     public double NameFontSize { get; }
 
     /// <summary>딜·비중 숫자 크기.</summary>

@@ -247,7 +247,8 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
-                                        <Border CornerRadius="4" Padding="4,0" Margin="6,0,0,0" VerticalAlignment="Center" Visibility="{Binding PowerVisible}">
+                                        <Border CornerRadius="4" Padding="4,0" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                Visibility="{Binding DataContext.Layout.PowerBadgeVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="{DynamicResource Skin.StatBg}"/>

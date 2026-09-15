@@ -75,7 +75,7 @@
             <MenuItem Header="종료" Click="OnExit"/>
         </ContextMenu>
     </Window.ContextMenu>
-    <Border CornerRadius="6" Padding="10,8"
+    <Border CornerRadius="6" Padding="{Binding Layout.PanelPadding}"
             TextElement.FontFamily="{Binding Settings.FontFamily, Converter={StaticResource FontConv}}">
         <!-- 미터 크기(배율): 루트에 LayoutTransform을 걸어 글자·행·여백까지 균일 확대/축소. SizeToContent=Height라
              높이는 스케일된 콘텐츠에 자동으로 다시 맞춰진다. 폭(Window.Width)은 사용자가 계속 드래그로 조절. -->
@@ -132,7 +132,17 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <Grid Grid.Row="0" Margin="0,0,0,6">
+            <Grid Grid.Row="0" Margin="{Binding Layout.SectionGapBelow}">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Style.Triggers>
+                            <!-- 한 덩어리 레이아웃은 구역 사이 틈이 없으므로 자기 여백을 스스로 갖는다. -->
+                            <DataTrigger Binding="{Binding Layout.SeamlessSections}" Value="True">
+                                <Setter Property="Margin" Value="11,7,11,7"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -190,9 +200,26 @@
             <controls:MeterRowsView Grid.Row="2"/>
 
             <!-- combat-timer pill (React CombatTimer.tsx): below the rows -->
-            <Border Grid.Row="3" CornerRadius="6" Padding="8,3" Margin="0,6,0,0"
-                    Background="{DynamicResource Skin.RowBg}" BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1"
-                    Visibility="{Binding CombatTimerVisibility}">
+            <Border Grid.Row="3" Visibility="{Binding CombatTimerVisibility}">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                        <Setter Property="Padding" Value="8,3"/>
+                        <Setter Property="Margin" Value="{Binding Layout.SectionGapAbove}"/>
+                        <Setter Property="Background" Value="{DynamicResource Skin.RowBg}"/>
+                        <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Style.Triggers>
+                            <!-- 한 덩어리: 알약이 아니라 판에 이어 붙는 띠가 된다. -->
+                            <DataTrigger Binding="{Binding Layout.SeamlessSections}" Value="True">
+                                <Setter Property="CornerRadius" Value="0"/>
+                                <Setter Property="Padding" Value="11,5"/>
+                                <Setter Property="Background" Value="{DynamicResource Skin.TableHeadBg}"/>
+                                <Setter Property="BorderThickness" Value="0,1,0,0"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -230,12 +257,19 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="4" Margin="0,6,0,0">
-                <!-- 판때기가 없는/옅어지는 레이아웃에서는 푸터가 스크림 끝자락에 놓여 묻힌다.
-                     칸 전체에 그림자 하나를 걸어 배경과 무관하게 읽히게 한다. -->
+            <Grid Grid.Row="4" Margin="{Binding Layout.SectionGapAbove}">
+                <!-- 두 트리거가 한 Style 안에 있어야 한다 — Grid.Style 은 한 번만 설정할 수 있다.
+                     ① 한 덩어리 레이아웃은 구역 사이 틈이 없으므로 자기 여백을 스스로 갖는다.
+                     ② 판때기가 옅어지는 레이아웃에서는 푸터가 스크림 끝자락에 놓여 묻히므로 칸 전체에
+                        그림자 하나를 걸어 배경과 무관하게 읽히게 한다. -->
                 <Grid.Style>
                     <Style TargetType="Grid">
                         <Style.Triggers>
+                            <DataTrigger Binding="{Binding Layout.SeamlessSections}" Value="True">
+                                <!-- 시안의 두 번째 띠. 타이머 띠 아래에 헤어라인으로 이어 붙고, 바닥에
+                                     너무 붙지 않게 아래 여백을 조금 더 준다(패널 라운드에 글자가 닿는다). -->
+                                <Setter Property="Margin" Value="13,6,13,8"/>
+                            </DataTrigger>
                             <DataTrigger Binding="{Binding Layout.EtchText}" Value="True">
                                 <Setter Property="Effect">
                                     <Setter.Value>

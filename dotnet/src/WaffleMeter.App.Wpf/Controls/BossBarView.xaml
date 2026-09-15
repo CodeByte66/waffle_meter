@@ -24,7 +24,7 @@
         <local:OffsetConverter x:Key="Offset"/>
     </UserControl.Resources>
 
-    <Border CornerRadius="6" Padding="8,0" Margin="0,0,0,6" ClipToBounds="True"
+    <Border CornerRadius="6" Padding="8,0" Margin="{Binding Layout.SectionGapBelow}" ClipToBounds="True"
             Visibility="{Binding BossSlotVisibility}">
         <Border.Style>
             <Style TargetType="Border">
@@ -46,7 +46,7 @@
                     </DataTrigger>
                     <!-- 대기 카드는 전투 구성보다 낮다. 전장의 84px 를 그대로 쓰면 카드가 허공에 뜬다. -->
                     <DataTrigger Binding="{Binding IdleCardVisibility}" Value="Visible">
-                        <Setter Property="Height" Value="46"/>
+                        <Setter Property="Height" Value="42"/>
                     </DataTrigger>
                 </Style.Triggers>
             </Style>
@@ -266,21 +266,33 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,7,8,7" Background="{Binding SelfJobBrush}"/>
-                <Border Grid.Column="1" Width="26" Height="26" CornerRadius="13" Margin="0,0,9,0" VerticalAlignment="Center"
+                <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,5,8,5" Background="{Binding SelfJobBrush}"/>
+                <Border Grid.Column="1" Width="24" Height="24" CornerRadius="12" Margin="0,0,8,0" VerticalAlignment="Center"
                         Background="{DynamicResource Skin.StatBg}" BorderThickness="1.5" BorderBrush="{Binding SelfJobBrush}">
                     <Image Source="{Binding SelfJobIcon}" Stretch="Uniform" Margin="2"/>
                 </Border>
                 <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding SelfNicknameText}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
-                               FontSize="15" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding SelfMetaText}" Foreground="{DynamicResource Skin.MutedFg}" FontSize="10.5" Margin="0,1,0,0"/>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding SelfNicknameText}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
+                                   FontSize="14" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                        <!-- 직전 전투에서 산출된 티어. 티어는 DPS 로 매겨지므로 전투를 한 번도 안 했으면
+                             보여줄 근거가 없다 — 그때는 조용히 접힌다(없는 값을 지어내지 않는다). -->
+                        <Border CornerRadius="4" Padding="5,0" Margin="7,0,0,0" VerticalAlignment="Center"
+                                BorderThickness="1" SnapsToDevicePixels="True"
+                                Background="{Binding SelfTierChipBg}" BorderBrush="{Binding SelfTierChipRing}"
+                                ToolTip="{Binding SelfTierChipToolTip}"
+                                Visibility="{Binding SelfTierChipVisibility}">
+                            <TextBlock Text="{Binding SelfTierChipText}" Foreground="{Binding SelfTierChipFg}"
+                                       FontSize="10" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                    <TextBlock Text="{Binding SelfMetaText}" Foreground="{DynamicResource Skin.MutedFg}" FontSize="10" Margin="0,1,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right"
                             Visibility="{Binding SelfPowerVisibility}">
                     <TextBlock Text="{Binding SelfPowerText}" Foreground="{Binding SelfJobBrush}" FontWeight="Bold"
-                               FontSize="19" TextAlignment="Right" Typography.NumeralAlignment="Tabular"/>
-                    <TextBlock Text="전투력" Foreground="{DynamicResource Skin.MutedFg}" FontSize="9.5"
+                               FontSize="17" TextAlignment="Right" Typography.NumeralAlignment="Tabular"/>
+                    <TextBlock Text="전투력" Foreground="{DynamicResource Skin.MutedFg}" FontSize="9"
                                TextAlignment="Right" Margin="0,1,0,0"/>
                 </StackPanel>
             </Grid>
