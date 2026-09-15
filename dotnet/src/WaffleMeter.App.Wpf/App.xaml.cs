@@ -224,11 +224,10 @@ public partial class App : Application
         _settings = new MeterSettings(services.Props);
         _theme = new MeterColorTheme(services.Props);
         SkinManager skinManager = _skin;
+        // 시련 난이도는 더 이상 여기서 주입하지 않는다 — 리포트가 직접 싣고 온다(DpsReport.TrialDifficulty).
+        // 라이브 조회는 기록 재생에서 "지금 시련"의 단계를 지난 전투 위에 찍는 원인이었다.
         var viewModel = new OverlayViewModel(
-            services.Version, _settings, _theme, () => skinManager.IsLight, services.Data.Encounters,
-            // Evaluated per report tick: the trial's difficulty arrives a few seconds after zone-in, so it is
-            // not known when the target line is first drawn.
-            () => services.Data.TrialDifficulty.Current is { IsTrial: true } t ? t.Label : null);
+            services.Version, _settings, _theme, () => skinManager.IsLight, services.Data.Encounters);
         skinManager.Changed += viewModel.RefreshSkin; // re-theme stat colors on light/dark swap
         var window = new OverlayWindow { DataContext = viewModel };
         LoadPosition(services.Props, window);

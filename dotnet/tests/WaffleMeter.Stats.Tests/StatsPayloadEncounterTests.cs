@@ -1,4 +1,4 @@
-using WaffleMeter.Capture;
+﻿using WaffleMeter.Capture;
 using WaffleMeter.Data;
 using WaffleMeter.Stats;
 using Xunit;
@@ -60,6 +60,10 @@ public sealed class StatsPayloadEncounterTests
                 BattleStart = 1_000_000,
                 BattleEnd = 1_030_000,
                 Target = new MobInfo(100, new Mob(mobCode, mobName, true), remainHp: 0, maxHp: 1_000_000),
+                // 실제 저장 경로(DataManager.SaveBattleLog)가 하는 일을 그대로 한다 — 시련 난이도는 리포트에
+                // **동결**돼 오고, 페이로드는 추적기를 다시 조회하지 않는다. 여기서 빠뜨리면 이 하네스만
+                // 옛 계약(라이브 조회)을 전제하게 된다.
+                TrialDifficulty = dm.TrialDifficulty.Current,
                 Information = new Dictionary<int, DpsInformation>
                 {
                     [1] = new DpsInformation(1_000_000, 50_000, 60.0, 40.0),
@@ -170,5 +174,29 @@ public sealed class StatsPayloadEncounterTests
         Assert.Null(encounter.Difficulty);
         Assert.Null(encounter.Stage);
         Assert.Null(encounter.BossIndex);
+    }
+
+    /// <summary>
+    /// 동결이 라이브 추적기를 이긴다. 업로드는 스풀에 며칠 묵었다 재시도될 수 있고, 그때 추적기는 이미 다른
+    /// 시련(또는 빈 값)을 들고 있다 — 그 값을 실어 보내면 서버에 남아 되돌릴 수 없다.
+    /// </summary>
+    [Fact]
+    public void The_frozen_difficulty_wins_over_whatever_the_tracker_holds_now()
+    {
+        DataManager dm = Party();
+        dm.SaveTrialAffix(TrialAffixGroup.BossBuff, 4, arrivedAt: 0);
+        dm.SaveTrialAffix(TrialAffixGroup.BakronSkillUpgrade, 4, arrivedAt: 0);
+        DpsLog log = Log(dm, 2300582, "바크론"); // 이 시점의 난이도가 리포트에 동결된다
+
+        // 이후 추적기가 완전히 다른 상태가 된다 — 다음 시련에 들어갔거나, 던전을 나가 비워졌거나.
+        dm.TrialDifficulty.Reset();
+        dm.SaveTrialAffix(TrialAffixGroup.BossBuff, 1, arrivedAt: 0);
+
+        var builder = new StatsPayloadBuilder(dm, () => false);
+        StatsEncounterPayload encounter =
+            Assert.IsType<BuildResult.Payload>(builder.Build(log, "test", killConfirmed: true)).Value.Encounter;
+
+        Assert.NotNull(encounter.Trial);
+        Assert.Equal(4, encounter.Trial!.BossBuff);
     }
 }

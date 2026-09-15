@@ -3155,6 +3155,10 @@ public sealed class DataManager : ICaptureGameData
             SkillCasts = data.SkillCasts,        // frozen cast timeline (built pre-prune by the caller) for the 스킬 타임라인 탭
             DpsMetrics = data.DpsMetrics,        // frozen nDPS/rDPS — unrecomputable once the buff repo is pruned below
             SelfJudgment = data.SelfJudgment,    // frozen 판정 교차표 — 누적기는 다음 전투 시작 때 비워진다
+            // frozen 시련 난이도. ⚠️ data 가 아니라 추적기에서 직접 읽는다 — 이 목록은 손으로 나열돼 있어
+            // 상류 어딘가가 스탬프를 빠뜨리면 기록만 조용히 비고, 그건 화면을 봐도 안 보인다.
+            // 추적기는 던전을 나갈 때 비워지므로 저장 시점 값이 곧 이 전투의 난이도다.
+            TrialDifficulty = TrialDifficulty.Current,
         };
 
         var log = new DpsLog

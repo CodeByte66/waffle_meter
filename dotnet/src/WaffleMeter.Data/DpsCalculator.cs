@@ -1,4 +1,4 @@
-using WaffleMeter.Capture;
+﻿using WaffleMeter.Capture;
 
 namespace WaffleMeter.Data;
 
@@ -434,6 +434,8 @@ public sealed class DpsCalculator
             BattleEnd = battleEnd,
             Packets = null,
             Target = targetInfo,
+            // 이 전투의 시련 난이도를 지금 박아 둔다 — 나중에 몹 코드로는 되짚을 수 없다(DpsReport 주석).
+            TrialDifficulty = _dm.TrialDifficulty.Current,
             ExecutorId = _dm.ExecutorId(), // freeze 본인 uid so the post-combat idle ("대기 중") view self-colors the
                                            // own row in 직업 강조 mode — this is the report returned in the idle state,
                                            // so without it self-id falls to the transient _selfId and reverts to job color
@@ -622,6 +624,8 @@ public sealed class DpsCalculator
             BattleStart = _cachedBattleStart != 0L ? StartAnchor() : dmStart,
             BattleEnd = Math.Max(dmEnd, _cachedBattleEnd),
             Packets = reportPackets,
+            // 이 전투의 시련 난이도를 지금 박아 둔다 — 나중에 몹 코드로는 되짚을 수 없다(DpsReport 주석).
+            TrialDifficulty = _dm.TrialDifficulty.Current,
             ExecutorId = _dm.ExecutorId(), // carry 본인 uid into the live report so self-coloring survives the
                                            // transition into the post-combat idle state (matches the saved snapshot)
         };

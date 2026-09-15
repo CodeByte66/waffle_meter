@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using WaffleMeter.Capture;
 using WaffleMeter.Data;
 
@@ -256,7 +256,7 @@ public sealed class StatsPayloadBuilder
                 resolvedOwn.Job?.ClassName(),
                 resolvedOwn.Power,
                 _publicCharacter()),
-            Encounter: BuildEncounterPayload(mob),
+            Encounter: BuildEncounterPayload(mob, report),
             Battle: new StatsBattlePayload(
                 report.BattleStart,
                 report.BattleEnd,
@@ -806,7 +806,7 @@ public sealed class StatsPayloadBuilder
     /// come from the meter's own copy of the same catalog: redundant while the two agree, and a record of what
     /// the client believed when they don't. <c>bossName</c> stays the RAW mob name (the server falls back to
     /// matching on it), never the difficulty-decorated one the UI shows.</summary>
-    private StatsEncounterPayload BuildEncounterPayload(Mob mob)
+    private StatsEncounterPayload BuildEncounterPayload(Mob mob, DpsReport report)
     {
         if (_data.Encounters.Lookup(mob.Code) is not EncounterInfo info)
         {
@@ -821,7 +821,7 @@ public sealed class StatsPayloadBuilder
             Difficulty: info.Difficulty,
             Stage: info.Stage,
             BossIndex: info.BossIndex,
-            Trial: BuildTrialPayload(info));
+            Trial: BuildTrialPayload(info, report));
     }
 
     /// <summary>The 시련 난이도 block, or null when this run carried no difficulty knobs — which is every
@@ -831,9 +831,11 @@ public sealed class StatsPayloadBuilder
     /// so a 초월 battle fought after a trial uploaded that trial's difficulty attached to it. The tracker now
     /// clears on leaving; this makes the payload right even if it ever leaks again, exactly as
     /// <see cref="EncounterCatalog.DisplayName"/> does for the label.</para></summary>
-    private StatsTrialDifficultyPayload? BuildTrialPayload(EncounterInfo info)
+    private static StatsTrialDifficultyPayload? BuildTrialPayload(EncounterInfo info, DpsReport report)
     {
-        Data.TrialDifficulty trial = _data.TrialDifficulty.Current;
+        // 리포트에 동결된 값을 쓴다. 추적기를 라이브로 읽으면 스풀에 며칠 묵었다 재시도되는 업로드가
+        // 그 시점의 난이도를 실어 보낸다 — 화면 라벨과 같은 구멍이고, 이쪽은 서버에 남아 되돌릴 수 없다.
+        Data.TrialDifficulty trial = report.TrialDifficulty;
         if (!info.IsTrial || !trial.IsTrial)
         {
             return null;

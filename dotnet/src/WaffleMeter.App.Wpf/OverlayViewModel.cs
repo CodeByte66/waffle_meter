@@ -29,7 +29,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
 
     // 시련 바크론's level, when the parser has pinned it. Every trial level shares the same boss codes, so
     // the catalogue alone can only ever say "시련" — this is what turns that into "시련 16단계".
-    private readonly Func<string?> _trialLabel;
+    /// <summary>이 리포트에 동결된 시련 라벨. 시련이 아니거나 아무것도 못 본 전투는 null 이다.</summary>
+    private static string? FrozenTrialLabel(DpsReport report) =>
+        report.TrialDifficulty.IsTrial ? report.TrialDifficulty.Label : null;
 
     // Rebuilt from the theme whenever a color changes (MeterColorTheme.Changed); rows are records that
     // bake in the brush references, so a theme change re-runs Update on the last report.
@@ -62,11 +64,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         MeterColorTheme theme,
         Func<bool>? isLight = null,
         EncounterCatalog? encounters = null,
-        Func<string?>? trialLabel = null,
         bool preview = false)
     {
         _preview = preview;
-        _trialLabel = trialLabel ?? (() => null);
         _settings = settings;
         Settings = settings;
         _theme = theme;
@@ -700,7 +700,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         if (hasTarget)
         {
             (string pName, string? pVariant, string? pDungeon) =
-                _encounters.DisplayParts(report.Target!.Mob.Code, mobName, _trialLabel());
+                // 🔑 리포트에 동결된 난이도를 쓴다. 예전엔 여기서 추적기를 **라이브로** 조회해서, 기록에서
+                // 지난 시련 전투를 열면 지금 들어가 있는 시련의 단계가 찍혔다(라이브만 보면 늘 맞아 보인다).
+                _encounters.DisplayParts(report.Target!.Mob.Code, mobName, FrozenTrialLabel(report));
             TargetName = pName;
             TargetVariantText = pVariant ?? string.Empty;
             TargetVariantVisibility = string.IsNullOrEmpty(pVariant) ? Visibility.Collapsed : Visibility.Visible;

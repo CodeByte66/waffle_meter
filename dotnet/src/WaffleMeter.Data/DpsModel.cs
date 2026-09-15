@@ -1,4 +1,4 @@
-using WaffleMeter.Capture;
+﻿using WaffleMeter.Capture;
 
 namespace WaffleMeter.Data;
 
@@ -316,6 +316,20 @@ public sealed class DpsReport
     public long BattleEnd { get; set; }
     public Dictionary<int, DpsInformation> Information { get; set; } = new();
     public MobInfo? Target { get; set; }
+
+    /// <summary>
+    /// 이 전투가 치러진 시련 난이도. 관측한 어픽스 4축을 <b>전투에 동결</b>한 값이다.
+    ///
+    /// <para>🔑 왜 리포트가 들고 있어야 하나: 난이도는 던전 입장 때 한 번 정해지고 <see cref="Target"/> 의
+    /// 몹 코드로는 되짚을 수 없다(시련은 모든 단계가 같은 맵·같은 보스 코드를 쓴다 — 그래서 애초에 와이어에서
+    /// 읽는다). 렌더 시점에 추적기를 조회하면 <b>지금</b> 들어가 있는 시련의 난이도를 어제 전투 위에 찍게 된다.
+    /// 라이브만 보면 늘 맞는 것처럼 보이고, 기록을 열어야 드러난다.</para>
+    ///
+    /// <para>기본값(전 축 null)은 "시련이 아니거나 아무것도 못 봤다"이고 <see cref="Data.TrialDifficulty.IsTrial"/>
+    /// 가 false 라, 라벨도 업로드 페이로드도 알아서 빈다.</para>
+    /// </summary>
+    public TrialDifficulty TrialDifficulty { get; set; }
+
     public bool FakeTimeFlag { get; set; }
     public List<ParsedDamagePacket>? Packets { get; set; }
 

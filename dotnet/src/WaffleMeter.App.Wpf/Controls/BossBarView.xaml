@@ -244,7 +244,10 @@
                                 <Border Grid.Column="0" Background="{Binding BossBarBrush}"/>
                             </Grid>
                         </Border>
-                        <TextBlock Grid.Column="2" Text="{Binding TargetHpText}" Foreground="{Binding CombatTimeBrush}" FontSize="10.5"
+                        <!-- ⚠️ TargetHpText 를 쓰지 마라 — 그건 '수치 + 퍼센트' 합본이라 바로 왼쪽의 26px
+                             퍼센트와 같은 값을 한 줄에 두 번 말하게 된다. TargetHpAmountText 는 퍼센트를 뺀
+                             수치만이고, '퍼센트만' 표시 형식에서는 빈 문자열이라 이 칸이 알아서 접힌다. -->
+                        <TextBlock Grid.Column="2" Text="{Binding TargetHpAmountText}" Foreground="{Binding CombatTimeBrush}" FontSize="10.5"
                                    VerticalAlignment="Center" Visibility="{Binding TargetHpVisibility}"/>
                     </Grid>
                 </Grid>
