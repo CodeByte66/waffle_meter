@@ -45,6 +45,7 @@ public sealed record MeterLayout(
     bool ShowPanelBackground,
     bool ScrimPanel,
     bool LargeRankNumeral,
+    bool ShowRankNumeral,
     bool EtchText,
     bool PercentUsesJobColor,
     bool ShowAccentRail,
@@ -69,15 +70,24 @@ public sealed record MeterLayout(
     private const double BareRankNarrowWidth = 13.0;
     private const double BareRankNarrowGap = 9.0;
 
-    /// <summary>맨 순위 숫자가 차지하는 총 폭(숫자 + 오른쪽 여백).</summary>
+    /// <summary>
+    /// 맨 순위 숫자가 차지하는 총 폭(숫자 + 오른쪽 여백). 숫자를 안 쓰는 레이아웃은 0 이다 —
+    /// 무대는 순서만으로 등수를 말하고 숫자를 그리지 않는다(참고 미터도 같은 선택을 한다).
+    /// </summary>
     public static double BareRankGutter(MeterLayout l) =>
-        l.ShowRankChip ? 0.0
+        !l.ShowRankNumeral ? 0.0
         : l.LargeRankNumeral ? BareRankWideWidth + BareRankWideGap
         : BareRankNarrowWidth + BareRankNarrowGap;
 
-    /// <summary>게이지 자체가 왼쪽으로 들어간 폭. 무대만 순위 거터만큼 들인다.</summary>
+    /// <summary>
+    /// 게이지 자체가 왼쪽으로 들어간 폭. 전폭 블리드 레이아웃은 왼쪽 묶음(순위 숫자 + 직업 점)만큼
+    /// 들여, 그 요소들이 채움 위에 절대 오지 않게 한다.
+    /// <para>🔑 직업 점은 채움과 <b>같은 색</b>이라 채움 위에 올라가면 사라진다 — 숫자를 빼도 점 몫은
+    /// 반드시 남겨야 한다.</para>
+    /// </summary>
     public static double GaugeInsetLeft(MeterLayout l) =>
-        l.GaugeFullBleedRight ? BareRankGutter(l) : 0.0;
+        !l.GaugeFullBleedRight ? 0.0
+        : BareRankGutter(l) + (l.ShowJobDot ? JobDotSize + JobDotGap : 0.0);
 
     /// <summary>
     /// 직업아이콘 한 변. XAML 이 <c>ConverterParameter='0.66:18'</c> 로 계산하는 값과 **같은 산술**이어야
@@ -108,6 +118,7 @@ public sealed record MeterLayout(
         ShowStatChrome: true,
         ScrimPanel: false,
         ShowPanelBackground: true,
+        ShowRankNumeral: false,
         LargeRankNumeral: false,
         EtchText: false,
         GaugeFillGradient: false,
@@ -143,6 +154,7 @@ public sealed record MeterLayout(
         ShowStatChrome: false,
         ScrimPanel: true,
         ShowPanelBackground: false,
+        ShowRankNumeral: true,
         LargeRankNumeral: false,
         EtchText: true,
         GaugeFillGradient: false,
@@ -173,6 +185,7 @@ public sealed record MeterLayout(
         ShowStatChrome: false,
         ScrimPanel: false,
         ShowPanelBackground: true,
+        ShowRankNumeral: false,
         LargeRankNumeral: true,
         EtchText: false,
         GaugeFillGradient: true,

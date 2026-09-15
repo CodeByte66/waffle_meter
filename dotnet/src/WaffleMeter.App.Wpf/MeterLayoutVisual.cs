@@ -57,7 +57,8 @@ public sealed class MeterLayoutVisual
         ServerTagVisibility = spec.ShowServerTag ? Visibility.Visible : Visibility.Collapsed;
         TierChipVisibility = spec.ShowTierChip ? Visibility.Visible : Visibility.Collapsed;
         // 순위칩이 없는 레이아웃은 맨 숫자로 순위를 보인다 — 아예 빼면 몇 등인지 알 수 없다.
-        BareRankVisibility = spec.ShowRankChip ? Visibility.Collapsed : Visibility.Visible;
+        // 무대는 순서만으로 등수를 말한다 — 34px 행에서 숫자는 어느 크기로도 어정쩡했다.
+        BareRankVisibility = spec.ShowRankNumeral ? Visibility.Visible : Visibility.Collapsed;
         // 무대는 카드 테두리가 없어 큰 흐린 숫자가 행의 시작점 노릇을 하고, 계기판은 작고 또렷하게.
         // 0.28 은 그 행에서 가장 흐린 서버 태그(MutedFg 68%)보다도 2.4배 흐렸다 — 배경치고 진하고
         // 읽을 글자치고 흐린, 어느 쪽도 아닌 값. 0.50 이면 위계는 지키면서 판독은 된다.
