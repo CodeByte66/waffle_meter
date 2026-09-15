@@ -899,6 +899,27 @@ internal static class Program
         vm.NameFxMode = "animated";
         vm.SelectedNav = "display";
         Check("leaving the tab stops the preview", !NameFxSheen.IsRunning);
+
+        // 창별 park 집계 — 분리모드에서 본체를 내려도 분리 창이 떠 있으면 연출은 계속돼야 한다.
+        // 🔑 '보이는 호스트 0개면 정지'가 아니라 '등록 호스트 ≥1 이고 전부 숨김일 때만 정지'다.
+        // 그래야 아무도 보고하지 않는 상태(이 하네스, 기동 후 첫 폴링 전)가 옛 동작과 같은 뜻이 된다.
+        vm.SelectedNav = "theme";
+        var splitWindow = new object();
+        // 본체를 트레이로 내린다(옛 SetParked(true) 와 같은 경로).
+        NameFxSheen.SetParked(true);
+        Check("hiding the only host parks the clock", !NameFxSheen.IsRunning);
+        // 🔑 분리모드의 핵심: 본체는 내려가 있어도 분리 창이 떠 있으면 연출은 계속돼야 한다.
+        NameFxSheen.SetHostVisible(splitWindow, true);
+        Check("a split window keeps the clock alive while the meter is hidden", NameFxSheen.IsRunning);
+        NameFxSheen.SetHostVisible(splitWindow, false);
+        Check("every host hidden parks the clock", !NameFxSheen.IsRunning);
+        // 닫힌 창을 빼지 않으면 정지가 영영 안 걸린다 — RemoveHost 가 그 계약이다.
+        NameFxSheen.SetHostVisible(splitWindow, true);
+        NameFxSheen.RemoveHost(splitWindow);
+        Check("removing the last visible host re-parks", !NameFxSheen.IsRunning);
+        NameFxSheen.SetParked(false);
+        Check("the meter coming back un-parks the clock", NameFxSheen.IsRunning);
+        vm.SelectedNav = "display";
         vm.SelectedNav = "theme";
         Check("returning to the tab restarts it", NameFxSheen.IsRunning);
         vm.StopNameFxPreview();

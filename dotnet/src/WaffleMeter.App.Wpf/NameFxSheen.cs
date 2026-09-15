@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 
@@ -54,7 +54,18 @@ public static class NameFxSheen
 
     private static int _rowDemand;
     private static bool _previewDemand;
-    private static bool _parked;
+    /// <summary>
+    /// 창별 표시 상태. 분리모드에서는 미터가 창 2~3개로 흩어지므로 "미터가 화면에 없다"를 전역
+    /// 불린 하나로 잡을 수 없다 — 본체를 트레이로 내려도 분리 창이 떠 있으면 연출은 계속돼야 한다.
+    /// <para>🔑 규칙은 '보이는 호스트가 0개면 정지'가 <b>아니라</b> '등록된 호스트가 1개 이상이고 그
+    /// 전부가 숨김일 때만 정지'다. 그래야 호스트를 아무도 보고하지 않는 상태(하네스, 그리고 기동 후
+    /// 첫 폴링 전)가 옛 <c>_parked == false</c> 와 같은 뜻이 된다.</para>
+    /// <para>⚠️ 창이 닫히면 반드시 <see cref="RemoveHost"/> 를 불러야 한다. 닫힌 창을 visible 로
+    /// 남겨두면 정지가 영영 안 걸려 유휴 CPU 회귀가 조용히 생긴다.</para>
+    /// </summary>
+    private static readonly Dictionary<object, bool> Hosts = new(ReferenceEqualityComparer.Instance);
+
+    private static bool _parked => Hosts.Count > 0 && !Hosts.ContainsValue(true);
     private static bool _lowSpec;
     private static int _speedPercent = 100;
     private static bool _running;
@@ -98,10 +109,25 @@ public static class NameFxSheen
     /// until the next report tick, because <c>OverlayViewModel.Update</c> keeps running while hidden and
     /// reports demand again ~500 ms later. The clock has to stay down until the window comes back.
     /// </summary>
-    public static void SetParked(bool parked)
+    public static void SetParked(bool parked) => SetHostVisible(MainMeterHost, !parked);
+
+    /// <summary>본체 미터를 가리키는 호스트 키. <see cref="SetParked"/> 하위호환용.</summary>
+    public static readonly object MainMeterHost = new();
+
+    /// <summary>이 창이 화면에 있는지 보고한다. 분리 창도 자기 몫을 각자 보고한다.</summary>
+    public static void SetHostVisible(object host, bool visible)
     {
-        _parked = parked;
+        Hosts[host] = visible;
         Sync(_speedPercent);
+    }
+
+    /// <summary>창이 닫혔다. 빼지 않으면 그 창이 영원히 '보이는 중'으로 남아 정지가 안 걸린다.</summary>
+    public static void RemoveHost(object host)
+    {
+        if (Hosts.Remove(host))
+        {
+            Sync(_speedPercent);
+        }
     }
 
     /// <summary>Low-spec mode refuses the animation outright, for every demand source at once.</summary>
