@@ -45,8 +45,12 @@
                         <Setter Property="Padding" Value="11,0"/>
                     </DataTrigger>
                     <!-- 대기 카드는 전투 구성보다 낮다. 전장의 84px 를 그대로 쓰면 카드가 허공에 뜬다. -->
+                    <!-- 대기 카드는 고정 높이를 풀고 남은 공간을 채운다(행 영역이 비어 있다).
+                         MinHeight 로 하한만 잡아 창을 아주 낮게 줄여도 카드가 뭉개지지 않게 한다. -->
                     <DataTrigger Binding="{Binding IdleCardVisibility}" Value="Visible">
-                        <Setter Property="Height" Value="42"/>
+                        <Setter Property="Height" Value="Auto"/>
+                        <Setter Property="MinHeight" Value="46"/>
+                        <Setter Property="VerticalAlignment" Value="Stretch"/>
                     </DataTrigger>
                 </Style.Triggers>
             </Style>

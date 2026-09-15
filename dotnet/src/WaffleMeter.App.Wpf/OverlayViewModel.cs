@@ -487,6 +487,14 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// </summary>
     public Visibility IdleCardVisibility { get => _idleCardVisibility; private set => Set(ref _idleCardVisibility, value); }
 
+    private GridLength _bossRowHeight = GridLength.Auto;
+
+    /// <summary>
+    /// 보스칸이 차지할 행 높이. 전투 중에는 Auto(내용만큼)이고, <b>대기 중에는 Star</b> 라서 헤더와
+    /// 푸터를 뺀 남은 공간을 대기 카드가 전부 쓴다 — 전투가 없으면 행 목록이 비어 그 공간이 놀기 때문이다.
+    /// </summary>
+    public GridLength BossRowHeight { get => _bossRowHeight; private set => Set(ref _bossRowHeight, value); }
+
     private Visibility _bossSlotVisibility = Visibility.Collapsed;
 
     /// <summary>보스칸 자리가 무엇이든(타겟 정보 또는 대기 카드) 보여야 하는가.</summary>
@@ -500,6 +508,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         BossSlotVisibility = TargetInfoVisibility == Visibility.Visible || IdleCardVisibility == Visibility.Visible
             ? Visibility.Visible
             : Visibility.Collapsed;
+        BossRowHeight = IdleCardVisibility == Visibility.Visible ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
 
         if (!known)
         {

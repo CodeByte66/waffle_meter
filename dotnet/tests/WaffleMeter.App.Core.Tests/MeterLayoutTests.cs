@@ -44,8 +44,8 @@ public class MeterLayoutTests
     [Theory]
     // 🔑 전장 70 은 회귀 앵커다 — 이 값이 변하면 계산식이 틀린 것이다(기존 사용자 화면이 안 바뀌어야 한다).
     [InlineData("battlefield", 36, 70.0)] // rail 11 + 순위칩 28 + 아이콘(23+8)
-    [InlineData("dashboard", 28, 0.0)]    // 거터(13+4) − 인셋(거터) = 0   // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
-    [InlineData("stage", 34, 16.0)]       // 점(7+9). 채움은 행 끝에 붙으므로 인셋 0 — 점 뒤만 비운다
+    [InlineData("dashboard", 28, 25.0)]   // 카드패딩 8 + 맨 숫자 거터(13+4) — 시안 --excl:25 와 같다   // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
+    [InlineData("stage", 34, 27.0)]       // 카드패딩 11 + 직업 점(7+9)
     public void GaugeExclusionLeft_matches_the_real_left_cluster(string id, int rowHeight, double expected)
     {
         Assert.Equal(expected, MeterLayout.GaugeExclusionLeft(id, rowHeight), 3);
@@ -132,21 +132,24 @@ public class MeterLayoutTests
 
     /// <summary>행 간격은 어느 레이아웃에서도 음수가 아니어야 한다.</summary>
     /// <summary>
-    /// 순위 숫자를 쓰는 레이아웃은 그 숫자가 채움 경계에 걸리지 않도록 채움을 들여야 한다 —
-    /// 작은 고정 글리프는 기여도에 따라 배경이 갈리면 행마다 다르게 읽힌다.
-    /// (직업 점은 100% 불투명이라 26% 워시 위에서도 보이므로 들일 필요가 없다.)
+    /// 전폭 블리드 레이아웃은 채움이 **카드 가장자리까지** 깔린다 — 순위·이름은 그 위에 얹힌다.
+    /// <para>한때 순위를 채움 밖으로 빼려고 채움을 오른쪽으로 밀었는데, 그게 "순위가 바깥에 있어
+    /// 어색하다"의 원인이었다. 여백은 채움을 미는 게 아니라 글자를 들이는 것으로 만든다.</para>
     /// </summary>
     [Fact]
-    public void Layouts_with_a_rank_numeral_inset_the_fill_past_it()
+    public void Full_bleed_layouts_reach_the_card_edge()
     {
-        foreach (MeterLayout l in MeterLayout.All.Where(x => x.ShowRankNumeral))
+        foreach (MeterLayout l in MeterLayout.All)
         {
-            // 불변식은 "숫자가 차지하는 폭만큼은 비워져 있다"이지 특정 픽셀 수가 아니다 —
-            // 임의의 하한(20)을 박아 뒀더니 간격을 9 → 4 로 줄이자마자 설계가 멀쩡한데 테스트만 깨졌다.
-            Assert.True(
-                MeterLayout.GaugeInsetLeft(l) >= MeterLayout.BareRankGutter(l),
-                $"{l.Id}: inset {MeterLayout.GaugeInsetLeft(l)} < gutter {MeterLayout.BareRankGutter(l)}");
-            Assert.True(MeterLayout.BareRankGutter(l) > 0.0, l.Id);
+            double bleed = MeterLayout.GaugeBleedLeft(l);
+            if (l.GaugeFullBleedRight)
+            {
+                Assert.Equal(-l.CardPaddingH, bleed, 3);
+            }
+            else
+            {
+                Assert.Equal(0.0, bleed, 3);
+            }
         }
     }
 

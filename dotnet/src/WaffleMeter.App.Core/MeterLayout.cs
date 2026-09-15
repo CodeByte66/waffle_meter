@@ -86,15 +86,13 @@ public sealed record MeterLayout(
         : BareRankNarrowWidth + BareRankNarrowGap;
 
     /// <summary>
-    /// 게이지 채움이 왼쪽으로 들어간 폭. <b>순위 숫자 몫만</b> 들인다.
-    /// <para>🔑 직업 점 몫까지 들였더니 채움이 행 중간에서 시작해 세로로 칼로 자른 단면이 그대로
-    /// 보였다("게이지 앞부분이 툭 잘린 느낌"). 시안은 채움이 행 왼쪽 끝에서 시작하고 점·이름이 그
-    /// 위에 얹힌다 — 단면이 없으니 잘릴 것도 없다.</para>
-    /// <para>점이 사라질 걱정은 과했다: 채움은 26% 워시이고 점은 100% 라, 같은 색이어도 대비가
-    /// 충분하다. 반면 순위 <b>숫자</b>는 작은 고정 글리프라 채움 경계가 그 위를 지나면 행마다 배경이
-    /// 갈린다 — 그건 여전히 들여야 한다.</para>
+    /// 게이지 채움이 좌우로 얼마나 넘치는가. 전폭 블리드 레이아웃은 **카드 가장자리까지** 깔린다.
+    /// <para>🔑 순위 숫자를 채움 밖으로 빼려고 채움을 오른쪽으로 밀었던 적이 있는데, 그게 "순위가
+    /// 바깥에 있어서 어색하다"의 원인이었다. 시안은 채움이 카드 끝에서 시작하고 순위·이름이 그 **위에**
+    /// 카드 패딩만큼 들어와 앉는다 — 여백은 채움을 미는 게 아니라 글자를 들이는 것으로 만든다.</para>
     /// </summary>
-    public static double GaugeInsetLeft(MeterLayout l) => BareRankGutter(l);
+    public static double GaugeBleedLeft(MeterLayout l) => l.GaugeFullBleedRight ? -l.CardPaddingH : 0.0;
+
 
     /// <summary>
     /// 직업아이콘 한 변. XAML 이 <c>ConverterParameter='0.66:18'</c> 로 계산하는 값과 **같은 산술**이어야
@@ -187,7 +185,7 @@ public sealed record MeterLayout(
         SectionGap: 6.0,
         PanelPadH: 10.0,
         PanelPadV: 8.0,
-        GaugeFullBleedRight: false,
+        GaugeFullBleedRight: true,
         ShowAccentRail: false,
         PercentUsesJobColor: false,
         PlainFillOpacity: 0.42);
@@ -274,14 +272,15 @@ public sealed record MeterLayout(
         MeterLayout l = For(id);
 
         // ⚠️ 레일은 **있을 때만** 센다. 무조건 더하면 레일이 Collapsed 인 레이아웃에서 유령 11px 을
-        // 제외하게 되고, 그만큼 장식이 실제 좌측 묶음 뒤로 번진다(무대에서 16px 실측).
-        double left = l.ShowAccentRail ? RailWidth + RailGap : 0.0;
+        // 제외하게 되고, 그만큼 장식이 실제 좌측 묶음 뒤로 번진다.
+        // 채움이 카드 가장자리부터 깔리는 레이아웃은 기준점이 그만큼 왼쪽이므로 카드 패딩을 더한다.
+        double left = l.GaugeFullBleedRight ? l.CardPaddingH : 0.0;
+        left += l.ShowAccentRail ? RailWidth + RailGap : 0.0;
         left += l.ShowRankChip ? RankChipWidth + RankChipGap : BareRankGutter(l);
         left += l.ShowJobIcon ? JobIconSize(rowHeight) + JobIconGap
               : l.ShowJobDot ? JobDotSize + JobDotGap
               : 0.0;
 
-        // 게이지가 이미 왼쪽으로 들어가 있으면 제외 기준점이 게이지 자신의 좌측 가장자리로 옮겨간다.
-        return Math.Max(0.0, left - GaugeInsetLeft(l));
+        return Math.Max(0.0, left);
     }
 }
