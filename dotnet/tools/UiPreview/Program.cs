@@ -758,6 +758,17 @@ internal static class Program
         vm.PendingReset = null; vm.Commit(); // 미지정 round-trip
         Check("Hotkey unassign", hotkeys.Reset is null);
 
+        // UI 분리모드 단축키. 기본은 **비어 있어야** 한다 — 우리가 고른 조합이 인게임 키와 겹치면
+        // RegisterHotKey 가 조용히 실패해 "눌러도 아무 일이 없다"만 남고 원인을 짚을 방법이 없다.
+        Check("UI 분리모드 단축키는 기본 미지정", hotkeys.SplitUi is null && vm.PendingSplitUi is null);
+        vm.PendingSplitUi = new HotkeyCombo(HotkeyHandler.ModControl | HotkeyHandler.ModShift, 0x55); // Ctrl+Shift+U
+        vm.Commit();
+        Check("UI 분리모드 단축키 저장", hotkeys.SplitUi is { VkCode: 0x55 });
+        hotkeys.Reload(); // 설정 가져오기가 타는 경로 — 파일에서 다시 읽어도 살아 있어야 한다
+        Check("UI 분리모드 단축키가 Reload 를 넘어 살아남는다", hotkeys.SplitUi is { VkCode: 0x55 });
+        vm.PendingSplitUi = null; vm.Commit();
+        Check("UI 분리모드 단축키 해제", hotkeys.SplitUi is null);
+
         // 닉네임 효과. The property that must never regress: with the feature off the row is painted with the
         // SAME brush instance as before the feature existed, so "off" is pixel-identical rather than merely similar.
         var offVm = new OverlayViewModel("test", settings, theme, () => false);

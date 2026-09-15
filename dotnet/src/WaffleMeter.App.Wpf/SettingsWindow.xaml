@@ -1830,6 +1830,18 @@
                                         Click="OnClearHotkey" Tag="{Binding ElementName=ClickThroughHotkeyBox}"/>
                             </Grid>
                         </Grid>
+                        <!-- UI 분리모드. 기본 미지정 — 인게임 키와 겹칠 조합을 우리가 고르지 않는다
+                             (RegisterHotKey 실패는 조용해서, 충돌하면 "눌러도 아무 일이 없다"만 남는다). -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="UI 분리모드 켜기/끄기" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <Grid Grid.Column="1">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <local:HotkeyCaptureBox x:Name="SplitUiHotkeyBox" Grid.Column="0" Combo="{Binding PendingSplitUi, Mode=TwoWay}"/>
+                                <Button Grid.Column="1" Style="{StaticResource HotkeyClearButton}"
+                                        Click="OnClearHotkey" Tag="{Binding ElementName=SplitUiHotkeyBox}"/>
+                            </Grid>
+                        </Grid>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="허수아비 모드 켜기/끄기" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>

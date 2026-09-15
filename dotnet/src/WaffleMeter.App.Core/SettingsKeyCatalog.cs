@@ -181,6 +181,7 @@ public static class SettingsKeyCatalog
         new("clickThroughHotkey", F, "단축키", "클릭 통과 / 잠금", External: true),
         new("dummyToggleHotkey", F, "단축키", "허수아비 켜기/끄기", External: true),
         new("dummyResetHotkey", F, "단축키", "허수아비 DPS 초기화", External: true),
+        new("splitUiHotkey", F, "단축키", "UI 분리모드 켜기/끄기", External: true),
     };
 
     /// <summary>

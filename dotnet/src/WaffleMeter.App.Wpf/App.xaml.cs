@@ -371,6 +371,9 @@ public partial class App : Application
             // the reset only flips a volatile flag on the engine, so it's fine straight off the listener thread.
             OnDummyToggle = () => Dispatcher.Invoke(() => _settings.DummyTestMode = !_settings.DummyTestMode),
             OnDummyReset = () => _engine?.RequestDummyReset(),
+            // UI 분리모드 토글. 설정값만 뒤집으면 나머지는 PropertyChanged → ApplySplitUiMode 가 처리한다.
+            // ⚠️ 여기서 창을 직접 만지지 마라 — 표시 여부의 주인은 OverlayController 의 폴이다.
+            OnSplitUi = () => Dispatcher.Invoke(() => _settings.SplitUiMode = !_settings.SplitUiMode),
         };
         _hotkeys.Start();
 

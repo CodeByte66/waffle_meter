@@ -212,6 +212,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _pendingClickThrough = hotkeys.ClickThrough;
         _pendingDummyToggle = hotkeys.DummyToggle;
         _pendingDummyReset = hotkeys.DummyReset;
+        _pendingSplitUi = hotkeys.SplitUi;
 
         IReadOnlyList<string> presetNames = _presets.Names;
         for (int i = 0; i < BuffPresetManager.SlotCount; i++)
@@ -1667,6 +1668,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     public HotkeyCombo? PendingDummyToggle { get => _pendingDummyToggle; set => Set(ref _pendingDummyToggle, value); }
     private HotkeyCombo? _pendingDummyReset;
     public HotkeyCombo? PendingDummyReset { get => _pendingDummyReset; set => Set(ref _pendingDummyReset, value); }
+    private HotkeyCombo? _pendingSplitUi;
+    public HotkeyCombo? PendingSplitUi { get => _pendingSplitUi; set => Set(ref _pendingSplitUi, value); }
 
     // ---- stats consent ----
     private bool _consentAccepted;
@@ -2535,6 +2538,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _hotkeys.SetClickThrough(PendingClickThrough);
         _hotkeys.SetDummyToggle(PendingDummyToggle);
         _hotkeys.SetDummyReset(PendingDummyReset);
+        _hotkeys.SetSplitUi(PendingSplitUi);
     }
 
     /// <summary>Revert live-applied settings + pending hotkeys (Cancel).</summary>
