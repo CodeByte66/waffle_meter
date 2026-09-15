@@ -129,7 +129,7 @@
                 <RowDefinition Height="Auto"/>
                 <!-- 대기 중에는 Star — 행 목록이 비어 노는 공간을 대기 카드가 전부 쓴다. -->
                 <RowDefinition Height="{Binding BossRowHeight}"/>
-                <RowDefinition Height="*"/>
+                <RowDefinition Height="{Binding RowsRowHeight}"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>

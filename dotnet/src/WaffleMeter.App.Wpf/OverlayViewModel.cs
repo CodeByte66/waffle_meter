@@ -495,6 +495,14 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// </summary>
     public GridLength BossRowHeight { get => _bossRowHeight; private set => Set(ref _bossRowHeight, value); }
 
+    private GridLength _rowsRowHeight = new(1, GridUnitType.Star);
+
+    /// <summary>
+    /// 행 목록이 차지할 높이. 대기 중에는 Auto 다 — 행이 비어 있는데 Star 로 두면 보스 행(대기 카드)과
+    /// 남은 공간을 **반씩 나눠 가져** 카드 아래에 빈 칸이 생긴다(실제로 그렇게 보였다).
+    /// </summary>
+    public GridLength RowsRowHeight { get => _rowsRowHeight; private set => Set(ref _rowsRowHeight, value); }
+
     private Visibility _bossSlotVisibility = Visibility.Collapsed;
 
     /// <summary>보스칸 자리가 무엇이든(타겟 정보 또는 대기 카드) 보여야 하는가.</summary>
@@ -508,7 +516,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         BossSlotVisibility = TargetInfoVisibility == Visibility.Visible || IdleCardVisibility == Visibility.Visible
             ? Visibility.Visible
             : Visibility.Collapsed;
-        BossRowHeight = IdleCardVisibility == Visibility.Visible ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        bool idleCard = IdleCardVisibility == Visibility.Visible;
+        BossRowHeight = idleCard ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        RowsRowHeight = idleCard ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
 
         if (!known)
         {

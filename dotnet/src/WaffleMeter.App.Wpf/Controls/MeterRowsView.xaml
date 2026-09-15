@@ -58,6 +58,12 @@
                                     <Setter Property="Background" Value="{DynamicResource Skin.RowBg}"/>
                                     <Setter Property="BorderBrush" Value="{Binding Tier.RowBorder}"/>
                                     <Style.Triggers>
+                                        <!-- 티어 색을 행 테두리에 입히지 않는 레이아웃. 카드가 없거나
+                                             헤어라인뿐인 곳에서는 색 테두리가 행 사이를 벌려 보이게 하고
+                                             의미 없는 선을 남긴다 — 티어는 칩으로만 말한다. -->
+                                        <DataTrigger Binding="{Binding DataContext.Layout.TierRowOutline, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="False">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
+                                        </DataTrigger>
                                         <!-- 계기판: 판때기를 지운다. Transparent 여야 클릭·hover 가 산다. -->
                                         <DataTrigger Binding="{Binding DataContext.Layout.HasCardChrome, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="False">
                                             <Setter Property="Background" Value="Transparent"/>

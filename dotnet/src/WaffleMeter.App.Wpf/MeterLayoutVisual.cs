@@ -40,7 +40,10 @@ public sealed class MeterLayoutVisual
         // 둥글리면 카드 모서리와 어긋난 반달이 생긴다. 반대로 들여놓은 채움은 사방을 둥글린다.
         // 채움이 카드 왼쪽 끝에 닿으면 좌측은 직각으로 둔다 — 가장자리에 붙어 있어 둥글리면
         // 카드 모서리와 어긋난 반달이 생긴다.
-        GaugeCorner = spec.GaugeFullBleedRight
+        // 좌측을 각지게 하는 건 채움이 **카드 가장자리에 맞닿을 때**만이다. 카드 크롬이 없는
+        // 레이아웃(계기판)은 맞닿을 가장자리가 없어서 네 모서리를 다 둥글리는 게 맞다 —
+        // 각지게 두면 왼쪽 꼭지점만 칼로 자른 듯 남는다.
+        GaugeCorner = spec.GaugeFullBleedRight && spec.HasCardChrome
             ? new CornerRadius(0, spec.GaugeRadius, spec.GaugeRadius, 0)
             : new CornerRadius(spec.GaugeRadius);
         // 왼쪽은 순위 거터만큼 들여 숫자가 채움 위에 절대 오지 않게 하고(기여도와 무관하게 배경 고정),
@@ -61,6 +64,9 @@ public sealed class MeterLayoutVisual
         JobDotVisibility = spec.ShowJobDot ? Visibility.Visible : Visibility.Collapsed;
         ServerTagVisibility = spec.ShowServerTag ? Visibility.Visible : Visibility.Collapsed;
         TierChipVisibility = spec.ShowTierChip ? Visibility.Visible : Visibility.Collapsed;
+        // 티어 색을 행 **테두리**에 입히는 건 카드형 레이아웃에서만 뜻이 있다. 카드가 없는(또는
+        // 헤어라인뿐인) 레이아웃에서는 행 사이가 넓어 보이고 의미 없는 선이 생긴다.
+        TierRowOutline = spec.ShowTierRowOutline;
         // 순위칩이 없는 레이아웃은 맨 숫자로 순위를 보인다 — 아예 빼면 몇 등인지 알 수 없다.
         // 무대는 순서만으로 등수를 말한다 — 34px 행에서 숫자는 어느 크기로도 어정쩡했다.
         BareRankVisibility = spec.ShowRankNumeral ? Visibility.Visible : Visibility.Collapsed;
@@ -149,6 +155,9 @@ public sealed class MeterLayoutVisual
     public Visibility ServerTagVisibility { get; }
 
     public Visibility TierChipVisibility { get; }
+
+    /// <summary>티어 색을 행 테두리에도 입힐지. 카드형(전장)만 참.</summary>
+    public bool TierRowOutline { get; }
 
     /// <summary>순위칩을 안 쓰는 레이아웃의 맨 순위 숫자.</summary>
     public Visibility BareRankVisibility { get; }
