@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 
 namespace WaffleMeter.App.Wpf.Controls;
@@ -30,6 +30,31 @@ public partial class RowGaugeCell : UserControl
     {
         get => (double)GetValue(GaugeRadiusProperty);
         set => SetValue(GaugeRadiusProperty, value);
+    }
+
+    /// <summary>
+    /// 채움 Border 의 모서리. 좌우 비대칭을 쓰는 레이아웃(무대: 좌측 직각·우측 둥근)이 있어
+    /// <see cref="GaugeRadius"/>(장식 클립용 단일 double)와 따로 둔다.
+    /// </summary>
+    public static readonly DependencyProperty GaugeCornerProperty = DependencyProperty.Register(
+        nameof(GaugeCorner), typeof(CornerRadius), typeof(RowGaugeCell),
+        new FrameworkPropertyMetadata(new CornerRadius(4.0)));
+
+    public CornerRadius GaugeCorner
+    {
+        get => (CornerRadius)GetValue(GaugeCornerProperty);
+        set => SetValue(GaugeCornerProperty, value);
+    }
+
+    /// <summary>값의 종단선 표시 여부. 게이지 스킨이 붙은 행에서는 호출부가 숨긴다.</summary>
+    public static readonly DependencyProperty EdgeHighlightVisibilityProperty = DependencyProperty.Register(
+        nameof(EdgeHighlightVisibility), typeof(Visibility), typeof(RowGaugeCell),
+        new FrameworkPropertyMetadata(Visibility.Collapsed));
+
+    public Visibility EdgeHighlightVisibility
+    {
+        get => (Visibility)GetValue(EdgeHighlightVisibilityProperty);
+        set => SetValue(EdgeHighlightVisibilityProperty, value);
     }
 
     /// <summary>

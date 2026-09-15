@@ -398,3 +398,13 @@ public sealed class ColorAlphaConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>double 간격 → 오른쪽 여백만 있는 <see cref="Thickness"/>. 맨 순위 숫자의 거터에 쓴다.</summary>
+public sealed class RightGapConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
+        => new Thickness(0, 0, value switch { double d => d, int i => i, _ => 0.0 }, 0);
+
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

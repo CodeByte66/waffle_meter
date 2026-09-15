@@ -13,6 +13,7 @@
     <UserControl.Resources>
         <local:RatioToStarConverter x:Key="RatioToStar"/>
         <local:RowHeightToFontSizeConverter x:Key="FontSize"/>
+        <local:RightGapConverter x:Key="RightGap"/>
     </UserControl.Resources>
             <!-- 행 목록. 이 ScrollViewer는 v2.8.0 마크업을 그대로 되돌린 것이고, 실측상 관측 가능한 역할이 없다:
                  자동 맞춤(SizeToContent="Height")에서는 VerticalScrollBarVisibility="Disabled"가 세로 제약을
@@ -95,9 +96,24 @@
                                          내부 구조는 controls:RowGaugeCell 이 소유한다 — 설정창 미리보기와
                                          **같은 컨트롤**이라 시안과 실물이 다시 어긋날 수 없다. -->
                                     <controls:RowGaugeCell Visibility="{Binding BarFillVisibility}"
+                                                           Margin="{Binding DataContext.Layout.GaugeBleed, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                                           GaugeCorner="{Binding DataContext.Layout.GaugeCorner, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                                            GaugeRadius="{Binding DataContext.Layout.GaugeRadius, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                                            ContentExclusionLeft="{Binding DataContext.Layout.GaugeExclusionLeft, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                                                           MinBandHeight="{Binding DataContext.Layout.FxBandHeight, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
+                                                           MinBandHeight="{Binding DataContext.Layout.FxBandHeight, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}">
+                                        <controls:RowGaugeCell.Style>
+                                            <Style TargetType="controls:RowGaugeCell">
+                                                <Setter Property="EdgeHighlightVisibility"
+                                                        Value="{Binding DataContext.Layout.EdgeHighlightVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
+                                                <Style.Triggers>
+                                                    <!-- 스킨 행은 팔레트가 자기 하이라이트를 갖고 있어 종단선이 이중으로 겹친다. -->
+                                                    <DataTrigger Binding="{Binding GaugeFxEnabled}" Value="True">
+                                                        <Setter Property="EdgeHighlightVisibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </controls:RowGaugeCell.Style>
+                                    </controls:RowGaugeCell>
                                   <Grid>
                                     <!-- 판때기가 없는 레이아웃(계기판)은 글자가 게임 화면 위에 바로 얹히므로
                                          그림자가 가독성의 전부다. ⚠️효과는 **행당 하나**만 건다 — 글자마다
@@ -137,10 +153,13 @@
                                          Tier.IsNone restores the skin's own brushes so an untiered row (or the
                                          feature switched off) is pixel-identical to before across all 4 skins. -->
                                     <!-- 무대: 카드 테두리가 없는 대신 큰 흐린 숫자가 행의 시작점을 만든다. -->
-                                    <TextBlock Grid.Column="1" Text="{Binding Rank}" VerticalAlignment="Center" Margin="0,0,9,0"
-                                               FontWeight="Bold" Foreground="{DynamicResource Skin.Fg}" TextAlignment="Left"
+                                    <TextBlock Grid.Column="1" Text="{Binding Rank}" VerticalAlignment="Center"
+                                               Margin="{Binding DataContext.Layout.BareRankGap, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}, Converter={StaticResource RightGap}}"
+                                               Foreground="{DynamicResource Skin.Fg}"
+                                               FontWeight="{Binding DataContext.Layout.BareRankWeight, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                               TextAlignment="{Binding DataContext.Layout.BareRankAlignment, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                                Opacity="{Binding DataContext.Layout.BareRankOpacity, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                                               MinWidth="{Binding DataContext.Layout.BareRankWidth, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                               Width="{Binding DataContext.Layout.BareRankWidth, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                                FontSize="{Binding DataContext.Layout.BareRankFontSize, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
                                                Visibility="{Binding DataContext.Layout.BareRankVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
                                     <Border Grid.Column="1" BorderThickness="1" SnapsToDevicePixels="True"

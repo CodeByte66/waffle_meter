@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Windows;
+using System.Windows.Media;
 using WaffleMeter.App.Core;
 
 namespace WaffleMeter.App.Wpf;
@@ -33,6 +34,20 @@ public sealed class MeterLayoutVisual
 
         CardRadius = new CornerRadius(spec.CardRadius);
         GaugeRadius = spec.GaugeRadius;
+        // 좌측은 모든 행이 같은 x 에서 출발하는 **축**이라 둥글리면 연속된 세로선에 노치가 줄줄이
+        // 생긴다. 우측은 값의 **종단**이라 둥글려야 "여기서 끝난다"가 생긴다.
+        GaugeCorner = spec.GaugeFullBleedRight
+            ? new CornerRadius(0, spec.GaugeRadius, spec.GaugeRadius, 0)
+            : new CornerRadius(spec.GaugeRadius);
+        // 왼쪽은 순위 거터만큼 들여 숫자가 채움 위에 절대 오지 않게 하고(기여도와 무관하게 배경 고정),
+        // 오른쪽은 카드 Padding 만큼 되밀어 카드 가장자리까지 채운다. Border 가 ClipToBounds 라 그 밖으로는 못 나간다.
+        GaugeBleed = spec.GaugeFullBleedRight
+            ? new Thickness(MeterLayout.GaugeInsetLeft(spec), 0, -spec.CardPaddingH, 0)
+            : default;
+        // 채움 전체가 26% 알파면 바가 어디서 끝나는지가 흐린 색 경계 하나에만 실린다.
+        // 같은 색 72% 2px 세로선이 그 경계를 판독점으로 만든다. 스킨 행은 팔레트가 이미 자기
+        // 하이라이트를 갖고 있어 제외한다(RowGaugeCell 쪽에서 GaugeSkinId 로 가른다).
+        EdgeHighlightVisibility = spec.GaugeFullBleedRight ? Visibility.Visible : Visibility.Collapsed;
         GaugeExclusionLeft = MeterLayout.GaugeExclusionLeft(spec.Id, rowHeight);
         FxBandHeight = MeterLayout.FxBandHeight(spec.Id, rowHeight);
         RowMinHeight = rowHeight;
@@ -44,11 +59,20 @@ public sealed class MeterLayoutVisual
         // 순위칩이 없는 레이아웃은 맨 숫자로 순위를 보인다 — 아예 빼면 몇 등인지 알 수 없다.
         BareRankVisibility = spec.ShowRankChip ? Visibility.Collapsed : Visibility.Visible;
         // 무대는 카드 테두리가 없어 큰 흐린 숫자가 행의 시작점 노릇을 하고, 계기판은 작고 또렷하게.
-        BareRankOpacity = spec.LargeRankNumeral ? 0.28 : 0.75;
+        // 0.28 은 그 행에서 가장 흐린 서버 태그(MutedFg 68%)보다도 2.4배 흐렸다 — 배경치고 진하고
+        // 읽을 글자치고 흐린, 어느 쪽도 아닌 값. 0.50 이면 위계는 지키면서 판독은 된다.
+        BareRankOpacity = spec.LargeRankNumeral ? 0.50 : 0.75;
+        // 34px 행에서 성립하는 역할은 '큰 장식'이 아니라 '작고 또렷한 색인'이다. 0.44 배(=14px)는
+        // 본문 13px 과 1px 차이라 크기 대비를 못 만들었다.
         BareRankFontSize = spec.LargeRankNumeral
-            ? Math.Max(13.0, Math.Floor(rowHeight * 0.44))
+            ? Math.Max(11.0, Math.Floor(rowHeight * 0.38))
             : Math.Max(9.0, Math.Floor(rowHeight * 0.36));
-        BareRankWidth = spec.LargeRankNumeral ? 18.0 : 13.0;
+        // MinWidth 가 아니라 고정폭이어야 세 자리에서도 이름 좌표가 흔들리지 않는다. 무대는 카드
+        // 테두리도 아이콘도 없어 이름의 좌측 정렬선이 행을 정렬하는 유일한 수직선이다.
+        BareRankWidth = spec.LargeRankNumeral ? MeterLayout.BareRankWideWidth : 13.0;
+        BareRankGap = spec.LargeRankNumeral ? MeterLayout.BareRankWideGap : 9.0;
+        BareRankAlignment = spec.LargeRankNumeral ? TextAlignment.Right : TextAlignment.Left;
+        BareRankWeight = spec.LargeRankNumeral ? FontWeights.SemiBold : FontWeights.Bold;
         // 무대는 직업 점이, 계기판은 게이지 채움 자체가 직업색을 이미 말한다 — 레일은 중복이다.
         AccentRailVisibility = spec.ShowAccentRail ? Visibility.Visible : Visibility.Collapsed;
         // 배지 상자를 지우면 숫자만 남는다. 상자를 없애는 레이아웃은 투명 배경 + 테두리 0.
@@ -115,6 +139,20 @@ public sealed class MeterLayoutVisual
     public double BareRankFontSize { get; }
 
     public double BareRankWidth { get; }
+
+    public double BareRankGap { get; }
+
+    public TextAlignment BareRankAlignment { get; }
+
+    public FontWeight BareRankWeight { get; }
+
+    /// <summary>채움 모서리. 무대는 좌측 직각 / 우측 둥근 비대칭이다.</summary>
+    public CornerRadius GaugeCorner { get; }
+
+    /// <summary>게이지가 행 안에서 좌우로 얼마나 들어가거나 넘치는가.</summary>
+    public Thickness GaugeBleed { get; }
+
+    public Visibility EdgeHighlightVisibility { get; }
 
     public Visibility AccentRailVisibility { get; }
 

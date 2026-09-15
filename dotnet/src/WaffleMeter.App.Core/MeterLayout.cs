@@ -48,6 +48,8 @@ public sealed record MeterLayout(
     bool EtchText,
     bool PercentUsesJobColor,
     bool ShowAccentRail,
+    bool GaugeFillGradient,
+    bool GaugeFullBleedRight,
     double PlainFillOpacity)
 {
     // ── 행 왼쪽 클러스터의 실제 치수 (OverlayWindow.xaml 행 템플릿에서 그대로 옮긴 값) ──
@@ -57,6 +59,25 @@ public sealed record MeterLayout(
     private const double RankChipWidth = 22.0; // 순위칩 MinWidth="22"
     private const double RankChipGap = 6.0;    // 그 Margin="0,0,6,0"
     private const double JobIconGap = 8.0;     // 직업아이콘 Margin="0,0,8,0"
+    private const double JobDotSize = 7.0;     // 무대의 직업 점
+    private const double JobDotGap = 9.0;
+
+    // 순위칩을 안 쓰는 레이아웃의 맨 숫자 거터. 무대는 게이지를 이만큼 들여 숫자가 채움 위에
+    // 절대 오지 않게 한다 — 그래야 기여도와 무관하게 글리프 배경이 고정된다.
+    public const double BareRankWideWidth = 14.0;
+    public const double BareRankWideGap = 10.0;
+    private const double BareRankNarrowWidth = 13.0;
+    private const double BareRankNarrowGap = 9.0;
+
+    /// <summary>맨 순위 숫자가 차지하는 총 폭(숫자 + 오른쪽 여백).</summary>
+    public static double BareRankGutter(MeterLayout l) =>
+        l.ShowRankChip ? 0.0
+        : l.LargeRankNumeral ? BareRankWideWidth + BareRankWideGap
+        : BareRankNarrowWidth + BareRankNarrowGap;
+
+    /// <summary>게이지 자체가 왼쪽으로 들어간 폭. 무대만 순위 거터만큼 들인다.</summary>
+    public static double GaugeInsetLeft(MeterLayout l) =>
+        l.GaugeFullBleedRight ? BareRankGutter(l) : 0.0;
 
     /// <summary>
     /// 직업아이콘 한 변. XAML 이 <c>ConverterParameter='0.66:18'</c> 로 계산하는 값과 **같은 산술**이어야
@@ -89,6 +110,8 @@ public sealed record MeterLayout(
         ShowPanelBackground: true,
         LargeRankNumeral: false,
         EtchText: false,
+        GaugeFillGradient: false,
+        GaugeFullBleedRight: false,
         ShowAccentRail: true,
         PercentUsesJobColor: false,
         PlainFillOpacity: 0.3);
@@ -122,6 +145,8 @@ public sealed record MeterLayout(
         ShowPanelBackground: false,
         LargeRankNumeral: false,
         EtchText: true,
+        GaugeFillGradient: false,
+        GaugeFullBleedRight: false,
         ShowAccentRail: false,
         PercentUsesJobColor: false,
         PlainFillOpacity: 0.42);
@@ -138,7 +163,7 @@ public sealed record MeterLayout(
         CardMarginV: 0.0,
         HasCardChrome: true,
         ShowRankChip: false,  // 칩 대신 큰 흐린 숫자를 쓴다
-        GaugeRadius: 0.0,
+        GaugeRadius: 3.0,   // 값의 종단이 보이려면 2px 는 안티에일리어싱에 먹힌다
         BossStyle: BossStyle.Canvas,
         RequiresFillGauge: true,
         ShowJobIcon: false,
@@ -150,9 +175,11 @@ public sealed record MeterLayout(
         ShowPanelBackground: true,
         LargeRankNumeral: true,
         EtchText: false,
+        GaugeFillGradient: true,
+        GaugeFullBleedRight: true,
         ShowAccentRail: false,
         PercentUsesJobColor: true,
-        PlainFillOpacity: 0.22);
+        PlainFillOpacity: 0.26);
 
     public static readonly IReadOnlyList<MeterLayout> All = [Battlefield, Dashboard, Stage];
 
@@ -197,18 +224,16 @@ public sealed record MeterLayout(
     public static double GaugeExclusionLeft(string id, int rowHeight)
     {
         MeterLayout l = For(id);
-        double left = RailWidth + RailGap;
-        if (l.ShowRankChip)
-        {
-            left += RankChipWidth + RankChipGap;
-        }
 
-        if (l.ShowJobIcon)
-        {
-            return left + JobIconSize(rowHeight) + JobIconGap;
-        }
+        // ⚠️ 레일은 **있을 때만** 센다. 무조건 더하면 레일이 Collapsed 인 레이아웃에서 유령 11px 을
+        // 제외하게 되고, 그만큼 장식이 실제 좌측 묶음 뒤로 번진다(무대에서 16px 실측).
+        double left = l.ShowAccentRail ? RailWidth + RailGap : 0.0;
+        left += l.ShowRankChip ? RankChipWidth + RankChipGap : BareRankGutter(l);
+        left += l.ShowJobIcon ? JobIconSize(rowHeight) + JobIconGap
+              : l.ShowJobDot ? JobDotSize + JobDotGap
+              : 0.0;
 
-        // 직업 점(무대)은 7px + 간격 9. 아이콘도 점도 없으면(계기판) 왼쪽 묶음은 rail 뿐이다.
-        return l.ShowJobDot ? left + 7.0 + 9.0 : left;
+        // 게이지가 이미 왼쪽으로 들어가 있으면 제외 기준점이 게이지 자신의 좌측 가장자리로 옮겨간다.
+        return Math.Max(0.0, left - GaugeInsetLeft(l));
     }
 }

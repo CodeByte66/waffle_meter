@@ -42,9 +42,10 @@ public class MeterLayoutTests
     /// 번져 반투명 스킨에서 배지를 물들이고, 과하면 짧은 바에서 장식이 통째로 잘린다.
     /// </summary>
     [Theory]
-    [InlineData("battlefield", 36, 70.0)] // rail 11 + 순위칩 28 + 아이콘(23+8) — 기존 리터럴 72 는 어림값이었다
-    [InlineData("dashboard", 28, 11.0)]   // rail 11 만 — 순위칩·아이콘·점이 전부 없다
-    [InlineData("stage", 34, 27.0)]       // rail 11 + 직업 점(7+9) — 칩도 아이콘도 없다
+    // 🔑 전장 70 은 회귀 앵커다 — 이 값이 변하면 계산식이 틀린 것이다(기존 사용자 화면이 안 바뀌어야 한다).
+    [InlineData("battlefield", 36, 70.0)] // rail 11 + 순위칩 28 + 아이콘(23+8)
+    [InlineData("dashboard", 28, 22.0)]   // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
+    [InlineData("stage", 34, 16.0)]       // 거터 24 + 점(7+9) − 게이지 인셋 24
     public void GaugeExclusionLeft_matches_the_real_left_cluster(string id, int rowHeight, double expected)
     {
         Assert.Equal(expected, MeterLayout.GaugeExclusionLeft(id, rowHeight), 3);

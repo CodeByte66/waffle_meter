@@ -1,4 +1,5 @@
 ﻿using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -543,6 +544,44 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// 즉시 생김새가 바뀌는' 설정이라 그 상태로는 "안 먹는다"는 제보가 먼저 온다. 그래서 설정 변경
     /// 알림에서도 직접 부른다(<c>RefreshSkin</c> 이 스킨 교체에서 하는 것과 같은 패턴).</para>
     /// </summary>
+    private static readonly ConcurrentDictionary<Color, Brush> ShadedFills = new();
+
+    /// <summary>
+    /// 평면 단색 채움에 세로 음영을 입힌다. 무대처럼 카드 크롬이 없는 레이아웃에서는 27px 높이가
+    /// 통째로 한 톤이라 게이지가 "칠해진 영역"으로 읽히는데, 위를 밝히고 아래를 어둡게 하면 같은
+    /// 엘리먼트 수로 형태가 생긴다.
+    /// <para>⚠️ 방향은 반드시 <b>세로</b>다. 가로로 주면 브러시가 RelativeToBoundingBox 라 한 타일이
+    /// 곧 그 행의 기여도 폭이 되어, 짧은 바에는 그라디언트 머리만 남고 행마다 밝기가 달라진다.</para>
+    /// <para>⚠️ 게이지 스킨이 붙은 행은 호출부에서 이미 걸러진다 — 팔레트가 자기 음영을 갖고 있다.</para>
+    /// </summary>
+    private static Brush ShadeFill(MeterLayoutVisual layout, Brush flat)
+    {
+        if (!layout.Spec.GaugeFillGradient || flat is not SolidColorBrush solid)
+        {
+            return flat;
+        }
+
+        return ShadedFills.GetOrAdd(solid.Color, static c =>
+        {
+            var g = new LinearGradientBrush
+            {
+                StartPoint = new System.Windows.Point(0, 0),
+                EndPoint = new System.Windows.Point(0, 1),
+            };
+            g.GradientStops.Add(new GradientStop(Scale(c, 1.16), 0.0));
+            g.GradientStops.Add(new GradientStop(c, 0.52));
+            g.GradientStops.Add(new GradientStop(Scale(c, 0.86), 1.0));
+            g.Freeze();
+            return g;
+        });
+    }
+
+    private static Color Scale(Color c, double k) => Color.FromArgb(
+        c.A,
+        (byte)Math.Clamp(c.R * k, 0, 255),
+        (byte)Math.Clamp(c.G * k, 0, 255),
+        (byte)Math.Clamp(c.B * k, 0, 255));
+
     public MeterLayoutVisual RefreshLayout()
     {
         MeterLayoutVisual visual = MeterLayoutVisual.For(_settings.MeterLayoutId, _settings.RowHeight);
@@ -809,7 +848,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
                 // 스킨 없는 행만 레이아웃이 정한 불투명도를 쓴다. 스킨이 붙은 행은 0.58 고정 —
                 // 레이아웃이 이걸 덮으면 돈 내고 산 게이지 스킨이 희미해지고 입자만 둥둥 뜬다.
                 GaugeOpacity: gaugeSkin is null ? layoutVisual.PlainFillOpacity : 0.58,
-                GaugeBrush: gaugeSkin ?? (_theme.BarColorMode == "job"
+                GaugeBrush: gaugeSkin ?? ShadeFill(layoutVisual, _theme.BarColorMode == "job"
                     ? (isUser ? _userBar : jobBar)
                     : (isUser ? _userBar : contribution < 3 ? _errorBar : contribution < 5 ? _warningBar : _normalBar)),
                 GaugeSkinId: gaugeSkinId,
