@@ -20,6 +20,13 @@
                 <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
                 <Setter Property="BorderThickness" Value="1"/>
                 <Style.Triggers>
+                    <!-- 계기판: 행에 카드가 없으면 이 띠에도 없어야 한다. 여기만 알약으로 남으면 판때기를
+                         지운 레이아웃에 카드 하나가 떠 있는 꼴이 된다(시안은 글자만 얹혀 있다). -->
+                    <DataTrigger Binding="{Binding Layout.HasCardChrome}" Value="False">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderThickness" Value="0"/>
+                        <Setter Property="Padding" Value="4,3"/>
+                    </DataTrigger>
                     <!-- 한 덩어리: 알약이 아니라 판에 이어 붙는 띠가 된다. -->
                     <DataTrigger Binding="{Binding Layout.SeamlessSections}" Value="True">
                         <Setter Property="CornerRadius" Value="0"/>
@@ -27,6 +34,15 @@
                         <Setter Property="Background" Value="{DynamicResource Skin.TableHeadBg}"/>
                         <Setter Property="BorderThickness" Value="0,1,0,0"/>
                     </DataTrigger>
+                    <!-- 분리모드의 행 창에서 이 띠는 **행 위**에 붙는다(무대). 그때 구분선은 아래쪽이다 —
+                         위에 그으면 창 맨 윗변에 의미 없는 선이 하나 남는다. -->
+                    <MultiDataTrigger>
+                        <MultiDataTrigger.Conditions>
+                            <Condition Binding="{Binding Layout.SeamlessSections}" Value="True"/>
+                            <Condition Binding="{Binding DockedTop, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" Value="True"/>
+                        </MultiDataTrigger.Conditions>
+                        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                    </MultiDataTrigger>
                 </Style.Triggers>
             </Style>
         </Border.Style>

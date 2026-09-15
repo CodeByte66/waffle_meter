@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using WaffleMeter.App.Core;
 using WaffleMeter.App.Wpf;
+using WaffleMeter.App.Wpf.Controls;
 using WaffleMeter.Capture;
 using WaffleMeter.Data;
 using WaffleMeter.Replay;
@@ -1130,6 +1131,7 @@ internal static class Program
         // ⚠️ 자격 판정과 선택 수락은 **서버**가 한다. 후원자 게이지는 통계웹이 supporter 자격에 대해
         // gaugeId 를 받아 주고 새 id 두 개를 알아야 실제로 저장된다 — 그 전까지 이 목록은 골라도
         // 거절당한다(SubmitChoice 는 서버 응답만 신뢰한다).
+        VerifySplitRowsChrome(settings, theme, Check);
         VerifyGaugeFx(settings, offVm, Check);
 
         Check("게이지도 계열별로 갈린다",
@@ -1796,6 +1798,63 @@ internal static class Program
     /// The decoration layer's contract. Everything here is about the layer ALONE — the colour fill it sits on is
     /// a separate Border and is not this element's business.
     /// </summary>
+    /// <summary>
+    /// 분리 행 창의 전투 타이머 띠 — 자리와 크롬이 레이아웃을 따라가는지.
+    /// <para>둘 다 눈으로만 보던 것들이라 조용히 되돌아가기 쉽다: 계기판은 판때기를 지운 레이아웃인데
+    /// 이 띠만 알약으로 남았었고(카드 하나가 허공에 뜬 꼴), 무대는 틈 없는 한 덩어리라 띠가 행 **위**에서
+    /// 창의 머리 노릇을 해야 한다.</para>
+    /// </summary>
+    private static void VerifySplitRowsChrome(MeterSettings settings, MeterColorTheme theme, Action<string, bool> Check)
+    {
+        string savedLayout = settings.MeterLayoutId;
+        int savedRow = settings.RowHeight;
+        foreach (WaffleMeter.App.Core.MeterLayout lay in WaffleMeter.App.Core.MeterLayout.All)
+        {
+            settings.MeterLayoutId = lay.Id;
+            settings.RowHeight = lay.DefaultRowHeight;
+            var vm = new OverlayViewModel("1.7.8", settings, theme, preview: true);
+            vm.Update(SampleMeterReport(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+
+            var win = new SplitRowsWindow { DataContext = vm, Left = -10000, Top = -10000 };
+            try
+            {
+                win.Show();
+                Drain(win.Dispatcher);
+                win.UpdateLayout();
+
+                var bar = Descendants(win).OfType<CombatTimerBar>().FirstOrDefault();
+                if (bar is null)
+                {
+                    Check($"{lay.Id}: 분리 행 창에 전투 타이머 띠가 있다", false);
+                    continue;
+                }
+
+                // 무대(SectionGap 0 = 한 덩어리)만 위로 올라간다.
+                Dock expected = lay.SectionGap <= 0.0 ? Dock.Top : Dock.Bottom;
+                Check($"{lay.Id}: 타이머 띠가 {expected} 에 붙는다",
+                    DockPanel.GetDock(bar) == expected && bar.DockedTop == (expected == Dock.Top));
+
+                // 카드 크롬이 없는 레이아웃(계기판)에서는 띠도 배경·테두리가 없어야 한다.
+                // ⚠️ bar 아래 첫 Border 를 집으면 안 된다 — UserControl 의 기본 템플릿이 Border >
+                // ContentPresenter 라 그 껍데기가 먼저 잡히고, 거기엔 우리 Setter 가 하나도 안 걸려 있어
+                // 세 레이아웃이 전부 같은 값으로 보인다(그래서 검사가 통과하는 것처럼 보였다).
+                var host = Descendants(bar).OfType<ContentPresenter>().FirstOrDefault();
+                Border? border = host is null ? null : Descendants(host).OfType<Border>().FirstOrDefault();
+                bool bare = border is not null
+                    && border.BorderThickness == new Thickness(0)
+                    && border.Background is SolidColorBrush { Color.A: 0 };
+                Check($"{lay.Id}: 타이머 띠 크롬이 행과 같은 결이다", bare == !lay.HasCardChrome);
+            }
+            finally
+            {
+                win.Close();
+            }
+        }
+
+        settings.MeterLayoutId = savedLayout;
+        settings.RowHeight = savedRow;
+    }
+
     private static void VerifyGaugeFx(MeterSettings settings, OverlayViewModel vm, Action<string, bool> Check)
     {
         const int W = 240, H = 30;

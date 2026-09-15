@@ -30,12 +30,31 @@
     <Border Style="{StaticResource MeterRootChrome}"
             MouseLeftButtonDown="OnDragSurfaceDown" MouseMove="OnDragSurfaceMove"
             MouseLeftButtonUp="OnDragSurfaceUp">
-        <StackPanel>
-            <!-- 대기 카드는 보스칸 **창**에 있다 — 알려 주지 않으면 전투 전 이 창이 빈 띠로만 남는다. -->
-            <controls:MeterRowsView IdleCardElsewhere="True"/>
+        <!--
+            전투 타이머의 자리는 레이아웃이 정한다. 무대는 틈 없는 한 덩어리라, 이 창에서는 띠가 **위**로
+            올라가 창의 머리가 되고 행이 아래변까지 이어진다(시안). 전장·계기판은 행 아래에 남는다.
+            DockPanel 은 선언 순서대로 가장자리를 먹고 LastChildFill 이 나머지를 행에게 준다 —
+            그래서 타이머를 먼저 적고 행을 나중에 적는다.
+        -->
+        <DockPanel LastChildFill="True">
             <!-- 전투 타이머. 본체 푸터는 분리모드에서 사라지므로 상태 표시는 이 한 줄이 전부다.
                  본체와 같은 컨트롤을 쓴다 — 여기에 따로 적으면 상위 X.X% 칩과 레이아웃별 변형이 빠진다. -->
-            <controls:CombatTimerBar/>
-        </StackPanel>
+            <controls:CombatTimerBar>
+                <controls:CombatTimerBar.Style>
+                    <Style TargetType="controls:CombatTimerBar">
+                        <Setter Property="DockPanel.Dock" Value="Bottom"/>
+                        <Setter Property="DockedTop" Value="False"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Layout.SeamlessSections}" Value="True">
+                                <Setter Property="DockPanel.Dock" Value="Top"/>
+                                <Setter Property="DockedTop" Value="True"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </controls:CombatTimerBar.Style>
+            </controls:CombatTimerBar>
+            <!-- 대기 카드는 보스칸 **창**에 있다 — 알려 주지 않으면 전투 전 이 창이 빈 띠로만 남는다. -->
+            <controls:MeterRowsView IdleCardElsewhere="True"/>
+        </DockPanel>
     </Border>
 </local:OverlayPanelWindow>
