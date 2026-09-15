@@ -295,6 +295,20 @@ public partial class App : Application
             {
                 Dispatcher.BeginInvoke(ClampAllWindows);
             }
+
+            // 레이아웃·행 높이는 '고르는 즉시' 생김새가 바뀌어야 한다. Update(report) 를 기다리면 캡처
+            // 헬퍼가 안 붙은 상태에서는 리포트가 아예 안 와 영원히 안 바뀐다.
+            if (e.PropertyName is nameof(MeterSettings.MeterLayoutId) or nameof(MeterSettings.RowHeight))
+            {
+                viewModel.RefreshLayout();
+                // ⚠️ 자동 높이를 여기서 **명시적으로** 다시 켠다. WindowResizePolicy.ShouldReautoFit 은
+                // '행 수가 변했을 때'만 참인데 레이아웃 전환은 행 높이·패딩만 바꾸고 행 수는 그대로라
+                // 그 정책으로는 절대 안 풀린다. 사용자가 전에 크기를 한 번이라도 끌었으면 자동 높이가
+                // 꺼진 채라, 계기판(28px)으로 가면 아래가 비고 전장(36px)으로 오면 잘린다.
+                // CLAUDE.md 규칙대로 리사이즈 핸들을 막는 게 아니라 전환 시점에 다시 켜는 방식이다.
+                _meterHeightManual = false;
+                Dispatcher.BeginInvoke(() => window.SizeToContent = SizeToContent.Height);
+            }
         };
 
         // Re-clamp every window onto a live monitor when the display topology changes (a monitor

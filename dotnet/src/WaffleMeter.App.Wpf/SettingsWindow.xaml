@@ -470,8 +470,23 @@
                         <Grid Margin="0,0,0,14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="레이아웃" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="미터 전체의 생김새를 고릅니다. 전장은 보스 체력을 독립 게이지 띠로 크게, 계기판은 판을 없애고 체력 퍼센트를 크게, 무대는 행을 틈 없이 붙여 하나의 판으로 보여줍니다. 고르면 행 높이도 그 레이아웃 기본값으로 함께 바뀝니다." Style="{StaticResource SettingDesc}"/>
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" Width="190" VerticalAlignment="Center" ItemsSource="{Binding MeterLayouts}"
+                                      ItemTemplate="{StaticResource OptionItemTemplate}" SelectedValuePath="Value" SelectedValue="{Binding MeterLayoutId}"/>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,14" IsEnabled="{Binding BarStyleEnabled}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
                                 <TextBlock Text="게이지 형태" Style="{StaticResource SettingTitle}"/>
                                 <TextBlock Text="피해량·보스 체력 막대의 표시 형태를 선택합니다 (칸 채우기 / 얇은 바 / 없음)." Style="{StaticResource SettingDesc}"/>
+                                <!-- 계기판·무대는 직업색 게이지가 곧 행이라 '얇은 바'·'표시 안 함'이면 빈 리본이 된다.
+                                     저장값은 그대로 두고 UI 만 잠그므로, 전장으로 돌아가면 고른 값이 되살아난다. -->
+                                <TextBlock Text="이 레이아웃은 칸 채우기를 전제로 합니다 — 전장으로 바꾸면 다시 고를 수 있습니다."
+                                           Style="{StaticResource SettingDesc}"
+                                           Visibility="{Binding BarStyleEnabled, Converter={StaticResource BoolToVisInverse}}"/>
                             </StackPanel>
                             <ComboBox Grid.Column="1" Width="190" VerticalAlignment="Center" ItemsSource="{Binding BarStyles}"
                                       ItemTemplate="{StaticResource OptionItemTemplate}" SelectedValuePath="Value" SelectedValue="{Binding BarStyle}"/>

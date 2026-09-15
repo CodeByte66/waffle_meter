@@ -650,6 +650,25 @@ internal static class Program
         Check("an unknown name falls through to the safe chain",
             FontResolver.Classify("ZZZ Not A Font") == FontResolver.FontOrigin.System);
         vm.RowHeight = 50; Check("RowHeight", settings.RowHeight == 50 && props.GetProperty("rowHeight") == "50");
+
+        // 레이아웃: 고르면 값이 저장되고, 행 높이가 그 레이아웃 기본값으로 함께 옮겨가며,
+        // 칸 채우기를 전제하는 레이아웃에서는 '게이지 형태' 콤보가 잠긴다.
+        vm.MeterLayoutId = "dashboard";
+        Check("MeterLayoutId persists", settings.MeterLayoutId == "dashboard" && props.GetProperty("meterLayout") == "dashboard");
+        Check("layout carries its row height", settings.RowHeight == 28);
+        Check("dashboard locks the gauge-form combo", !vm.BarStyleEnabled);
+        vm.MeterLayoutId = "battlefield";
+        Check("battlefield unlocks the gauge-form combo", vm.BarStyleEnabled && settings.RowHeight == 36);
+
+        // 🔑 레이아웃은 리포트 틱을 기다리지 않고 즉시 기하에 반영돼야 한다 — 캡처 헬퍼가 안 붙은
+        // 상태에서는 리포트가 아예 안 오므로, Update 의존이면 영원히 안 바뀐다.
+        var layoutProbe = new OverlayViewModel("1.7.8", settings, theme);
+        settings.MeterLayoutId = "stage";
+        layoutProbe.RefreshLayout();
+        Check("layout applies without a report tick",
+            layoutProbe.Layout.Spec.Id == "stage" && Math.Abs(layoutProbe.Layout.RowMinHeight - settings.RowHeight) < 0.001);
+        settings.MeterLayoutId = "battlefield";
+        settings.RowHeight = 36;
         vm.MeterOpacity = 0.7; Check("MeterOpacity", Math.Abs(settings.MeterOpacity - 0.7) < 0.001);
 
         vm.IsMinimal = true; Check("IsMinimal", settings.IsMinimal);

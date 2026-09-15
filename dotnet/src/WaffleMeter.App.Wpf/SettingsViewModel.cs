@@ -295,6 +295,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         new SettingOption("표시 안 함", "none"),
     };
 
+    /// <summary>레이아웃 3종. 목록 정본은 <see cref="MeterLayout.All"/> 하나다 — 여기에 리터럴로
+    /// 다시 적으면 MeterSettings 의 허용값(같은 곳에서 가져온다)과 조용히 어긋난다.</summary>
+    public IReadOnlyList<SettingOption> MeterLayouts { get; } =
+        MeterLayout.All.Select(l => new SettingOption(l.Label, l.Id)).ToArray();
+
     public IReadOnlyList<SettingOption> TierEffectModes { get; } = new[]
     {
         new SettingOption("테두리 + 효과", "animated"),
@@ -651,6 +656,32 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         RefreshGameOpt();
     }
     public string BarStyle { get => _settings.BarStyle; set { _settings.BarStyle = value; OnPropertyChanged(); OnPropertyChanged(nameof(GaugeSkinApplicable)); } }
+
+    /// <summary>
+    /// 미터 레이아웃. 행 높이도 함께 그 레이아웃의 기본값으로 옮긴다 — 세 레이아웃은 행 높이까지
+    /// 포함해서 하나의 생김새이고, 사용자가 바꾸고 싶으면 아래 슬라이더로 바로 되돌릴 수 있다.
+    /// (RowHeight 는 Snapshot 에 이미 있어 '취소'로도 복구된다.)
+    /// </summary>
+    public string MeterLayoutId
+    {
+        get => _settings.MeterLayoutId;
+        set
+        {
+            _settings.MeterLayoutId = value;
+            _settings.RowHeight = MeterLayout.For(value).DefaultRowHeight;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RowHeight));
+            OnPropertyChanged(nameof(BarStyleEnabled));
+            OnPropertyChanged(nameof(GaugeSkinApplicable));
+        }
+    }
+
+    /// <summary>
+    /// 계기판·무대는 '직업색 게이지가 곧 행'이라 게이지 형태를 '얇은 바'나 '표시 안 함'으로 두면
+    /// 빈 리본이 된다. 저장값은 건드리지 않고 UI 만 잠근다 — 다른 레이아웃으로 돌아가면 사용자가
+    /// 고른 값이 그대로 되살아난다.
+    /// </summary>
+    public bool BarStyleEnabled => !MeterLayout.For(_settings.MeterLayoutId).RequiresFillGauge;
     public bool IsMinimal { get => _settings.IsMinimal; set { _settings.IsMinimal = value; OnPropertyChanged(); } }
     public bool ShowCombatTimerInMinimal { get => _settings.ShowCombatTimerInMinimal; set { _settings.ShowCombatTimerInMinimal = value; OnPropertyChanged(); } }
     public bool ShowTargetInfoInMinimal { get => _settings.ShowTargetInfoInMinimal; set { _settings.ShowTargetInfoInMinimal = value; OnPropertyChanged(); } }
@@ -2403,7 +2434,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         string NameFxMode, bool NameFxShowSelf, bool NameFxShowOthers, int NameFxSpeedPercent, int NameFxBrightnessPercent,
         bool NameFxGauge,
         bool TierShow, string TierEffects, bool TierShowOthers, bool TierShowSelfChip,
-        int BuffUiIconSize, int CooldownUiIconSize, int CooldownUiPerRow, string CooldownUiTextColor)
+        int BuffUiIconSize, int CooldownUiIconSize, int CooldownUiPerRow, string CooldownUiTextColor,
+        // ⚠️ 새 항목은 반드시 **맨 끝**에. 이 record 는 string/bool 이웃이 줄줄이라 중간에 끼우면
+        // 컴파일이 통과하면서 값이 한 칸씩 밀린다. 빠뜨리면 "취소가 안 됨"이 아니라
+        // **이미 저장됐고 되돌릴 수 없음**이 된다.
+        string MeterLayoutId)
     {
         public static Snapshot Capture(MeterSettings s, OverlayController c) => new(
             s.DisplayMode, s.DamageValueMode, s.RowDpsMetric, s.ContributionMode, s.NameDisplay,
@@ -2413,7 +2448,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             s.NameFxMode, s.NameFxShowSelf, s.NameFxShowOthers, s.NameFxSpeedPercent, s.NameFxBrightnessPercent,
             s.NameFxGauge,
             s.TierShow, s.TierEffects, s.TierShowOthers, s.TierShowSelfChip,
-            s.BuffUiIconSize, s.CooldownUiIconSize, s.CooldownUiPerRow, s.CooldownUiTextColor);
+            s.BuffUiIconSize, s.CooldownUiIconSize, s.CooldownUiPerRow, s.CooldownUiTextColor,
+            s.MeterLayoutId);
 
         public void Apply(MeterSettings s, OverlayController c)
         {
@@ -2462,6 +2498,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             s.CooldownUiIconSize = CooldownUiIconSize;
             s.CooldownUiPerRow = CooldownUiPerRow;
             s.CooldownUiTextColor = CooldownUiTextColor;
+            s.MeterLayoutId = MeterLayoutId;
             NameFxSheen.Rebuild(NameFxBrightnessPercent);
         }
     }

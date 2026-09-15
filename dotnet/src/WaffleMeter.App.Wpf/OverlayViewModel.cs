@@ -470,6 +470,20 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// </summary>
     public MeterLayoutVisual Layout { get => _layout; private set => Set(ref _layout, value); }
 
+    /// <summary>
+    /// 설정의 레이아웃·행 높이를 즉시 기하로 반영한다.
+    /// <para>⚠️ <see cref="Update"/> 안에서만 대입하면 <b>다음 리포트 틱까지 화면이 안 바뀌고</b>,
+    /// 캡처 헬퍼가 안 붙은 상태에서는 리포트가 아예 안 오므로 영원히 안 바뀐다 — 레이아웃은 '고르는
+    /// 즉시 생김새가 바뀌는' 설정이라 그 상태로는 "안 먹는다"는 제보가 먼저 온다. 그래서 설정 변경
+    /// 알림에서도 직접 부른다(<c>RefreshSkin</c> 이 스킨 교체에서 하는 것과 같은 패턴).</para>
+    /// </summary>
+    public MeterLayoutVisual RefreshLayout()
+    {
+        MeterLayoutVisual visual = MeterLayoutVisual.For(_settings.MeterLayoutId, _settings.RowHeight);
+        Layout = visual;
+        return visual;
+    }
+
     private Visibility _targetFailedVisibility = Visibility.Collapsed;
     public Visibility TargetFailedVisibility { get => _targetFailedVisibility; private set => Set(ref _targetFailedVisibility, value); }
 
@@ -541,8 +555,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         NameDisplay nameMode = _settings.NameDisplayMode;
         double rowHeight = _settings.RowHeight;
         // 레이아웃 기하는 창 단위로 한 번만 만든다((id, rowHeight) 캐시).
-        MeterLayoutVisual layoutVisual = MeterLayoutVisual.For(_settings.MeterLayoutId, _settings.RowHeight);
-        Layout = layoutVisual;
+        MeterLayoutVisual layoutVisual = RefreshLayout();
         string barStyle = _settings.BarStyle; // "fill" (cell fill) / "bar" (thin bottom bar) / "none"
         Visibility fillVis = barStyle == "fill" ? Visibility.Visible : Visibility.Collapsed;
         Visibility barVis = barStyle == "bar" ? Visibility.Visible : Visibility.Collapsed;
