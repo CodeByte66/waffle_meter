@@ -59,6 +59,10 @@ public static class SettingsKeyCatalog
         new("showServerTag", FD, "표시 형식", "서버 표시"),
         new("targetInfoDisplayMode", FD, "표시 형식", "보스 표시 형식"),
         new("barStyle", FD, "표시 형식", "게이지 형태"),
+        new("meterLayout", FD, "표시 형식", "레이아웃"),
+        // 분리모드는 창을 하나 더 띄우는 **기능 토글**이라 Design(FD) 이면 안 된다 — 공유 코드로
+        // 남의 화면에 창이 생기면 안 되기 때문. F(Full) 에만 실린다.
+        new("splitUiMode", F, "표시 형식", "UI 분리모드"),
         new("maxVisibleRows", FD, "표시 형식", "표시 인원"),
 
         // ── 크기와 글꼴 ────────────────────────────────────────────────────────────

@@ -25,6 +25,10 @@ public sealed class MeterSettings : INotifyPropertyChanged
     private static readonly string[] CaptureBackends = { "windivert", "npcap" };
     private static readonly string[] TargetInfoDisplayModes = { "hp_full_percent", "hp_percent", "remain_full_percent", "remain_percent", "percent" };
     private static readonly string[] BarStyles = { "fill", "bar", "none" };
+
+    /// <summary>미터 레이아웃 3종. 허용값의 정본은 <see cref="MeterLayout.Ids"/> 하나다 — 여기에 따로
+    /// 적으면 두 목록이 조용히 어긋난다(MeterLayoutTests 가 일치를 검사한다).</summary>
+    private static readonly string[] MeterLayouts = MeterLayout.Ids;
     /// <summary>던전 티어 장식 강도. "off" = 현행 픽셀 그대로, "static" = 테두리만, "animated" = 상위 2티어 광택.</summary>
     private static readonly string[] TierEffectModes = { "off", "static", "animated" };
 
@@ -59,7 +63,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         nameof(_cooldownUiTextColor), nameof(_cooldownUiPresets),
         nameof(_closeAction), nameof(_contributionMode), nameof(_customAlarms), nameof(_damageValueMode),
         nameof(_displayMode), nameof(_fieldBossDisabled), nameof(_fontFamily), nameof(_nameDisplay),
-        nameof(_nameFxMode), nameof(_overlayTheme), nameof(_rowDpsMetric), nameof(_targetInfoDisplayMode),
+        nameof(_meterLayoutId), nameof(_nameFxMode), nameof(_overlayTheme), nameof(_rowDpsMetric), nameof(_targetInfoDisplayMode),
         nameof(_tierEffects),
         nameof(_ttsVoice), nameof(_weeklyContentClears), nameof(_abyssCorridors), nameof(_abyssArtifacts))]
     public void Reload()
@@ -97,6 +101,8 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _captureBackend = ReadEnum("captureBackend", "windivert", CaptureBackends);
         _targetInfoDisplayMode = ReadEnum("targetInfoDisplayMode", "hp_full_percent", TargetInfoDisplayModes);
         _barStyle = ReadEnum("barStyle", "fill", BarStyles);
+        _meterLayoutId = ReadEnum("meterLayout", MeterLayout.DefaultId, MeterLayouts);
+        _splitUiMode = ReadBool("splitUiMode", false);
         _shugoAlarmEnabled = ReadBool("alarms.shugoEnabled", false);
         _shugoLead10 = ReadBool("alarms.shugoLead10", false);
         _shugoLead5 = ReadBool("alarms.shugoLead5", true);
@@ -276,6 +282,22 @@ public sealed class MeterSettings : INotifyPropertyChanged
     private string _barStyle;
     /// <summary>Damage gauge form: "fill" (proportional cell fill), "bar" (thin bottom bar), "none".</summary>
     public string BarStyle { get => _barStyle; set => SetProp(ref _barStyle, "barStyle", value); }
+
+    private string _meterLayoutId;
+
+    /// <summary>
+    /// 미터 레이아웃(생김새). 분리모드와 **직교**한다 — 도킹이든 분리든 항상 적용된다.
+    /// 기본값은 전장(현행 행과 수치가 같아, 아무것도 고르지 않은 사용자는 지금과 같은 화면을 본다).
+    /// </summary>
+    public string MeterLayoutId { get => _meterLayoutId; set => SetProp(ref _meterLayoutId, "meterLayout", value); }
+
+    private bool _splitUiMode;
+
+    /// <summary>
+    /// UI 분리모드. 켜면 보스칸과 미터 행이 독립 창으로 떨어져 나가고 헤더·푸터가 사라진다.
+    /// 레이아웃과 직교하므로 3×2 여섯 조합이 전부 성립해야 한다.
+    /// </summary>
+    public bool SplitUiMode { get => _splitUiMode; set => SetBool(ref _splitUiMode, "splitUiMode", value); }
 
     private bool _multiMonitorMode;
     public bool MultiMonitorMode { get => _multiMonitorMode; set => SetBool(ref _multiMonitorMode, "multiMonitorMode", value); }
