@@ -757,7 +757,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
                     TierResolver = _ => LayoutPreviewSample.Tiers,
                 };
                 _layoutPreview.SetRecognized(
-                    true, "콘팡", selfId: 1, server: 1001, job: JobClass.SORCERER, power: 656_000);
+                    true, LayoutPreviewSample.PreviewNickname, selfId: 1,
+                    server: LayoutPreviewSample.PreviewServer, job: JobClass.SORCERER, power: 656_000);
                 RefreshLayoutPreview();
             }
 
@@ -1484,6 +1485,16 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     // ---- overlay tab (live) ----
     public double MeterOpacity { get => _settings.MeterOpacity; set { _settings.MeterOpacity = value; OnPropertyChanged(); } }
+
+    /// <summary>
+    /// 설정 원본 그 자체. 미터 헤더의 투명도 슬라이더가 <c>Settings.MeterOpacity</c> 로 직접 쓰기 때문에,
+    /// 설정창 슬라이더도 <b>같은 경로</b>로 묶어야 두 화면이 한 값을 본다.
+    ///
+    /// <para>🔑 설정창만 <see cref="MeterOpacity"/> 래퍼를 쓰면 안 된다. 헤더에서 끌었을 때 래퍼는
+    /// PropertyChanged 를 쏘지 않으므로, 설정창을 열어 둔 채 헤더를 움직이면 두 슬라이더가 서로 다른
+    /// 위치를 가리킨다 — 그 상태에서 설정창 쪽을 건드리면 헤더에서 맞춰 둔 값이 조용히 되돌아간다.</para>
+    /// </summary>
+    public MeterSettings Settings => _settings;
     public bool MultiMonitorMode { get => _settings.MultiMonitorMode; set { _settings.MultiMonitorMode = value; OnPropertyChanged(); } }
     public bool ShowJoinPanel { get => _settings.ShowJoinPanel; set { _settings.ShowJoinPanel = value; OnPropertyChanged(); } }
     public bool ShowPreCombatRoster { get => _settings.ShowPreCombatRoster; set { _settings.ShowPreCombatRoster = value; OnPropertyChanged(); } }

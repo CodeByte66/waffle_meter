@@ -1,4 +1,4 @@
-using WaffleMeter.App.Core;
+﻿using WaffleMeter.App.Core;
 using WaffleMeter.Capture;
 using WaffleMeter.Data;
 
@@ -16,18 +16,26 @@ namespace WaffleMeter.App.Wpf;
 /// </summary>
 internal static class LayoutPreviewSample
 {
+    /// <summary>미리보기에 쓰는 가상 닉네임. 실제 플레이어를 특정할 수 없어야 한다.</summary>
+    public const string PreviewNickname = "와터기";
+
+    /// <summary>1001 = 시엘. 서버 태그가 있는 레이아웃에서 "[시엘]" 로 그려진다.</summary>
+    public const int PreviewServer = 1001;
+
     /// <summary>표본 전투 한 판. 시각은 고정 오프셋이라 미리보기를 다시 그려도 숫자가 흔들리지 않는다.</summary>
     public static DpsReport Report(long now) => new()
     {
         BattleStart = now - 145_300,
         BattleEnd = now,
         Target = new MobInfo(999, new Mob(2320171, "완성체 베르크", true), remainHp: 79_650_000, maxHp: 168_750_000),
+        // ⚠️ 닉네임은 전부 같은 가상 이름이다. 설정 화면은 스크린샷으로 돌아다니는 곳이라, 실제 플레이어를
+        // 특정할 수 있는 이름이 표본에 들어가면 안 된다. 서버도 1001(시엘) 하나로 통일한다.
         Contributors = new List<User>
         {
-            new(1, "콘팡", 1001, JobClass.SORCERER, isExecutor: true, power: 656_000),
-            new(2, "쌈", 1001, JobClass.GLADIATOR, power: 663_400),
-            new(3, "강까", 1001, JobClass.RANGER, power: 659_500),
-            new(4, "노까", 1002, JobClass.CLERIC, power: 591_700),
+            new(1, PreviewNickname, PreviewServer, JobClass.SORCERER, isExecutor: true, power: 656_000),
+            new(2, PreviewNickname, PreviewServer, JobClass.GLADIATOR, power: 663_400),
+            new(3, PreviewNickname, PreviewServer, JobClass.RANGER, power: 659_500),
+            new(4, PreviewNickname, PreviewServer, JobClass.CLERIC, power: 591_700),
         },
         Information = new Dictionary<int, DpsInformation>
         {

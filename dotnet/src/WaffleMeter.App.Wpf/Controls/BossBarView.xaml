@@ -56,7 +56,10 @@
             </Style>
         </Border.Style>
 
-        <Grid>
+        <!-- TrailingInset: 분리모드 보스칸 창이 우상단 컨트롤 자리를 여기로 알린다.
+             🔑 여백을 **카드 안쪽**에 둬야 한다. 바깥에서 칸을 줄이면(Grid 열로 밀면) 무대처럼 카드가
+                창 끝까지 차는 레이아웃에서 카드가 버튼 앞에서 끊겨 회색 이음매가 생긴다. -->
+        <Grid Margin="{Binding TrailingInset, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}">
             <!-- ═══ 전투 중 ═══ -->
             <Grid Visibility="{Binding TargetInfoVisibility}">
                 <!-- 무대: 게이지가 카드 배경 전체. Padding 밖까지 깔리도록 Margin 으로 되민다. -->

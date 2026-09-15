@@ -31,7 +31,8 @@
             MouseLeftButtonDown="OnDragSurfaceDown" MouseMove="OnDragSurfaceMove"
             MouseLeftButtonUp="OnDragSurfaceUp">
         <StackPanel>
-            <controls:MeterRowsView/>
+            <!-- 대기 카드는 보스칸 **창**에 있다 — 알려 주지 않으면 전투 전 이 창이 빈 띠로만 남는다. -->
+            <controls:MeterRowsView IdleCardElsewhere="True"/>
             <!-- 전투 타이머. 본체 푸터는 분리모드에서 사라지므로 상태 표시는 이 한 줄이 전부다.
                  본체와 같은 컨트롤을 쓴다 — 여기에 따로 적으면 상위 X.X% 칩과 레이아웃별 변형이 빠진다. -->
             <controls:CombatTimerBar/>

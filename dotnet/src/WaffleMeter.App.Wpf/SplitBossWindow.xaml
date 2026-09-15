@@ -32,17 +32,25 @@
     <Border Style="{StaticResource MeterRootChrome}"
             MouseLeftButtonDown="OnDragSurfaceDown" MouseMove="OnDragSurfaceMove"
             MouseLeftButtonUp="OnDragSurfaceUp">
+        <!--
+            ⚠️ 컨트롤을 보스칸 **위에 겹치지 마라**. 겹쳐 두면 대기 카드의 전투력 숫자와 전투 중 보스 이름이
+               아이콘 뒤로 들어간다(실제로 그랬다). 자리를 차지하는 열로 두면 칸이 그만큼 좁아질 뿐,
+               무엇도 가려지지 않는다.
+        -->
         <Grid>
-            <controls:BossBarView/>
-            <!-- 우상단 컨트롤. 보스칸 위에 겹쳐 올린다 — 칸이 고정 높이라 줄을 더하면 내용이 잘린다. -->
+            <!-- TrailingInset 이 카드 **안쪽**에 컨트롤 자리를 비운다. 배경은 창 끝까지 그대로 가므로
+                 무대처럼 카드가 창을 가득 채우는 레이아웃에서도 이음매가 생기지 않는다. -->
+            <controls:BossBarView TrailingInset="0,0,52,0"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,3,4,0" Panel.ZIndex="5">
+                        Margin="0,3,6,0" Panel.ZIndex="5">
                 <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="#FFD400"
                            VerticalAlignment="Center" Margin="2,0,6,0" IsHitTestVisible="False"
                            ToolTip="클릭스루 잠금 — 입력이 게임으로 통과 중"
                            Visibility="{Binding ClickThroughVisibility}"/>
-                <Button Style="{StaticResource HeaderIconButton}" Content="&#xE81C;" Click="OnHistory" ToolTip="전투 기록"/>
-                <Button Style="{StaticResource HeaderIconButton}" Content="&#xE713;" Click="OnSettings" ToolTip="설정"/>
+                <!-- 계기판은 판때기 대신 스크림이라 회색 아이콘이 게임 화면에 묻힌다. 그 레이아웃에서만
+                     잠금 인디케이터와 같은 노란색으로 올린다(다른 레이아웃은 판이 있어 지금도 읽힌다). -->
+                <Button Click="OnHistory" ToolTip="전투 기록" Content="&#xE81C;" Style="{StaticResource SplitHeaderButton}"/>
+                <Button Click="OnSettings" ToolTip="설정" Content="&#xE713;" Style="{StaticResource SplitHeaderButton}"/>
             </StackPanel>
         </Grid>
     </Border>

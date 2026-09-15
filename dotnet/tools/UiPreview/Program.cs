@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -187,6 +188,18 @@ internal static class Program
                         Path.Combine(outDir, $"split_boss_{lay.Id}_Dark.png"));
                     Capture(() => new SplitRowsWindow { DataContext = sv }, palette,
                         Path.Combine(outDir, $"split_rows_{lay.Id}_Dark.png"));
+
+                    // 전투 전. 보스칸엔 대기 카드가, 행 창엔 "여기에 뜬다" 안내가 나와야 한다 —
+                    // 분리모드의 행 창은 대기 카드가 다른 창에 있어서 옛 규칙대로면 빈 띠만 남았다.
+                    var si = new OverlayViewModel(
+                        "1.7.8", settings, theme, encounters: encounterCatalog, preview: true) { Status = "캡처 중" };
+                    si.SetRecognized(true, "와터기", selfId: 1, server: 1001,
+                        job: WaffleMeter.Data.JobClass.SORCERER, power: 968_400);
+                    si.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                    Capture(() => new SplitBossWindow { DataContext = si }, palette,
+                        Path.Combine(outDir, $"split_idle_boss_{lay.Id}_Dark.png"));
+                    Capture(() => new SplitRowsWindow { DataContext = si }, palette,
+                        Path.Combine(outDir, $"split_idle_rows_{lay.Id}_Dark.png"));
                 }
 
                 settings.MeterLayoutId = savedLayout;
@@ -1310,6 +1323,17 @@ internal static class Program
                         panelHost.Children.Count == navKeys.Count);
                     // The VM's hardcoded default must be a real tab, or the window opens on a blank right side.
                     Check($"default nav '{vm.SelectedNav}' is a real tab", navKeys.Contains(vm.SelectedNav, StringComparer.Ordinal));
+
+                    // 투명도는 미터 헤더에도 슬라이더가 있고, UI 분리모드에선 그 헤더가 사라져 설정창이
+                    // 유일한 조절 수단이 된다. 두 화면이 **한 값**을 봐야 하므로 경로가 같아야 한다.
+                    // 🔑 뷰모델 래퍼(MeterOpacity)로 바꿔 달면 컴파일도 렌더도 멀쩡한데, 헤더에서 끌었을 때만
+                    //    설정창이 안 따라와 두 슬라이더가 다른 값을 가리킨다 — 그래서 경로를 못박는다.
+                    string[] sliderPaths = Descendants(window)
+                        .OfType<System.Windows.Controls.Slider>()
+                        .Select(sl => BindingOperations.GetBinding(sl, System.Windows.Controls.Slider.ValueProperty)?.Path?.Path ?? "")
+                        .ToArray();
+                    Check("설정창 투명도 슬라이더가 헤더와 같은 경로(Settings.MeterOpacity)를 쓴다",
+                        sliderPaths.Contains("Settings.MeterOpacity", StringComparer.Ordinal));
                 }
 
                 foreach (string key in navKeys)

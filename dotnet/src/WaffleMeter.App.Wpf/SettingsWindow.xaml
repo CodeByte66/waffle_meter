@@ -472,6 +472,24 @@
                                       ItemTemplate="{StaticResource OptionItemTemplate}" SelectedValuePath="Value" SelectedValue="{Binding TargetInfoDisplayMode}"/>
                         </Grid>
 
+                        <!--
+                            투명도. 미터 헤더에도 같은 슬라이더가 있고, UI 분리모드에선 그 헤더가 사라지므로
+                            여기가 유일한 조절 수단이 된다.
+                            🔑 헤더와 **완전히 같은 경로**(Settings.MeterOpacity)로 묶는다 — 뷰모델 래퍼를 쓰면
+                               헤더에서 끌었을 때 이쪽이 안 따라와 두 슬라이더가 다른 값을 가리키게 된다.
+                        -->
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="{Binding Settings.MeterOpacity, StringFormat='투명도 — {0:P0}'}" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="미터 판의 배경 투명도입니다. 0이어도 글자와 게이지는 그대로 보이고 창도 계속 눌립니다. 미터 헤더의 슬라이더와 같은 값입니다."
+                                           Style="{StaticResource SettingDesc}"/>
+                            </StackPanel>
+                            <Slider Grid.Column="1" VerticalAlignment="Center" Minimum="0.0" Maximum="1.0"
+                                    SmallChange="0.05" LargeChange="0.1"
+                                    Value="{Binding Settings.MeterOpacity, Mode=TwoWay}"/>
+                        </Grid>
+
                         <Grid Margin="0,0,0,14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
