@@ -196,6 +196,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _snapshot = Snapshot.Capture(settings, controller);
         RefreshGameOpt();
 
+        // 미리보기는 '무엇이 바뀌었나'를 가리지 않는다 — 글꼴·투명도·티어·닉네임 효과·행 높이가 전부
+        // 생김새를 바꾸는데, 세터마다 손으로 호출을 심으면 새 설정을 더할 때 하나씩 빠진다. 아직 안 만든
+        // 미리보기는 그냥 통과하므로(RefreshLayoutPreview 의 null 가드) 평소엔 비용이 0 이다.
+        settings.PropertyChanged += (_, _) => RefreshLayoutPreview();
+
         _pendingReset = hotkeys.Reset;
         _pendingVisibility = hotkeys.Visibility;
         _pendingClickThrough = hotkeys.ClickThrough;
@@ -673,6 +678,10 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(RowHeight));
             OnPropertyChanged(nameof(BarStyleEnabled));
             OnPropertyChanged(nameof(GaugeSkinApplicable));
+            OnPropertyChanged(nameof(ServerTagEnabled));
+            OnPropertyChanged(nameof(LayoutTraits));
+            OnPropertyChanged(nameof(LayoutLocks));
+            OnPropertyChanged(nameof(LayoutLocksVisibility));
         }
     }
 
@@ -682,6 +691,71 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     /// 고른 값이 그대로 되살아난다.
     /// </summary>
     public bool BarStyleEnabled => !MeterLayout.For(_settings.MeterLayoutId).RequiresFillGauge;
+
+    /// <summary>
+    /// 계기판은 이름 뒤에 서버를 넣지 않는다 — 켜 둬도 레이아웃이 접으므로 토글을 잠그고 이유를 밝힌다.
+    /// <para>이건 <see cref="BarStyleEnabled"/> 와 같은 종류의 잠금이라 목록도 같은 곳
+    /// (<see cref="MeterLayout.LocksOf"/>)에서 나온다 — 여기와 목록이 따로 놀면 "잠긴다고 적혀 있는데
+    /// 눌리는" 상태가 된다.</para>
+    /// </summary>
+    public bool ServerTagEnabled => MeterLayout.For(_settings.MeterLayoutId).ShowServerTag;
+
+    /// <summary>이 레이아웃이 통째로 정하는 것들(설정에 항목 자체가 없다).</summary>
+    public IReadOnlyList<MeterLayout.LayoutNote> LayoutTraits =>
+        MeterLayout.TraitsOf(MeterLayout.For(_settings.MeterLayoutId));
+
+    /// <summary>이 레이아웃에서 잠기는 설정. 없으면 목록째 접는다.</summary>
+    public IReadOnlyList<MeterLayout.LayoutNote> LayoutLocks =>
+        MeterLayout.LocksOf(MeterLayout.For(_settings.MeterLayoutId));
+
+    public Visibility LayoutLocksVisibility =>
+        LayoutLocks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private OverlayViewModel? _layoutPreview;
+
+    /// <summary>
+    /// 레이아웃 미리보기. <b>진짜</b> <c>BossBarView</c>·<c>MeterRowsView</c> 를 표본 전투로 그린다 —
+    /// 설정창용으로 따로 그린 그림은 레이아웃을 손볼 때마다 실물과 어긋나고, 어긋난 걸 볼 방법이 없다.
+    ///
+    /// <para>🔑 <c>preview: true</c> 가 핵심이다. 이 인스턴스가 공용 애니메이션 시계에 수요를 보고하면
+    /// 본체 미터의 수요를 <b>대입으로 덮어</b> 설정창을 열어 둔 동안 연출이 간헐 정지한다
+    /// (<see cref="OverlayViewModel"/> 의 <c>_preview</c> 주석).</para>
+    ///
+    /// <para>지연 생성이다 — 화면 탭을 한 번도 안 열면 표본 전투를 만들 일도 없다.</para>
+    /// </summary>
+    public OverlayViewModel LayoutPreview
+    {
+        get
+        {
+            if (_layoutPreview is null)
+            {
+                _layoutPreview = new OverlayViewModel(
+                    _services.Version, _settings, Theme, () => _skin.IsLight,
+                    _services.Data.Encounters, preview: true)
+                {
+                    TierResolver = _ => LayoutPreviewSample.Tiers,
+                };
+                _layoutPreview.SetRecognized(
+                    true, "콘팡", selfId: 1, server: 1001, job: JobClass.SORCERER, power: 656_000);
+                RefreshLayoutPreview();
+            }
+
+            return _layoutPreview;
+        }
+    }
+
+    /// <summary>표본 전투를 다시 그린다. 이미 만들어진 뒤에만 도는 게 요점 — 설정 하나 바꿀 때마다
+    /// 열지도 않은 미리보기를 만들 이유가 없다.</summary>
+    private void RefreshLayoutPreview()
+    {
+        if (_layoutPreview is null)
+        {
+            return;
+        }
+
+        _layoutPreview.RefreshLayout();
+        _layoutPreview.Update(LayoutPreviewSample.Report(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+    }
 
     /// <summary>
     /// UI 분리모드. 켜면 보스칸과 미터 행이 독립 창으로 떨어져 나가고 본체는 숨는다.

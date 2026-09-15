@@ -287,4 +287,61 @@ public sealed record MeterLayout(
 
         return Math.Max(0.0, left);
     }
+
+    /// <summary>레이아웃 설명 한 줄. <see cref="Label"/> 은 무엇을 정하는지, <see cref="Detail"/> 은 그 값이다.</summary>
+    public readonly record struct LayoutNote(string Label, string Detail);
+
+    /// <summary>
+    /// "이 레이아웃이 정하는 것" 목록. 설정에서 고를 수 없고 레이아웃이 통째로 결정하는 항목들이다.
+    ///
+    /// <para>🔑 문구를 손으로 적지 않고 <b>스펙 플래그에서 파생</b>한다. 손으로 적으면 스펙을 고칠 때
+    /// 같이 안 고쳐져 설명만 옛 모습으로 남는데, 그 어긋남은 화면을 봐도 안 보인다(설명이 그럴듯해서
+    /// 오히려 틀린 쪽을 믿게 된다). 새 레이아웃을 더해도 이 목록은 저절로 맞는다.</para>
+    /// </summary>
+    public static IReadOnlyList<LayoutNote> TraitsOf(MeterLayout l) => new[]
+    {
+        new LayoutNote("기본 행 높이", $"{l.DefaultRowHeight}px"),
+        new LayoutNote("보스칸", l.BossStyle switch
+        {
+            BossStyle.Band => "이름 아래 독립 게이지 띠",
+            BossStyle.Readout => "판 없이 큰 HP% 한 줄",
+            _ => "카드 채움 + 하단 레일",
+        }),
+        new LayoutNote("순위", l.ShowRankChip ? "왼쪽 번호 칩"
+            : l.ShowRankNumeral ? "게이지 안 숫자"
+            : "표시하지 않음"),
+        new LayoutNote("직업", l.ShowJobIcon ? "아이콘"
+            : l.ShowJobDot ? "직업색 점"
+            : "이름 색으로만"),
+        new LayoutNote("티어", l.ShowTierChip && l.ShowTierRowOutline ? "칩 + 행 테두리"
+            : l.ShowTierChip ? "칩만 (행 테두리 없음)"
+            : "표시하지 않음"),
+        new LayoutNote("행 배경", l.HasCardChrome ? "카드" : "없음 — 게이지가 곧 행"),
+        new LayoutNote("미터 판", l.ScrimPanel ? "그라데이션 스크림"
+            : l.ShowPanelBackground ? "불투명 판"
+            : "없음"),
+    };
+
+    /// <summary>
+    /// "이 레이아웃에서 잠기는 설정" 목록. 실제로 설정 컨트롤이 비활성화되는 항목만 넣는다 —
+    /// <see cref="TraitsOf"/> 의 '정하는 것'과 달리 이건 <b>사용자가 켜 둔 값이 무시된다</b>는 뜻이라,
+    /// 적어 두지 않으면 "껐는데 왜 그대로냐"가 된다.
+    /// <para>저장값은 건드리지 않는다 — 다른 레이아웃으로 돌아가면 고른 값이 그대로 되살아난다.</para>
+    /// </summary>
+    public static IReadOnlyList<LayoutNote> LocksOf(MeterLayout l)
+    {
+        var locks = new List<LayoutNote>();
+        if (l.RequiresFillGauge)
+        {
+            locks.Add(new LayoutNote("게이지 형태",
+                "직업색 채움으로 고정 — 얇은 바·표시 안 함은 여기선 빈 리본이 된다"));
+        }
+
+        if (!l.ShowServerTag)
+        {
+            locks.Add(new LayoutNote("서버 표시", "이 레이아웃은 이름 뒤에 서버를 넣지 않는다"));
+        }
+
+        return locks;
+    }
 }

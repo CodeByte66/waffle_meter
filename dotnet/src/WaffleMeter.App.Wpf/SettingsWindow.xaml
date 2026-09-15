@@ -448,11 +448,16 @@
                                       ItemTemplate="{StaticResource OptionItemTemplate}" SelectedValuePath="Value" SelectedValue="{Binding NameDisplay}"/>
                         </Grid>
 
-                        <Grid Margin="0,0,0,14">
+                        <Grid Margin="0,0,0,14" IsEnabled="{Binding ServerTagEnabled}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
                                 <TextBlock Text="서버 표시" Style="{StaticResource SettingTitle}"/>
                                 <TextBlock Text="닉네임 옆에 서버 약칭을 [ ] 안에 표시합니다." Style="{StaticResource SettingDesc}"/>
+                                <!-- 계기판은 이름 뒤 서버를 아예 넣지 않는다. 잠그지 않으면 켜 둔 토글이 아무 일도
+                                     안 해서 "껐는데 왜 그대로냐"의 반대 오해가 생긴다. 저장값은 건드리지 않는다. -->
+                                <TextBlock Text="이 레이아웃은 이름 뒤에 서버를 넣지 않습니다 — 다른 레이아웃으로 바꾸면 다시 켤 수 있습니다."
+                                           Style="{StaticResource SettingDesc}"
+                                           Visibility="{Binding ServerTagEnabled, Converter={StaticResource BoolToVisInverse}}"/>
                             </StackPanel>
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding ShowServerTag}"/>
                         </Grid>
@@ -470,11 +475,63 @@
                         <Grid Margin="0,0,0,14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                <TextBlock Text="레이아웃" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock x:Name="LayoutSectionHeader" Text="레이아웃" Style="{StaticResource SettingTitle}"/>
                                 <TextBlock Text="미터 전체의 생김새를 고릅니다. 전장은 보스 체력을 독립 게이지 띠로 크게, 계기판은 판을 없애고 체력 퍼센트를 크게, 무대는 행을 틈 없이 붙여 하나의 판으로 보여줍니다. 고르면 행 높이도 그 레이아웃 기본값으로 함께 바뀝니다." Style="{StaticResource SettingDesc}"/>
                             </StackPanel>
                             <ComboBox Grid.Column="1" Width="190" VerticalAlignment="Center" ItemsSource="{Binding MeterLayouts}"
                                       ItemTemplate="{StaticResource OptionItemTemplate}" SelectedValuePath="Value" SelectedValue="{Binding MeterLayoutId}"/>
+                        </Grid>
+
+                        <!-- 레이아웃 미리보기. 고른 레이아웃이 실제로 어떻게 그려지는지 + 무엇을 레이아웃이
+                             정하고 무엇이 잠기는지. 콤보를 바꾸면 세 덩어리가 함께 바뀐다. -->
+                        <controls:LayoutPreviewCard DataContext="{Binding LayoutPreview}" Margin="0,0,0,10"/>
+                        <Grid x:Name="LayoutNotesAnchor" Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,14,0">
+                                <TextBlock Text="이 레이아웃이 정하는 것" FontSize="11.5" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Skin.Fg}" Margin="0,0,0,5"/>
+                                <ItemsControl ItemsSource="{Binding LayoutTraits}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,3">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="72"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding Label}" FontSize="11"
+                                                           Foreground="{DynamicResource Skin.MutedFg}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Detail}" FontSize="11"
+                                                           Foreground="{DynamicResource Skin.Fg}" TextWrapping="Wrap"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+
+                            <!-- 잠기는 설정이 없는 레이아웃(전장)에서는 제목째 접는다 — 빈 칸에 제목만 남으면
+                                 "뭔가 잠겼는데 안 보이나" 로 읽힌다. -->
+                            <StackPanel Grid.Column="1" Visibility="{Binding LayoutLocksVisibility}">
+                                <TextBlock Text="잠기는 설정" FontSize="11.5" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Skin.Accent}" Margin="0,0,0,5"/>
+                                <ItemsControl ItemsSource="{Binding LayoutLocks}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,6">
+                                                <TextBlock Text="{Binding Label}" FontSize="11" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource Skin.Fg}"/>
+                                                <TextBlock Text="{Binding Detail}" FontSize="10.5" TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource Skin.MutedFg}" Margin="0,1,0,0"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="저장한 값은 그대로 남습니다 — 다른 레이아웃으로 돌아가면 되살아납니다."
+                                           Style="{StaticResource SettingDesc}" FontSize="10.5" Margin="0,2,0,0"/>
+                            </StackPanel>
                         </Grid>
 
                         <Grid Margin="0,0,0,14">

@@ -1183,7 +1183,13 @@ internal static class Program
         var props = new PropertyHandler(tmp);
         var settings = new MeterSettings(props);
         var presets = new BuffPresetManager(settings, _ => { }, _ => { });
-        var vm = new SettingsViewModel(new MeterServices(props), settings, new MeterColorTheme(props),
+        // 레이아웃 미리보기의 보스칸은 인카운터 카탈로그가 있어야 난이도 칩·서브라인을 그린다. 실제 앱은
+        // MeterServices 의 레퍼런스 로드가 이미 실어 두지만, 하네스는 그 경로를 타지 않는다 — 안 실으면
+        // 칩이 조용히 비어 "이 레이아웃엔 칩이 없구나" 로 오독하게 된다(실제로 한 번 그렇게 읽었다).
+        var tabServices = new MeterServices(props);
+        tabServices.Data.LoadEncounters(WaffleMeter.Data.EncounterCatalog.Load(
+            Path.Combine(AppContext.BaseDirectory, "json", "encounters.json")));
+        var vm = new SettingsViewModel(tabServices, settings, new MeterColorTheme(props),
             new SkinManager(props), new OverlayController(new OverlayWindow(), props), new HotkeyHandler(props),
             presets, new GameOptimizerService());
 
@@ -1332,6 +1338,70 @@ internal static class Program
                         scroll.UpdateLayout();
                         RenderToPng(window, Path.Combine(outDir, $"settings_font_system_{skinName}.png"), fixedSize: true);
                         scroll.ScrollToTop();
+                    }
+
+                    // 레이아웃 미리보기 — 세 레이아웃을 돌며 미리보기 카드와 '정하는 것 / 잠기는 설정'이
+                    // 함께 바뀌는지. 카드는 **진짜** BossBarView·MeterRowsView 를 그리므로, 여기서 비는
+                    // 것은 미터에서도 빈다.
+                    if (key == "display" && skinName == "Dark" && scroll is not null)
+                    {
+                        string savedLayout = vm.MeterLayoutId;
+                        foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+                        {
+                            vm.MeterLayoutId = lay.Id;
+                            Drain(window.Dispatcher);
+                            scroll.ScrollToTop();
+                            window.UpdateLayout();
+                            // 레이아웃 섹션은 화면 아래에 있다. ⚠️ BringIntoView 로는 못 옮긴다 — 그건
+                            // 디스패처에 스크롤을 **예약**할 뿐이라 UpdateLayout 만으로는 실행되지 않고,
+                            // 폰트 카드 쪽이 움직이는 건 뒤따르는 명시적 ScrollToVerticalOffset 덕이다.
+                            // 여기서는 섹션의 실제 y 를 재서 그 자리로 직접 간다.
+                            var layHeader = window.FindName("LayoutSectionHeader") as FrameworkElement;
+                            if (!contractChecked)
+                            {
+                                Check("LayoutSectionHeader 앵커가 있다", layHeader is not null);
+                            }
+
+                            if (layHeader is not null)
+                            {
+                                double y = layHeader.TransformToAncestor(panelHost).Transform(new Point(0, 0)).Y;
+                                scroll.ScrollToVerticalOffset(Math.Max(0.0, y - 12.0));
+                                scroll.UpdateLayout();
+                            }
+                            RenderToPng(window, Path.Combine(outDir, $"settings_layout_{lay.Id}_Dark.png"), fixedSize: true);
+
+                            // 두 번째 프레임: '정하는 것 / 잠기는 설정' 목록. 미리보기 카드와 한 화면에
+                            // 다 안 들어가므로 따로 잡는다 — 접히는 쪽(전장엔 잠금이 없다)을 봐야 한다.
+                            if (window.FindName("LayoutNotesAnchor") is FrameworkElement notes)
+                            {
+                                double ny = notes.TransformToAncestor(panelHost).Transform(new Point(0, 0)).Y;
+                                scroll.ScrollToVerticalOffset(Math.Max(0.0, ny - 12.0));
+                                scroll.UpdateLayout();
+                                RenderToPng(window, Path.Combine(outDir, $"settings_layout_notes_{lay.Id}_Dark.png"), fixedSize: true);
+                            }
+
+                            if (!contractChecked)
+                            {
+                                // 파생이 스펙과 붙어 있는지. 잠금 목록이 비면 UI 도 접히므로, 목록과
+                                // 실제 비활성화가 어긋나면 "잠긴다고 적혀 있는데 눌리는" 상태가 된다.
+                                bool gaugeLocked = MeterLayout.LocksOf(lay).Any(n => n.Label == "게이지 형태");
+                                Check($"{lay.Id}: 게이지 형태 잠금 목록 == 컨트롤 비활성화",
+                                    gaugeLocked == !vm.BarStyleEnabled);
+                                bool serverLocked = MeterLayout.LocksOf(lay).Any(n => n.Label == "서버 표시");
+                                Check($"{lay.Id}: 서버 표시 잠금 목록 == 컨트롤 비활성화",
+                                    serverLocked == !vm.ServerTagEnabled);
+                                Check($"{lay.Id}: 미리보기가 표본 전투 행을 그린다", vm.LayoutPreview.Rows.Count == 4);
+                                Check($"{lay.Id}: 미리보기가 레이아웃을 따라간다",
+                                    vm.LayoutPreview.Layout.Spec.Id == lay.Id);
+                                // 칩이 비면 "이 레이아웃엔 난이도 칩이 없다"로 읽힌다 — 카탈로그 공백과
+                                // 레이아웃 차이를 눈으로는 못 가리므로 여기서 갈라 둔다.
+                                Check($"{lay.Id}: 미리보기 보스가 난이도 칩을 싣는다 ('{vm.LayoutPreview.TargetVariantText}')",
+                                    vm.LayoutPreview.TargetVariantVisibility == Visibility.Visible);
+                            }
+                        }
+
+                        vm.MeterLayoutId = savedLayout;
+                        Drain(window.Dispatcher);
                     }
                 }
 

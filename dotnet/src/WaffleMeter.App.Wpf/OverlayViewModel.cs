@@ -62,8 +62,10 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         MeterColorTheme theme,
         Func<bool>? isLight = null,
         EncounterCatalog? encounters = null,
-        Func<string?>? trialLabel = null)
+        Func<string?>? trialLabel = null,
+        bool preview = false)
     {
+        _preview = preview;
         _trialLabel = trialLabel ?? (() => null);
         _settings = settings;
         Settings = settings;
@@ -82,6 +84,16 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         };
         _status = $"waffle_meter {version}";
     }
+
+    /// <summary>
+    /// 이 인스턴스가 설정창의 <b>미리보기</b>인가. 참이면 공용 애니메이션 시계에 수요를 보고하지 않는다.
+    ///
+    /// <para>🔑 <see cref="NameFxSheen.SetDemand"/>·<see cref="TierSheen.SetDemand"/> 는 카운트를 더하는 게
+    /// 아니라 <b>대입</b>한다. 미리보기가 같이 보고하면 진짜 미터가 ~500ms 마다 밀어 넣는 수요를 서로
+    /// 지워, 설정창을 열어 둔 동안 본체 연출이 간헐적으로 멈춘다. 설정창 쪽 시계는 별도 창구인
+    /// <see cref="NameFxSheen.SetPreviewDemand"/> 가 이미 담당한다.</para>
+    /// </summary>
+    private readonly bool _preview;
 
     /// <summary>
     /// Derives the per-row tier state FOR THE REPORT BEING RENDERED. Set once at startup.
@@ -958,12 +970,15 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         // LowSpecMode force-disables it — that property's doc comment has always claimed to "force-disable
         // display-only embellishments" while only pinning the refresh interval; this is the first thing it
         // actually switches off.
-        TierSheen.SetDemand(animatedTierRows, _settings.TierEffects == "animated" && !_settings.LowSpecMode);
-        NameFxSheen.SetLowSpec(_settings.LowSpecMode);
-        NameFxSheen.SetDemand(
-            animatedNameRows,
-            _settings.NameFxMode == "animated" && !_settings.LowSpecMode,
-            _settings.NameFxSpeedPercent);
+        if (!_preview) // 미리보기는 공용 시계의 수요를 대신 써 버린다 — _preview 주석 참고
+        {
+            TierSheen.SetDemand(animatedTierRows, _settings.TierEffects == "animated" && !_settings.LowSpecMode);
+            NameFxSheen.SetLowSpec(_settings.LowSpecMode);
+            NameFxSheen.SetDemand(
+                animatedNameRows,
+                _settings.NameFxMode == "animated" && !_settings.LowSpecMode,
+                _settings.NameFxSpeedPercent);
+        }
         ApplySelfTierChip(selfTier, selfRowTier);
 
         PlaceholderVisibility = Rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;

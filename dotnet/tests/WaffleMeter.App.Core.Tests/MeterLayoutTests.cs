@@ -178,4 +178,62 @@ public class MeterLayoutTests
             Assert.InRange(layout.DefaultRowHeight, 24, 80);
         }
     }
+
+    // ── 설정창 레이아웃 프리뷰 패널이 읽는 두 목록 ──────────────────────────────
+    // 문구를 손으로 적지 않고 스펙에서 파생하기로 한 결정을 여기서 잠근다. 파생이 끊기면(누가 리터럴로
+    // 되돌리면) 설명만 옛 모습으로 남는데, 그 어긋남은 화면을 봐도 안 보인다 — 설명이 그럴듯해서 오히려
+    // 틀린 쪽을 믿게 된다.
+
+    /// <summary>모든 레이아웃이 모든 축에 대해 말을 한다. 빈 칸은 "이 레이아웃은 이걸 안 한다"가 아니라
+    /// 그냥 설명이 빠진 것이고, 사용자에겐 구분이 안 된다.</summary>
+    [Fact]
+    public void Every_layout_describes_every_axis()
+    {
+        foreach (MeterLayout l in MeterLayout.All)
+        {
+            IReadOnlyList<MeterLayout.LayoutNote> traits = MeterLayout.TraitsOf(l);
+            Assert.NotEmpty(traits);
+            Assert.All(traits, n =>
+            {
+                Assert.False(string.IsNullOrWhiteSpace(n.Label));
+                Assert.False(string.IsNullOrWhiteSpace(n.Detail));
+            });
+
+            // 같은 축을 두 번 설명하지 않는다.
+            Assert.Equal(traits.Count, traits.Select(n => n.Label).Distinct(StringComparer.Ordinal).Count());
+        }
+    }
+
+    /// <summary>세 레이아웃의 설명이 서로 달라야 패널이 의미를 갖는다. 전부 같은 글이 뜨면 패널은 장식이다.</summary>
+    [Fact]
+    public void Layout_descriptions_actually_differ()
+    {
+        string[] rendered = MeterLayout.All
+            .Select(l => string.Join("|", MeterLayout.TraitsOf(l).Select(n => $"{n.Label}={n.Detail}")))
+            .ToArray();
+
+        Assert.Equal(rendered.Length, rendered.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>잠금 목록은 스펙 플래그와 1:1 이다 — 목록과 실제 비활성화가 어긋나면
+    /// "잠긴다고 적혀 있는데 눌리는" 상태가 된다(설정창 쪽은 UiPreview 하네스가 같은 등식을 확인한다).</summary>
+    [Fact]
+    public void Locks_follow_the_spec_flags()
+    {
+        foreach (MeterLayout l in MeterLayout.All)
+        {
+            IReadOnlyList<MeterLayout.LayoutNote> locks = MeterLayout.LocksOf(l);
+            Assert.Equal(l.RequiresFillGauge, locks.Any(n => n.Label == "게이지 형태"));
+            Assert.Equal(!l.ShowServerTag, locks.Any(n => n.Label == "서버 표시"));
+            Assert.All(locks, n => Assert.False(string.IsNullOrWhiteSpace(n.Detail)));
+        }
+    }
+
+    /// <summary>전장은 아무것도 빼앗지 않는 기준선이다 — 여기서 잠기는 게 생기면 "기본 UI 로 돌아가면
+    /// 다시 고를 수 있다"는 다른 잠금들의 안내가 통째로 거짓이 된다.</summary>
+    [Fact]
+    public void The_baseline_layout_locks_nothing()
+    {
+        Assert.Empty(MeterLayout.LocksOf(MeterLayout.Battlefield));
+    }
 }
