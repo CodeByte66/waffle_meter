@@ -662,6 +662,20 @@
                             </StackPanel>
                             <Slider Grid.Column="1" VerticalAlignment="Center" Minimum="24" Maximum="80" Value="{Binding RowHeight}" TickFrequency="1" IsSnapToTickEnabled="True"/>
                         </Grid>
+
+                        <!-- 보스칸 높이. 100% 기준 높이가 레이아웃마다 달라서(전장 104 / 계기판 52 / 무대 70)
+                             눈금 단위는 px 가 아니라 배율이다 — 대신 제목이 지금 레이아웃에서의 실제 px 를
+                             함께 말한다. 칸 높이와 칸 안 치수에 **같은** 배율이 걸리므로 어느 값에서도
+                             여백 비율이 100% 와 같고 글자가 잘리지 않는다. -->
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="{Binding BossSlotHeightHint}" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="보스 HP 칸의 높이입니다. 칸 안의 보스 이름·체력 숫자·게이지도 같은 비율로 커지고 작아집니다." Style="{StaticResource SettingDesc}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <Slider Grid.Column="1" VerticalAlignment="Center" Minimum="70" Maximum="150"
+                                    Value="{Binding BossSlotScalePercent}" TickFrequency="5" IsSnapToTickEnabled="True"/>
+                        </Grid>
                         <Border Style="{StaticResource SectionDivider}"/>
                         <TextBlock Text="상태 표시" Style="{StaticResource SectionHeader}" Margin="0,0,0,10"/>
                         <Grid Margin="0,0,0,14">
@@ -1840,6 +1854,17 @@
                                 <local:HotkeyCaptureBox x:Name="SplitUiHotkeyBox" Grid.Column="0" Combo="{Binding PendingSplitUi, Mode=TwoWay}"/>
                                 <Button Grid.Column="1" Style="{StaticResource HotkeyClearButton}"
                                         Click="OnClearHotkey" Tag="{Binding ElementName=SplitUiHotkeyBox}"/>
+                            </Grid>
+                        </Grid>
+                        <!-- 컨텐츠 관리. 같은 이유로 기본 미지정 — 트레이 메뉴·오드 배지와 같은 창을 연다. -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="컨텐츠 관리 열기/닫기" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <Grid Grid.Column="1">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <local:HotkeyCaptureBox x:Name="AetherListHotkeyBox" Grid.Column="0" Combo="{Binding PendingAetherList, Mode=TwoWay}"/>
+                                <Button Grid.Column="1" Style="{StaticResource HotkeyClearButton}"
+                                        Click="OnClearHotkey" Tag="{Binding ElementName=AetherListHotkeyBox}"/>
                             </Grid>
                         </Grid>
                         <Grid Margin="0,0,0,10">

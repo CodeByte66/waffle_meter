@@ -176,6 +176,31 @@ internal static class Program
                     Capture(() => new OverlayWindow { DataContext = lv }, palette, Path.Combine(outDir, $"layout_{lay.Id}_Dark.png"));
                 }
 
+                // 보스칸 높이 배율 — 칸과 칸 안 치수가 **같은** 배율을 타는지는 결국 눈으로만 보인다
+                // (루트 Border 가 ClipToBounds 라 넘쳐도 예외가 없다. 잘린 채 조용히 렌더될 뿐이다).
+                // 세 레이아웃을 슬라이더 양 끝에서 뽑아 둔다.
+                int savedBossScale = settings.BossSlotScalePercent;
+                foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+                {
+                    settings.MeterLayoutId = lay.Id;
+                    settings.RowHeight = lay.DefaultRowHeight;
+                    foreach (int pct in new[]
+                    {
+                        WaffleMeter.App.Core.MeterLayout.BossScaleMin,
+                        WaffleMeter.App.Core.MeterLayout.BossScaleMax,
+                    })
+                    {
+                        settings.BossSlotScalePercent = pct;
+                        var bsv = new OverlayViewModel("1.7.8", settings, theme, encounters: encounterCatalog) { Status = "캡처 중" };
+                        bsv.SetRecognized(true, "콘팡");
+                        bsv.Update(SampleMeterReport(now));
+                        Capture(() => new OverlayWindow { DataContext = bsv }, palette,
+                            Path.Combine(outDir, $"boss_scale_{lay.Id}_{pct}_Dark.png"));
+                    }
+                }
+
+                settings.BossSlotScalePercent = savedBossScale;
+
                 // UI 분리모드 — 같은 VM 인스턴스를 두 창이 나눠 그린다(본체와 같은 배선). 레이아웃별로
                 // 보스칸/미터 행을 따로 뽑아, 헤더·푸터가 사라진 뒤에도 각 조각이 혼자 서는지 본다.
                 foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
@@ -726,6 +751,25 @@ internal static class Program
             layoutProbe.Layout.Spec.Id == "stage" && Math.Abs(layoutProbe.Layout.RowMinHeight - settings.RowHeight) < 0.001);
         settings.MeterLayoutId = "battlefield";
         settings.RowHeight = 36;
+
+        // 보스칸 높이 배율. 저장은 퍼센트고, 화면 높이는 레이아웃별 기준값 × 배율이다.
+        // 🔑 배율이 MeterLayoutVisual 의 **캐시 키**에 들어 있어야 한다 — 빠지면 For() 가 옛 인스턴스를
+        //    돌려주고 OverlayViewModel.Set 의 Equals 가드에 걸려, 설정만 저장되고 화면은 그대로인
+        //    가장 헷갈리는 실패가 된다.
+        vm.BossSlotScalePercent = 80;
+        Check("BossSlotScalePercent", settings.BossSlotScalePercent == 80 && props.GetProperty("bossSlotScale") == "80");
+        Check($"보스칸 높이 라벨이 실제 px 를 말한다 ({vm.BossSlotHeightHint})",
+            vm.BossSlotHeightHint.Contains("80%") && vm.BossSlotHeightHint.Contains("px"));
+        var bossProbe = new OverlayViewModel("1.7.8", settings, theme);
+        bossProbe.RefreshLayout();
+        double bossAt80 = bossProbe.Layout.BossHeight;
+        settings.BossSlotScalePercent = 100;
+        bossProbe.RefreshLayout();
+        Check($"보스칸 배율이 캐시를 통과한다 (80% = {bossAt80:0.#}px, 100% = {bossProbe.Layout.BossHeight:0.#}px)",
+            bossAt80 < bossProbe.Layout.BossHeight
+            && Math.Abs(bossProbe.Layout.BossHeight - 104.0) < 0.001
+            && Math.Abs(bossProbe.Layout.BossScale - 1.0) < 0.001);
+
         vm.MeterOpacity = 0.7; Check("MeterOpacity", Math.Abs(settings.MeterOpacity - 0.7) < 0.001);
 
         vm.IsMinimal = true; Check("IsMinimal", settings.IsMinimal);
@@ -769,6 +813,31 @@ internal static class Program
         Check("UI 분리모드 단축키가 Reload 를 넘어 살아남는다", hotkeys.SplitUi is { VkCode: 0x55 });
         vm.PendingSplitUi = null; vm.Commit();
         Check("UI 분리모드 단축키 해제", hotkeys.SplitUi is null);
+
+        // 컨텐츠 관리 단축키도 같은 이유로 미지정 출고 — 트레이 메뉴·오드 배지와 같은 창을 연다.
+        Check("컨텐츠 관리 단축키는 기본 미지정", hotkeys.AetherList is null && vm.PendingAetherList is null);
+        vm.PendingAetherList = new HotkeyCombo(HotkeyHandler.ModControl | HotkeyHandler.ModShift, 0x4B); // Ctrl+Shift+K
+        vm.Commit();
+        Check("컨텐츠 관리 단축키 저장", hotkeys.AetherList is { VkCode: 0x4B });
+        hotkeys.Reload(); // 설정 가져오기가 타는 경로 — 파일에서 다시 읽어도 살아 있어야 한다
+        Check("컨텐츠 관리 단축키가 Reload 를 넘어 살아남는다", hotkeys.AetherList is { VkCode: 0x4B });
+        vm.PendingAetherList = null; vm.Commit();
+        Check("컨텐츠 관리 단축키 해제", hotkeys.AetherList is null);
+
+        // 중복 지정. 일곱 칸이 같은 조합을 들면 RegisterHotKey 는 먼저 등록되는 쪽만 성공하고 나중 것은
+        // 조용히 죽는다 — 그래서 방금 고른 쪽이 이기고 먼저 쓰던 칸이 '미지정'으로 비워져야 한다.
+        vm.PendingVisibility = new HotkeyCombo(HotkeyHandler.ModControl, 0x48); // Ctrl+H (표시/숨김 기본 조합)
+        vm.PendingAetherList = new HotkeyCombo(HotkeyHandler.ModControl, 0x48); // 같은 조합을 컨텐츠 관리에
+        Check("중복 지정이 먼저 쓰던 칸을 비운다",
+            vm.PendingVisibility is null && vm.PendingAetherList is { VkCode: 0x48 });
+        vm.Commit();
+        Check("중복 정리가 저장까지 간다", hotkeys.Visibility is null && hotkeys.AetherList is { VkCode: 0x48 });
+
+        // 반대 방향도 같은 규칙이어야 한다(표를 빠뜨린 칸이 있으면 여기서 걸린다).
+        vm.PendingVisibility = new HotkeyCombo(HotkeyHandler.ModControl, 0x48);
+        Check("되돌려 지정하면 이번엔 컨텐츠 관리가 비워진다",
+            vm.PendingAetherList is null && vm.PendingVisibility is { VkCode: 0x48 });
+        vm.Commit();
 
         // 닉네임 효과. The property that must never regress: with the feature off the row is painted with the
         // SAME brush instance as before the feature existed, so "off" is pixel-identical rather than merely similar.
@@ -1206,8 +1275,24 @@ internal static class Program
             settings.MeterLayoutId == "battlefield" && settings.RowHeight == 36);
         layoutCancelVm.Detach();
 
+        // 재시드(가져오기·취소)는 중복 정리를 타면 안 된다. 파일에 이미 같은 조합이 두 칸 들어 있는
+        // 상태 — 중복 정리가 생기기 전 빌드에서 만들어질 수 있다 — 에서 재시드가 그걸 '정리'하면,
+        // 하필 등록에 성공하고 있던 칸(id 가 작아 먼저 등록되는 쪽)이 지워지고 이어지는 저장이 그
+        // 손실을 굳힌다. 사용자는 아무것도 누르지 않았는데 멀쩡하던 단축키를 잃는다.
+        props.SetProperty("hotkey", "modifiers=2,vkCode=82");        // Ctrl+R
+        props.SetProperty("splitUiHotkey", "modifiers=2,vkCode=82"); // 같은 조합이 두 칸에
+        hotkeys.Reload();
+        var reseedVm = new SettingsViewModel(services, settings, theme, skin, controller, hotkeys, presets, new GameOptimizerService());
+        reseedVm.Revert();
+        Check("재시드는 파일에 있던 중복을 지우지 않는다",
+            reseedVm.PendingReset is { VkCode: 0x52 } && reseedVm.PendingSplitUi is { VkCode: 0x52 });
+        reseedVm.Detach();
+        props.SetProperty("splitUiHotkey", "none");
+        hotkeys.Reload();
+
         vm.ResetDefaults();
-        Check("ResetDefaults", settings.DisplayMode == "dps_percent" && settings.RowHeight == 36 && skin.Current == "dark");
+        Check("ResetDefaults", settings.DisplayMode == "dps_percent" && settings.RowHeight == 36
+            && settings.BossSlotScalePercent == 100 && skin.Current == "dark");
 
         bool consentOk = true;
         try { vm.ConsentAccepted = false; vm.ApplyConsent(); } catch { consentOk = false; }

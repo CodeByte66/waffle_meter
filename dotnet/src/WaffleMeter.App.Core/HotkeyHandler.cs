@@ -62,6 +62,7 @@ public sealed class HotkeyHandler : IDisposable
     private const int DummyToggleId = 4;
     private const int DummyResetId = 5;
     private const int SplitUiId = 6;
+    private const int AetherListId = 7;
 
     // A held global hotkey auto-repeats: while the combo stays down Windows posts WM_HOTKEY at the keyboard
     // repeat RATE (up to ~30/s, i.e. ~33ms apart), and there is no key-up message to mark the release. Collapse
@@ -83,6 +84,7 @@ public sealed class HotkeyHandler : IDisposable
     private const string KeyDummyToggle = "dummyToggleHotkey";
     private const string KeyDummyReset = "dummyResetHotkey";
     private const string KeySplitUi = "splitUiHotkey";
+    private const string KeyAetherList = "aetherListHotkey";
 
     // Persisted marker for an explicitly-unassigned hotkey. Distinct from "property never set" (→ default)
     // and from a corrupt/unparseable value (→ default): an unassigned combo registers no global hotkey.
@@ -99,6 +101,7 @@ public sealed class HotkeyHandler : IDisposable
     private volatile HotkeyCombo? _dummyToggle;
     private volatile HotkeyCombo? _dummyReset;
     private volatile HotkeyCombo? _splitUi;
+    private volatile HotkeyCombo? _aetherList;
     private Thread? _listener;
     private volatile bool _running;
     private readonly Dictionary<int, long> _lastHotkeyTick = new(); // per-id leading-edge debounce; listener-thread-only
@@ -111,6 +114,9 @@ public sealed class HotkeyHandler : IDisposable
 
     /// <summary>UI 분리모드 켜기/끄기. 기본 미지정 — 인게임 키와 겹칠 위험이 있는 조합을 우리가 고르지 않는다.</summary>
     public Action? OnSplitUi { get; set; }
+
+    /// <summary>컨텐츠 관리 창 열기/닫기. 같은 이유로 기본 미지정 — 사용자가 단축키 탭에서 고른다.</summary>
+    public Action? OnAetherList { get; set; }
 
     public HotkeyHandler(PropertyHandler props)
     {
@@ -142,6 +148,7 @@ public sealed class HotkeyHandler : IDisposable
         _dummyToggle = LoadOptional(KeyDummyToggle); // 허수아비 hotkeys ship UNASSIGNED — user opts in via the tab
         _dummyReset = LoadOptional(KeyDummyReset);
         _splitUi = LoadOptional(KeySplitUi); // 분리모드도 UNASSIGNED 출고 — 사용자가 단축키 탭에서 고른다
+        _aetherList = LoadOptional(KeyAetherList); // 컨텐츠 관리도 UNASSIGNED 출고
     }
 
     public HotkeyCombo? Reset => _reset;
@@ -150,6 +157,7 @@ public sealed class HotkeyHandler : IDisposable
     public HotkeyCombo? DummyToggle => _dummyToggle;
     public HotkeyCombo? DummyReset => _dummyReset;
     public HotkeyCombo? SplitUi => _splitUi;
+    public HotkeyCombo? AetherList => _aetherList;
 
     /// <summary>Set (or with <c>null</c>, unassign) the reset hotkey; persists and re-registers live.</summary>
     public void SetReset(HotkeyCombo? combo) => Update(v => _reset = v, KeyReset, combo);
@@ -158,6 +166,7 @@ public sealed class HotkeyHandler : IDisposable
     public void SetDummyToggle(HotkeyCombo? combo) => Update(v => _dummyToggle = v, KeyDummyToggle, combo);
     public void SetDummyReset(HotkeyCombo? combo) => Update(v => _dummyReset = v, KeyDummyReset, combo);
     public void SetSplitUi(HotkeyCombo? combo) => Update(v => _splitUi = v, KeySplitUi, combo);
+    public void SetAetherList(HotkeyCombo? combo) => Update(v => _aetherList = v, KeyAetherList, combo);
 
     private void Update(Action<HotkeyCombo?> assign, string key, HotkeyCombo? value)
     {
@@ -244,6 +253,11 @@ public sealed class HotkeyHandler : IDisposable
             RegisterHotKey(IntPtr.Zero, SplitUiId, (uint)su.Modifiers, (uint)su.VkCode);
         }
 
+        if (_aetherList is { } al)
+        {
+            RegisterHotKey(IntPtr.Zero, AetherListId, (uint)al.Modifiers, (uint)al.VkCode);
+        }
+
         try
         {
             while (_running)
@@ -272,6 +286,9 @@ public sealed class HotkeyHandler : IDisposable
                             case SplitUiId:
                                 OnSplitUi?.Invoke();
                                 break;
+                            case AetherListId:
+                                OnAetherList?.Invoke();
+                                break;
                         }
                     }
                 }
@@ -289,6 +306,7 @@ public sealed class HotkeyHandler : IDisposable
             UnregisterHotKey(IntPtr.Zero, DummyToggleId);
             UnregisterHotKey(IntPtr.Zero, DummyResetId);
             UnregisterHotKey(IntPtr.Zero, SplitUiId);
+            UnregisterHotKey(IntPtr.Zero, AetherListId);
         }
     }
 

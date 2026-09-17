@@ -315,7 +315,14 @@ public partial class App : Application
 
             // 레이아웃·행 높이는 '고르는 즉시' 생김새가 바뀌어야 한다. Update(report) 를 기다리면 캡처
             // 헬퍼가 안 붙은 상태에서는 리포트가 아예 안 와 영원히 안 바뀐다.
-            if (e.PropertyName is nameof(MeterSettings.MeterLayoutId) or nameof(MeterSettings.RowHeight))
+            // ⚠️ 빈 이름을 반드시 받는다. INotifyPropertyChanged 규약에서 string.Empty 는 "전 프로퍼티가
+            // 바뀌었다"는 뜻이고, 설정 코드 가져오기의 유일한 반영 경로인 MeterSettings.Reload() 가 정확히
+            // 그것만 발화한다 — 이름만 비교하면 가져온 레이아웃·행 높이·보스칸 높이가 다음 리포트 틱까지
+            // (캡처 헬퍼가 안 붙었으면 영원히) 옛 값으로 남는다.
+            if (string.IsNullOrEmpty(e.PropertyName)
+                || e.PropertyName is nameof(MeterSettings.MeterLayoutId)
+                or nameof(MeterSettings.RowHeight)
+                or nameof(MeterSettings.BossSlotScalePercent))
             {
                 viewModel.RefreshLayout();
                 // ⚠️ 자동 높이를 여기서 **명시적으로** 다시 켠다. WindowResizePolicy.ShouldReautoFit 은
@@ -373,6 +380,11 @@ public partial class App : Application
             // UI 분리모드 토글. 설정값만 뒤집으면 나머지는 PropertyChanged → ApplySplitUiMode 가 처리한다.
             // ⚠️ 여기서 창을 직접 만지지 마라 — 표시 여부의 주인은 OverlayController 의 폴이다.
             OnSplitUi = () => Dispatcher.Invoke(() => _settings.SplitUiMode = !_settings.SplitUiMode),
+            // 컨텐츠 관리 창 토글. 트레이 메뉴와 **같은 진입점**(RequestAetherList)으로 흘려보낸다 —
+            // ⚠️ 여기서 패널을 직접 Park/Present 하지 마라. 표시 상태의 주인은 App 의 _aetherPanelVisible
+            //    이고 토글 로직은 AetherListRequested 핸들러 한 곳뿐이라, 직접 만지면 트레이·오드 배지와
+            //    상태가 갈린다.
+            OnAetherList = () => Dispatcher.Invoke(window.RequestAetherList),
         };
         _hotkeys.Start();
 
@@ -3338,6 +3350,26 @@ public partial class App : Application
             if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(MeterSettings.SplitUiMode))
             {
                 Dispatcher.BeginInvoke(ApplySplitUiMode);
+            }
+            else if (e.PropertyName == nameof(MeterSettings.BossSlotScalePercent))
+            {
+                // 보스칸 높이가 바뀌면 **보스 창만** 다시 높이를 잰다. 분리 보스 창은 SizeToContent="Height"
+                // 라 보스칸 높이가 곧 창 높이인데, 리사이즈 띠를 한 번 클릭만 해도 그 세션 내내 자동 높이가
+                // 굳는다(WPF 가 방향·이동량과 무관하게 끈다) — 그 상태에서 배율을 올리면 창은 그대로고
+                // ClipToBounds 가 내용을 먹는다.
+                // ⚠️ 여기서 ApplySplitUiMode 를 부르지 마라. 그건 **행 창**의 수동 높이 래치까지 풀고
+                //    SetSplitUiMode(→ Park/Present·폴)를 다시 태운다. 슬라이더는 눈금마다 발화하므로
+                //    드래그 한 번에 사용자가 맞춰 둔 행 창 높이가 여러 번 자동 높이로 튄다.
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (_splitBoss is null)
+                    {
+                        return;
+                    }
+
+                    _splitBossHeightManual = false;
+                    _splitBoss.SizeToContent = SizeToContent.Height;
+                });
             }
         };
     }

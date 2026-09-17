@@ -18,13 +18,24 @@
 
         ⚠️ 루트 Border 는 고정 높이 + ClipToBounds 다. 높이가 모자라면 글자가 잘린 채 조용히
         렌더된다(계기판 52px 에서 실제로 겪었다). 내용을 더하면 3종 + 대기까지 전부 확인할 것.
+
+        🔑 칸 높이는 사용자 배율(설정 › 표시 › 보스칸 높이, 70~150%)을 탄다. 그래서 칸 안의 **세로 치수와
+        글자 크기는 전부** `Layout.BossScale` 을 곱한다(BossScaleConverter — 파라미터가 100% 기준값).
+        칸과 내용이 같은 수를 곱하므로 어느 배율에서도 100% 와 여백 비율이 같다. 새 요소를 더하면서 이
+        곱을 빼먹으면 축소 배율에서 그 요소만 제자리에 남아 칸을 넘치고, ClipToBounds 라 잘린 채
+        조용히 렌더된다.
+        ⚠️ 가로 여백(카드 좌우 Padding, 무대의 -11 되밀기, 칩·아이콘 오른쪽 간격)은 곱하지 않는다 —
+        보스칸의 좌우 정렬선은 아래 행들과 공유하는 축이라 배율을 따라 움직이면 보스 이름과 행 이름의
+        왼쪽 끝이 어긋난다.
     -->
     <UserControl.Resources>
         <local:RatioToStarConverter x:Key="RatioToStar"/>
         <local:OffsetConverter x:Key="Offset"/>
+        <!-- 칸 높이에 맞춰 칸 안 치수를 같이 움직이는 배율. 파라미터가 100% 기준값이다. -->
+        <local:BossScaleConverter x:Key="BossScale"/>
     </UserControl.Resources>
 
-    <Border CornerRadius="6" Padding="8,0" Margin="{Binding Layout.SectionGapBelow}" ClipToBounds="True"
+    <Border Margin="{Binding Layout.SectionGapBelow}" ClipToBounds="True"
             Visibility="{Binding BossSlotVisibility}">
         <Border.Style>
             <Style TargetType="Border">
@@ -33,12 +44,20 @@
                 <Setter Property="Background" Value="{DynamicResource Skin.RowBg}"/>
                 <Setter Property="BorderBrush" Value="{DynamicResource Skin.SoftBorder}"/>
                 <Setter Property="BorderThickness" Value="1"/>
+                <!-- ⚠️ 이 둘도 반드시 Setter 다. 속성으로 쓰면 로컬 값이라 아래 무대 트리거의
+                     CornerRadius·Padding 이 **절대 못 이긴다** — v3.0.0 이 정확히 그래서 무대 카드가
+                     둥근 모서리에 8px 패딩으로 나갔고(설계는 각진 모서리 + 11px), 배경 게이지의
+                     -11 되밀기만 11 을 가정한 채 어긋나 있었다. -->
+                <Setter Property="CornerRadius" Value="6"/>
+                <Setter Property="Padding" Value="8,0"/>
                 <Setter Property="Height" Value="{Binding Layout.BossHeight}"/>
                 <Style.Triggers>
                     <DataTrigger Binding="{Binding Layout.BossReadoutVisibility}" Value="Visible">
                         <Setter Property="Background" Value="Transparent"/>
                         <Setter Property="BorderBrush" Value="Transparent"/>
-                        <Setter Property="Padding" Value="4,0"/>
+                        <!-- 계기판은 좌우 여백을 **다른 레이아웃과 같은 8** 로 둔다. 원래 여기 4,0 이
+                             적혀 있었지만 위 로컬 값에 막혀 한 번도 적용된 적이 없고, 실제로 적용해 보니
+                             보스 글자만 행 텍스트(카드 패딩 8)보다 4px 더 왼쪽으로 튀어나왔다. -->
                     </DataTrigger>
                     <DataTrigger Binding="{Binding Layout.BossCanvasVisibility}" Value="Visible">
                         <Setter Property="CornerRadius" Value="0"/>
@@ -88,7 +107,7 @@
                     </Grid.RowDefinitions>
 
                     <!-- 1줄: [난이도] 이름 -->
-                    <Grid Grid.Row="0" Margin="0,8,0,7">
+                    <Grid Grid.Row="0" Margin="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter='0,8,0,7'}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
@@ -99,16 +118,20 @@
                                 Background="{DynamicResource Skin.BossChipBg}" BorderThickness="1"
                                 BorderBrush="{DynamicResource Skin.BossChipRing}"
                                 Visibility="{Binding TargetVariantVisibility}">
-                            <TextBlock Text="{Binding TargetVariantText}" FontSize="10.5" FontWeight="Bold"
+                            <TextBlock Text="{Binding TargetVariantText}" FontWeight="Bold"
+                                       FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=10.5}"
                                        Foreground="{DynamicResource Skin.BossChipFg}"/>
                         </Border>
                         <TextBlock Grid.Column="1" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}"
-                                   FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center"
+                                   FontWeight="SemiBold" VerticalAlignment="Center"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=16}"
                                    TextTrimming="CharacterEllipsis"/>
                     </Grid>
 
                     <!-- 2줄: 20px 게이지 띠 + 25% 눈금. 남은 HP 가 색이 아니라 길이로 읽힌다. -->
-                    <Border Grid.Row="1" Height="20" CornerRadius="4" ClipToBounds="True"
+                    <Border Grid.Row="1" ClipToBounds="True"
+                            Height="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=20}"
+                            CornerRadius="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=4}"
                             Background="{DynamicResource Skin.GaugeTrack}"
                             BorderBrush="{DynamicResource Skin.SoftBorder}" BorderThickness="1">
                         <Grid>
@@ -120,7 +143,8 @@
                                  자르기 때문에 둥근 모서리를 따라가지 않는다 — 각진 채움을 넣으면 트랙의
                                  둥근 꼭지점 밖으로 모서리가 삐져나온다. 3 은 트랙 4 보다 1 작아 안쪽에
                                  자연스럽게 앉는다. -->
-                            <Border Grid.Column="0" CornerRadius="3" ClipToBounds="True"
+                            <Border Grid.Column="0" ClipToBounds="True"
+                                    CornerRadius="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=3}"
                                     Background="{Binding BossBarBrush}">
                                 <!-- 상단 1px 하이라이트 — 띠에 두께감을 준다. -->
                                 <Border Height="1" VerticalAlignment="Top" Margin="2,0" Background="#57FFFFFF"/>
@@ -135,24 +159,28 @@
                     </Border>
 
                     <!-- 3줄: HP숫자 · 처치까지 ……… 큰 HP% -->
-                    <Grid Grid.Row="2" Margin="0,7,0,0">
+                    <Grid Grid.Row="2" Margin="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter='0,7,0,0'}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding TargetHpAmountText}" FontSize="12.5"
+                        <TextBlock Grid.Column="0" Text="{Binding TargetHpAmountText}"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=12.5}"
                                    Foreground="{DynamicResource Skin.MutedFg}" VerticalAlignment="Bottom"
                                    Typography.NumeralAlignment="Tabular"/>
                         <!-- 처치까지 = 남은 HP ÷ 지금 파티 DPS. 미터만 낼 수 있는 숫자다. -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Bottom"
                                     Visibility="{Binding TargetEtaVisibility}">
-                            <TextBlock Text="처치까지 " FontSize="10.5" Foreground="{DynamicResource Skin.MutedFg}"/>
-                            <TextBlock Text="{Binding TargetEtaText}" FontSize="10.5" FontWeight="SemiBold"
+                            <TextBlock Text="처치까지 " Foreground="{DynamicResource Skin.MutedFg}"
+                                       FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=10.5}"/>
+                            <TextBlock Text="{Binding TargetEtaText}" FontWeight="SemiBold"
+                                       FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=10.5}"
                                        Foreground="{DynamicResource Skin.Accent}" Typography.NumeralAlignment="Tabular"/>
                         </StackPanel>
-                        <TextBlock Grid.Column="3" Text="{Binding TargetHpPercentText}" FontSize="22" FontWeight="Bold"
+                        <TextBlock Grid.Column="3" Text="{Binding TargetHpPercentText}" FontWeight="Bold"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=22}"
                                    Foreground="{DynamicResource Skin.BossPercentFg}" VerticalAlignment="Bottom"
                                    Typography.NumeralAlignment="Tabular" Visibility="{Binding TargetHpVisibility}"/>
                     </Grid>
@@ -165,33 +193,45 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Border Grid.Column="0" Width="30" Height="30" CornerRadius="7" Margin="0,0,11,0"
+                    <!-- Margin 의 오른쪽 11 은 가로 간격이라 배율을 안 탄다(위 주석 참고). -->
+                    <Border Grid.Column="0" Margin="0,0,11,0"
+                            Width="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=30}"
+                            Height="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=30}"
+                            CornerRadius="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=7}"
                             VerticalAlignment="Center" Background="{DynamicResource Skin.StatBg}"
                             BorderThickness="1" BorderBrush="{DynamicResource Skin.IconRing}">
-                        <Image Source="{Binding BossIcon}" Stretch="Uniform" Margin="4"/>
+                        <Image Source="{Binding BossIcon}" Stretch="Uniform"
+                               Margin="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=4}"/>
                     </Border>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}"
-                                   FontWeight="SemiBold" FontSize="15.5" TextTrimming="CharacterEllipsis"/>
+                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=15.5}"/>
                         <!-- "던전 · 난이도". 페이즈는 미터에 데이터가 없어 넣지 않는다. -->
                         <TextBlock Text="{Binding TargetSubtitle}" Foreground="{DynamicResource Skin.MutedFg}"
-                                   FontSize="10.5" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=10.5}"
+                                   Margin="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter='0,2,0,0'}"
+                                   TextTrimming="CharacterEllipsis"
                                    Visibility="{Binding TargetSubtitleVisibility}"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right"
                                 Visibility="{Binding TargetHpVisibility}">
                         <TextBlock Text="{Binding TargetHpPercentText}" Foreground="{DynamicResource Skin.Fg}"
-                                   FontWeight="Bold" FontSize="23" TextAlignment="Right"
+                                   FontWeight="Bold" TextAlignment="Right"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=23}"
                                    Typography.NumeralAlignment="Tabular"/>
                         <TextBlock Text="{Binding TargetHpAmountText}" Foreground="{DynamicResource Skin.MutedFg}"
-                                   FontSize="10.5" Margin="0,3,0,0" TextAlignment="Right"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=10.5}"
+                                   Margin="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter='0,3,0,0'}"
+                                   TextAlignment="Right"
                                    Typography.NumeralAlignment="Tabular"/>
                     </StackPanel>
                 </Grid>
 
                 <!-- 무대 하단 4px HP 레일 — 게이지 형태 설정과 무관하게 항상 있다(카드 배경 채움은
                      방향만 말하고 정확한 값은 이 레일이 말한다). Padding 밖까지 되민다. -->
-                <Grid VerticalAlignment="Bottom" Height="4" Margin="-11,0,-11,0"
+                <Grid VerticalAlignment="Bottom" Margin="-11,0,-11,0"
+                      Height="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=4}"
                       Visibility="{Binding Layout.BossCanvasVisibility}">
                     <Border Background="{DynamicResource Skin.GaugeTrack}"/>
                     <Grid>
@@ -224,17 +264,24 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Text="{Binding TargetName}" Foreground="{DynamicResource Skin.MutedFg}"
-                               FontWeight="SemiBold" FontSize="11.5" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                               FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=11.5}"
+                               Margin="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter='0,2,0,0'}"/>
                     <Grid Grid.Row="1">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
+                        <!-- MinWidth 96 은 자릿수 고정폭이라 글자와 **같이** 커져야 레일 시작점이 안 흔들린다. -->
                         <TextBlock Grid.Column="0" Text="{Binding TargetHpPercentText}" Foreground="{DynamicResource Skin.Fg}"
-                                   FontWeight="Bold" FontSize="26" VerticalAlignment="Center" MinWidth="96"
+                                   FontWeight="Bold" VerticalAlignment="Center"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=26}"
+                                   MinWidth="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=96}"
                                    Typography.NumeralAlignment="Tabular"/>
-                        <Border Grid.Column="1" Height="3" CornerRadius="2" VerticalAlignment="Center" Margin="10,0"
+                        <Border Grid.Column="1" VerticalAlignment="Center" Margin="10,0"
+                                Height="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=3}"
+                                CornerRadius="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=2}"
                                 Background="#24FFFFFF" ClipToBounds="True">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -247,7 +294,8 @@
                         <!-- ⚠️ TargetHpText 를 쓰지 마라 — 그건 '수치 + 퍼센트' 합본이라 바로 왼쪽의 26px
                              퍼센트와 같은 값을 한 줄에 두 번 말하게 된다. TargetHpAmountText 는 퍼센트를 뺀
                              수치만이고, '퍼센트만' 표시 형식에서는 빈 문자열이라 이 칸이 알아서 접힌다. -->
-                        <TextBlock Grid.Column="2" Text="{Binding TargetHpAmountText}" Foreground="{Binding CombatTimeBrush}" FontSize="10.5"
+                        <TextBlock Grid.Column="2" Text="{Binding TargetHpAmountText}" Foreground="{Binding CombatTimeBrush}"
+                                   FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=10.5}"
                                    VerticalAlignment="Center" Visibility="{Binding TargetHpVisibility}"/>
                     </Grid>
                 </Grid>

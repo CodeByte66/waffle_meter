@@ -213,6 +213,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _pendingDummyToggle = hotkeys.DummyToggle;
         _pendingDummyReset = hotkeys.DummyReset;
         _pendingSplitUi = hotkeys.SplitUi;
+        _pendingAetherList = hotkeys.AetherList;
 
         IReadOnlyList<string> presetNames = _presets.Names;
         for (int i = 0; i < BuffPresetManager.SlotCount; i++)
@@ -541,6 +542,32 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     }
     public int RowHeight { get => _settings.RowHeight; set { _settings.RowHeight = value; OnPropertyChanged(); } }
 
+    /// <summary>
+    /// 보스칸 높이 배율(퍼센트). 100% 기준 높이가 레이아웃마다 달라서(전장 104 / 계기판 52 / 무대 70)
+    /// 슬라이더 단위는 px 가 아니라 퍼센트다 — 대신 라벨이 지금 레이아웃에서의 실제 px 를 같이 말한다.
+    /// </summary>
+    public int BossSlotScalePercent
+    {
+        get => _settings.BossSlotScalePercent;
+        set
+        {
+            _settings.BossSlotScalePercent = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BossSlotHeightHint));
+        }
+    }
+
+    /// <summary>슬라이더 제목. 배율과 **지금 레이아웃에서의 실제 높이**를 함께 보여 준다.</summary>
+    public string BossSlotHeightHint
+    {
+        get
+        {
+            MeterLayout layout = MeterLayout.For(_settings.MeterLayoutId);
+            double px = MeterLayout.BossSlotHeight(layout.BossStyle, _settings.BossSlotScalePercent);
+            return $"보스칸 높이 — {_settings.BossSlotScalePercent}% ({px:0}px)";
+        }
+    }
+
     /// <summary>미터 전체 크기 배율(퍼센트 문자열, ComboBox SelectedValue용). 설정은 int로 저장된다.</summary>
     public string MeterScalePercent
     {
@@ -683,6 +710,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             _settings.RowHeight = MeterLayout.For(value).DefaultRowHeight;
             OnPropertyChanged();
             OnPropertyChanged(nameof(RowHeight));
+            // 배율은 레이아웃과 무관하게 유지하지만(퍼센트라 뜻이 그대로다) 그 배율이 만드는 실제 px 는
+            // 기준 높이가 달라져 같이 움직인다. 라벨만 다시 읽으면 된다.
+            OnPropertyChanged(nameof(BossSlotHeightHint));
             OnPropertyChanged(nameof(BarStyleEnabled));
             OnPropertyChanged(nameof(GaugeSkinApplicable));
             OnPropertyChanged(nameof(ServerTagEnabled));
@@ -1658,18 +1688,126 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     }
 
     // ---- hotkey rebinding (buffered, committed on Save; null = 미지정/unassigned) ----
+    //
+    // 🔑 일곱 칸은 서로 **배타적**이다. 같은 조합을 둘이 들고 있으면 RegisterHotKey 는 먼저 등록되는
+    //    쪽만 성공하고 나중 것은 조용히 실패한다 — 반환값을 보는 곳도 없고 UI 에 남는 단서도 없어서,
+    //    사용자에겐 "설정엔 분명히 들어가 있는데 그 동작만 안 먹는다"로만 보인다. 그래서 세터마다
+    //    방금 고른 조합을 쓰고 있던 **다른 칸을 비운다**(DropDuplicateHotkeys): 마지막에 고른 의도가
+    //    이기고, 비워진 칸은 그 자리에서 '미지정'으로 바뀌어 사용자 눈에 바로 보인다.
     private HotkeyCombo? _pendingReset;
-    public HotkeyCombo? PendingReset { get => _pendingReset; set => Set(ref _pendingReset, value); }
+    public HotkeyCombo? PendingReset
+    {
+        get => _pendingReset;
+        set { Set(ref _pendingReset, value); DropDuplicateHotkeys(value, nameof(PendingReset)); }
+    }
+
     private HotkeyCombo? _pendingVisibility;
-    public HotkeyCombo? PendingVisibility { get => _pendingVisibility; set => Set(ref _pendingVisibility, value); }
+    public HotkeyCombo? PendingVisibility
+    {
+        get => _pendingVisibility;
+        set { Set(ref _pendingVisibility, value); DropDuplicateHotkeys(value, nameof(PendingVisibility)); }
+    }
+
     private HotkeyCombo? _pendingClickThrough;
-    public HotkeyCombo? PendingClickThrough { get => _pendingClickThrough; set => Set(ref _pendingClickThrough, value); }
+    public HotkeyCombo? PendingClickThrough
+    {
+        get => _pendingClickThrough;
+        set { Set(ref _pendingClickThrough, value); DropDuplicateHotkeys(value, nameof(PendingClickThrough)); }
+    }
+
     private HotkeyCombo? _pendingDummyToggle;
-    public HotkeyCombo? PendingDummyToggle { get => _pendingDummyToggle; set => Set(ref _pendingDummyToggle, value); }
+    public HotkeyCombo? PendingDummyToggle
+    {
+        get => _pendingDummyToggle;
+        set { Set(ref _pendingDummyToggle, value); DropDuplicateHotkeys(value, nameof(PendingDummyToggle)); }
+    }
+
     private HotkeyCombo? _pendingDummyReset;
-    public HotkeyCombo? PendingDummyReset { get => _pendingDummyReset; set => Set(ref _pendingDummyReset, value); }
+    public HotkeyCombo? PendingDummyReset
+    {
+        get => _pendingDummyReset;
+        set { Set(ref _pendingDummyReset, value); DropDuplicateHotkeys(value, nameof(PendingDummyReset)); }
+    }
+
     private HotkeyCombo? _pendingSplitUi;
-    public HotkeyCombo? PendingSplitUi { get => _pendingSplitUi; set => Set(ref _pendingSplitUi, value); }
+    public HotkeyCombo? PendingSplitUi
+    {
+        get => _pendingSplitUi;
+        set { Set(ref _pendingSplitUi, value); DropDuplicateHotkeys(value, nameof(PendingSplitUi)); }
+    }
+
+    private HotkeyCombo? _pendingAetherList;
+    public HotkeyCombo? PendingAetherList
+    {
+        get => _pendingAetherList;
+        set { Set(ref _pendingAetherList, value); DropDuplicateHotkeys(value, nameof(PendingAetherList)); }
+    }
+
+    /// <summary>
+    /// 방금 지정한 조합을 쓰고 있던 <b>다른</b> 단축키 칸을 비운다. 충돌을 거절하는 게 아니라 먼저
+    /// 쓰던 쪽을 놓아 주는 방향인 이유: 거절은 "왜 안 들어가지"가 되고, 그대로 두면 둘 중 하나가
+    /// 조용히 죽는다. 비우면 화면에 '미지정'으로 남아 무슨 일이 일어났는지 그 자리에서 보인다.
+    ///
+    /// <para>🔑 <b>저장된 값을 읽어 오는 경로에서는 절대 돌지 않는다</b>(<see cref="SeedPendingHotkeys"/> 가
+    /// 끄고 들어온다). 파일에 이미 같은 조합이 두 칸 들어 있는 상태 — 이 규칙이 생기기 전 빌드에서
+    /// 만들어질 수 있다 — 에서 재시드가 그걸 '정리'하면, 하필 <b>등록에 성공하고 있던 칸</b>(id 가 작아
+    /// 먼저 등록되는 쪽)이 지워지고 이어지는 저장이 그 손실을 굳힌다. 사용자는 아무것도 누르지 않았는데
+    /// 멀쩡하던 단축키를 잃는다. 그런 파일은 예전과 똑같이 둘 다 보여 주고, 사용자가 둘 중 하나를
+    /// 실제로 다시 지정할 때만 정리한다.</para>
+    /// </summary>
+    /// <summary>
+    /// 저장된 일곱 조합을 편집 버퍼로 다시 읽어 온다(가져오기·취소). 중복 정리를 <b>끄고</b> 도는 것이
+    /// 이 메서드의 존재 이유다 — <see cref="DropDuplicateHotkeys"/> 의 주석 참고.
+    /// </summary>
+    private void SeedPendingHotkeys()
+    {
+        _seedingHotkeys = true;
+        try
+        {
+            PendingReset = _hotkeys.Reset;
+            PendingVisibility = _hotkeys.Visibility;
+            PendingClickThrough = _hotkeys.ClickThrough;
+            PendingDummyToggle = _hotkeys.DummyToggle;
+            PendingDummyReset = _hotkeys.DummyReset;
+            PendingSplitUi = _hotkeys.SplitUi;
+            PendingAetherList = _hotkeys.AetherList;
+        }
+        finally
+        {
+            _seedingHotkeys = false;
+        }
+    }
+
+    private bool _seedingHotkeys;
+
+    private void DropDuplicateHotkeys(HotkeyCombo? assigned, string owner)
+    {
+        if (assigned is null || _seedingHotkeys)
+        {
+            return; // 미지정은 겹칠 수 없다 — 그리고 아래 재귀의 바닥이다
+        }
+
+        // ⚠️ 단축키를 하나 더 만들면 이 표에도 한 줄. 빠뜨리면 그 칸만 중복 검사에서 빠져,
+        //    하필 '조용히 실패하는' 쪽이 된다.
+        (string Name, Func<HotkeyCombo?> Get, Action<HotkeyCombo?> Set)[] slots =
+        [
+            (nameof(PendingReset), () => PendingReset, v => PendingReset = v),
+            (nameof(PendingVisibility), () => PendingVisibility, v => PendingVisibility = v),
+            (nameof(PendingClickThrough), () => PendingClickThrough, v => PendingClickThrough = v),
+            (nameof(PendingDummyToggle), () => PendingDummyToggle, v => PendingDummyToggle = v),
+            (nameof(PendingDummyReset), () => PendingDummyReset, v => PendingDummyReset = v),
+            (nameof(PendingSplitUi), () => PendingSplitUi, v => PendingSplitUi = v),
+            (nameof(PendingAetherList), () => PendingAetherList, v => PendingAetherList = v),
+        ];
+
+        foreach ((string name, Func<HotkeyCombo?> get, Action<HotkeyCombo?> set) in slots)
+        {
+            if (name != owner && assigned.Equals(get()))
+            {
+                set(null); // 세터를 타므로 캡처 박스가 즉시 '미지정'으로 바뀐다
+            }
+        }
+    }
 
     // ---- stats consent ----
     private bool _consentAccepted;
@@ -2112,6 +2250,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         NameDisplay = "all";
         FontFamily = DefaultFontFamily;
         RowHeight = 36;
+        BossSlotScalePercent = MeterLayout.BossScaleDefault;
         MeterOpacity = 0.4;
         BarStyle = "fill";
         Skin = "dark";
@@ -2280,13 +2419,14 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         // The window's own Cancel restores a 19-value snapshot taken when it opened, so after an import it would
         // put back a mixture no backup describes. Re-take it: Cancel now means "cancel what I did after this".
         _snapshot = Snapshot.Capture(_settings, _controller);
-        PendingReset = _hotkeys.Reset;
-        PendingVisibility = _hotkeys.Visibility;
-        PendingClickThrough = _hotkeys.ClickThrough;
-        PendingDummyToggle = _hotkeys.DummyToggle;
-        PendingDummyReset = _hotkeys.DummyReset;
+        SeedPendingHotkeys();
 
         Reload();
+        // Reload() 는 동의·스탯·알람만 다시 읽는다. 보스칸 슬라이더는 **파생 라벨(px)** 까지 들고 있어서
+        // 가만히 두면 값이 안 보이는 게 아니라 **틀린 px 를 말하고**, 그 상태에서 한 눈금만 건드리면
+        // 가져온 값이 조용히 덮인다.
+        OnPropertyChanged(nameof(BossSlotScalePercent));
+        OnPropertyChanged(nameof(BossSlotHeightHint));
         RebuildFontCards();
         RebuildNameFxSamples(_skin.IsLight);
         SyncNameFxPreview();
@@ -2539,6 +2679,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _hotkeys.SetDummyToggle(PendingDummyToggle);
         _hotkeys.SetDummyReset(PendingDummyReset);
         _hotkeys.SetSplitUi(PendingSplitUi);
+        _hotkeys.SetAetherList(PendingAetherList);
     }
 
     /// <summary>Revert live-applied settings + pending hotkeys (Cancel).</summary>
@@ -2550,11 +2691,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         SyncFontSelection();
         SyncNameFxPreview(); // Apply() wrote the settings object directly; the clock has to be told
         NameFxSheen.Rebuild(_settings.NameFxBrightnessPercent);
-        PendingReset = _hotkeys.Reset;
-        PendingVisibility = _hotkeys.Visibility;
-        PendingClickThrough = _hotkeys.ClickThrough;
-        PendingDummyToggle = _hotkeys.DummyToggle;
-        PendingDummyReset = _hotkeys.DummyReset;
+        SeedPendingHotkeys();
         Reload();
     }
 
@@ -2571,7 +2708,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         // 컴파일이 통과하면서 값이 한 칸씩 밀린다. 빠뜨리면 "취소가 안 됨"이 아니라
         // **이미 저장됐고 되돌릴 수 없음**이 된다.
         string MeterLayoutId,
-        bool SplitUiMode)
+        bool SplitUiMode,
+        int BossSlotScalePercent)
     {
         public static Snapshot Capture(MeterSettings s, OverlayController c) => new(
             s.DisplayMode, s.DamageValueMode, s.RowDpsMetric, s.ContributionMode, s.NameDisplay,
@@ -2583,7 +2721,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             s.TierShow, s.TierEffects, s.TierShowOthers, s.TierShowSelfChip,
             s.BuffUiIconSize, s.CooldownUiIconSize, s.CooldownUiPerRow, s.CooldownUiTextColor,
             s.MeterLayoutId,
-            s.SplitUiMode);
+            s.SplitUiMode,
+            s.BossSlotScalePercent);
 
         public void Apply(MeterSettings s, OverlayController c)
         {
@@ -2594,6 +2733,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             s.NameDisplay = NameDisplay;
             s.FontFamily = FontFamily;
             s.RowHeight = RowHeight;
+            // 슬라이더(연속값)는 특히 여기 있어야 한다 — 세터가 즉시 파일에 쓰므로 빠뜨리면 '취소가
+            // 안 됨'이 아니라 **이미 저장됐고 되돌릴 수 없음**이 되는데, 사용자는 원래 값을 기억 못 한다.
+            s.BossSlotScalePercent = BossSlotScalePercent;
             s.MeterOpacity = MeterOpacity;
             s.MultiMonitorMode = MultiMonitor;
             s.OverlayTheme = Theme;

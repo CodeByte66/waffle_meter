@@ -12,14 +12,18 @@ namespace WaffleMeter.App.Wpf;
 /// 스킨 4종 교체를 따라간다 — 레이아웃이 색을 들고 있으면 스킨을 바꿔도 안 따라오는 스냅샷이 된다
 /// (<c>ReplayWindow</c> 가 <c>TryFindResource</c> 1회성 스냅샷으로 같은 함정을 밟은 전례가 있다).</para>
 ///
-/// <para>(id, rowHeight) 로 캐시한다. 값이 행마다·틱마다 다시 만들어지면 <c>Thickness</c> 박싱이
-/// 초당 수십 번 쌓인다.</para>
+/// <para>(id, rowHeight, bossScalePercent) 로 캐시한다. 값이 행마다·틱마다 다시 만들어지면
+/// <c>Thickness</c> 박싱이 초당 수십 번 쌓인다.</para>
+///
+/// <para>🔑 <b>사용자가 고를 수 있는 값은 전부 캐시 키에 있어야 한다.</b> 키에 없는 축을 더하면
+/// <c>GetOrAdd</c> 가 옛 인스턴스를 그대로 돌려주고, <c>OverlayViewModel.Set</c> 의 <c>Equals</c> 가드에
+/// 걸려 PropertyChanged 조차 안 뜬다 — 설정은 저장되는데 화면만 그대로인 가장 헷갈리는 실패가 된다.</para>
 /// </summary>
 public sealed class MeterLayoutVisual
 {
-    private static readonly ConcurrentDictionary<(string Id, int RowHeight), MeterLayoutVisual> Cache = new();
+    private static readonly ConcurrentDictionary<(string Id, int RowHeight, int BossScalePercent), MeterLayoutVisual> Cache = new();
 
-    private MeterLayoutVisual(MeterLayout spec, int rowHeight)
+    private MeterLayoutVisual(MeterLayout spec, int rowHeight, int bossScalePercent)
     {
         Spec = spec;
         RowHeight = rowHeight;
@@ -100,17 +104,13 @@ public sealed class MeterLayoutVisual
         // 배지 상자를 지우면 숫자만 남는다. 상자를 없애는 레이아웃은 투명 배경 + 테두리 0.
         StatChrome = spec.ShowStatChrome;
 
-        // 보스칸 높이는 레이아웃마다 다르다. 행 높이에 연동하던 현행(rowHeight+6)은 무대만 유지한다 —
-        // 전장은 20px 게이지 띠가 한 줄 더 들어가고, 계기판은 26px HP% 가 주인공이라 둘 다 담을 수 없다.
-        // ⚠️ Border 가 ClipToBounds 라 이 값이 모자라면 글자가 잘린 채 조용히 렌더된다(계기판에서 실제로 겪음).
-        BossHeight = spec.BossStyle switch
-        {
-            // ⚠️ 3단(이름줄 + 20px 띠 + HP줄)이 들어가므로 84 로는 마지막 줄이 잘린다.
-            BossStyle.Band => 104.0,
-            BossStyle.Readout => 52.0, // 이름 11.5px + HP% 26px
-            // 아이콘 박스 30 + 이름 15.5 + 서브라인 10.5 + 하단 레일 4 + 패딩
-            _ => 70.0,
-        };
+        // 보스칸 높이 = 레이아웃별 100% 기준값(전장 104 / 계기판 52 / 무대 70) × 사용자 배율.
+        // 수치와 산식은 App.Core(MeterLayout.BossSlotHeight)에 있다 — 여기 두면 잠글 테스트가 없다.
+        // ⚠️ 배율은 칸 높이와 **칸 안 치수에 똑같이** 걸려야 한다. 한쪽만 곱하면 루트 Border 가
+        //    ClipToBounds 라 글자가 잘린 채 조용히 렌더된다. XAML 쪽 짝은 BossScaleConverter 다.
+        BossScalePercent = bossScalePercent;
+        BossScale = MeterLayout.BossScale(bossScalePercent);
+        BossHeight = MeterLayout.BossSlotHeight(spec.BossStyle, bossScalePercent);
         BossBandVisibility = spec.BossStyle == BossStyle.Band ? Visibility.Visible : Visibility.Collapsed;
         BossCanvasVisibility = spec.BossStyle == BossStyle.Canvas ? Visibility.Visible : Visibility.Collapsed;
         BossReadoutVisibility = spec.BossStyle == BossStyle.Readout ? Visibility.Visible : Visibility.Collapsed;
@@ -149,7 +149,8 @@ public sealed class MeterLayoutVisual
 
     public Visibility JobIconVisibility { get; }
 
-    /// <summary>무대는 22px 직업아이콘 대신 7px 색 점으로 직업을 표시한다.</summary>
+    /// <summary>7px 직업색 점. 지금은 세 레이아웃 모두 직업아이콘을 쓰므로 어디서도 켜지지 않지만,
+    /// 스펙 플래그 한 줄로 되돌릴 수 있게 경로는 남겨 둔다.</summary>
     public Visibility JobDotVisibility { get; }
 
     public Visibility ServerTagVisibility { get; }
@@ -235,6 +236,15 @@ public sealed class MeterLayoutVisual
 
     public double BossHeight { get; }
 
+    /// <summary>
+    /// 보스칸 배율(<see cref="MeterLayout.BossScale"/>). 칸 안의 글자 크기·게이지 두께·세로 여백이 XAML 에서
+    /// <c>BossScaleConverter</c> 로 이 값을 곱한다 — 칸 높이와 같은 비율이라 100% 와 여백 구성이 같다.
+    /// </summary>
+    public double BossScale { get; }
+
+    /// <summary>캐시 키의 세 번째 축. 저장 단위(퍼센트) 그대로다.</summary>
+    public int BossScalePercent { get; }
+
     public Visibility BossBandVisibility { get; }
 
     public Visibility BossCanvasVisibility { get; }
@@ -244,12 +254,14 @@ public sealed class MeterLayoutVisual
     /// <summary>계기판이 아닌 레이아웃(전장·무대)이 쓰는 한 줄 배치의 가시성.</summary>
     public Visibility BossInlineVisibility { get; }
 
-    public static MeterLayoutVisual For(string? id, int rowHeight)
+    public static MeterLayoutVisual For(string? id, int rowHeight, int bossScalePercent)
     {
         MeterLayout spec = MeterLayout.For(id);
-        return Cache.GetOrAdd((spec.Id, rowHeight), key => new MeterLayoutVisual(MeterLayout.For(key.Id), key.RowHeight));
+        return Cache.GetOrAdd(
+            (spec.Id, rowHeight, bossScalePercent),
+            key => new MeterLayoutVisual(MeterLayout.For(key.Id), key.RowHeight, key.BossScalePercent));
     }
 
     /// <summary>현행과 수치가 같은 기본값. 바인딩이 아직 안 붙은 순간에도 화면이 깨지지 않게 한다.</summary>
-    public static readonly MeterLayoutVisual Default = For(MeterLayout.DefaultId, 36);
+    public static readonly MeterLayoutVisual Default = For(MeterLayout.DefaultId, 36, MeterLayout.BossScaleDefault);
 }

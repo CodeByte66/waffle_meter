@@ -244,7 +244,8 @@
                                     <!-- job icon — the tier ring replaces Skin.IconRing; the second ring for the
                                          top three tiers is a size-less Grid child, so it contributes nothing to
                                          DesiredSize and the badge keeps its exact dimensions. -->
-                                    <!-- 무대: 22px 아이콘 대신 7px 직업색 점. 행이 낮아 아이콘이 답답해진다. -->
+                                    <!-- 7px 직업색 점. 지금은 세 레이아웃 모두 아이콘을 쓰므로 어디서도 안 켜지지만,
+                                         경로는 남겨 둔다 — ShowJobDot 한 줄로 되돌릴 수 있는 선택지다. -->
                                     <Ellipse Grid.Column="2" Width="7" Height="7" Margin="0,0,9,0" VerticalAlignment="Center"
                                              Fill="{Binding FillBrush}"
                                              Visibility="{Binding DataContext.Layout.JobDotVisibility, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>

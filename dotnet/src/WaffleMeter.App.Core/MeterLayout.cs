@@ -112,6 +112,58 @@ public sealed record MeterLayout(
 
     public static double JobIconSize(int rowHeight) => Math.Max(18.0, Math.Floor(rowHeight * 0.66));
 
+    // ── 보스칸 높이 ────────────────────────────────────────────────────────────────
+    // 100% 기준 높이는 레이아웃마다 다르다. 행 높이에 연동하던 옛 방식(rowHeight+6)은 무대만 유지한다 —
+    // 전장은 20px 게이지 띠가 한 줄 더 들어가고, 계기판은 26px HP% 가 주인공이라 둘 다 담을 수 없다.
+    // 🔑 수치와 산식이 App.Wpf 가 아니라 여기 있는 이유: App.Wpf 에는 테스트 프로젝트가 없어서 XAML 쪽
+    //    회귀를 잡아 줄 장치가 하나도 없다. MeterLayoutVisual 은 이 값을 읽어 XAML 로 넘기기만 한다.
+
+    /// <summary>배율 100% 일 때의 보스칸 높이.</summary>
+    /// <remarks>
+    /// ⚠️ BossBarView 루트 Border 는 고정 높이 + ClipToBounds 다 — 이 값이 모자라면 예외도 경고도 없이
+    /// 글자가 잘린 채 렌더된다(계기판 52px 에서 실제로 겪었다).
+    /// </remarks>
+    public static double BossNaturalHeight(BossStyle style) => style switch
+    {
+        // ⚠️ 3단(이름줄 + 20px 띠 + HP줄)이 들어가므로 84 로는 마지막 줄이 잘린다.
+        BossStyle.Band => 104.0,
+        BossStyle.Readout => 52.0, // 이름 11.5px + HP% 26px
+        // 아이콘 박스 30 + 이름 15.5 + 서브라인 10.5 + 하단 레일 4 + 패딩
+        _ => 70.0,
+    };
+
+    /// <summary>
+    /// 칸 높이에 실리지만 <b>배율을 따라가지 않는</b> 세로 크롬 = 루트 Border 의
+    /// <c>BorderThickness="1"</c> 위아래 합.
+    /// <para>🔑 이만큼 빼고 곱해야 '내용이 칸에 들어맞는 비율'이 배율과 무관하게 보존된다. 전체를 그냥
+    /// 곱하면 축소할수록 1px 테두리가 상대적으로 커지면서 내용 몫이 줄어, 여유가 거의 없는 계기판
+    /// (52px = 이름 11.5 + HP% 26 그 자체)에서 아랫줄이 조용히 잘린다.</para>
+    /// </summary>
+    public const double BossChromeHeight = 2.0;
+
+    // 설정 슬라이더 범위.
+    //   하한 70 — 계기판 이름줄(11.5px)이 그 아래에서는 읽히지 않는다(11.5 × 0.7 ≈ 8px).
+    //   상한 150 — ⚠️ 세로가 아니라 **가로**가 정한 값이다. 전장 3줄째는 'HP 수치 / 처치까지 / 큰 HP%'
+    //     가 한 줄에 앉는데 Auto 열이라 폭이 모자라면 줄어들지 않고 **마지막 열(큰 HP%)이 잘린다**.
+    //     기본 폭(460px)에서 그 줄의 실폭은 100% 기준 약 280px 이라 1.6배에서 넘친다 — 180 으로 열었더니
+    //     실제로 "47.2%" 가 "47" 로 잘렸다. 여유를 두고 150 에서 끊는다.
+    //     (같은 이유로 창을 아주 좁히면 100% 에서도 잘린다. 그건 이 기능 이전부터 그랬다.)
+    public const int BossScaleMin = 70;
+    public const int BossScaleMax = 150;
+    public const int BossScaleDefault = 100;
+
+    /// <summary>
+    /// 보스칸 배율(<see cref="BossScaleMin"/>~<see cref="BossScaleMax"/> 퍼센트를 배로 환산한 값).
+    /// 칸 높이와 칸 안의 글자·게이지·세로 여백이 <b>똑같이</b> 이 값을 곱한다 —
+    /// 그래서 어떤 배율에서도 100% 와 같은 여백 비율이 유지되고, 조용한 잘림이 생길 수 없다.
+    /// </summary>
+    public static double BossScale(int percent) =>
+        Math.Clamp(percent, BossScaleMin, BossScaleMax) / 100.0;
+
+    /// <summary>사용자 배율을 반영한 보스칸 높이. 100% 면 <see cref="BossNaturalHeight"/> 와 정확히 같다.</summary>
+    public static double BossSlotHeight(BossStyle style, int percent) =>
+        ((BossNaturalHeight(style) - BossChromeHeight) * BossScale(percent)) + BossChromeHeight;
+
     // ── 이름 대응표 ────────────────────────────────────────────────────────────────
     //   TYPE A = battlefield (전장)   TYPE B = dashboard (계기판)   TYPE C = stage (무대)
     // 화면에 나가는 이름은 Label 뿐이고, Id 와 이 파일 아래의 설계 주석은 개발 당시의 한국어 별칭을
@@ -176,7 +228,9 @@ public sealed record MeterLayout(
         GaugeRadius: 2.0,
         BossStyle: BossStyle.Readout,
         RequiresFillGauge: true,
-        ShowJobIcon: false,
+        // 닉네임 앞 직업아이콘. 이름 색·게이지 색만으로는 '무슨 직업인지'가 아니라 '누가 누구인지'만
+        // 말한다 — 색을 외우고 있어야 읽히는 정보였다.
+        ShowJobIcon: true,
         ShowJobDot: false,
         ShowServerTag: false,
         ShowTierChip: true,
@@ -214,8 +268,11 @@ public sealed record MeterLayout(
         GaugeRadius: 3.0,   // 값의 종단이 보이려면 2px 는 안티에일리어싱에 먹힌다
         BossStyle: BossStyle.Canvas,
         RequiresFillGauge: true,
-        ShowJobIcon: false,
-        ShowJobDot: true,
+        // 7px 직업색 점을 아이콘으로 바꿨다. 34px 행에 22px 아이콘이 답답할까 봐 점으로 뒀던 건데,
+        // 점은 직업을 **색으로만** 말해서 결국 색표를 외운 사람에게만 정보였다. 직업색은 게이지 채움과
+        // 비중% 가 이미 들고 있으므로 점이 빠져도 잃는 신호가 없다.
+        ShowJobIcon: true,
+        ShowJobDot: false,
         ShowServerTag: true,
         ShowTierChip: true,
         ShowTierRowOutline: false,

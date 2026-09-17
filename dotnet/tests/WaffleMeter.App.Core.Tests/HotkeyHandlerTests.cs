@@ -92,6 +92,31 @@ public sealed class HotkeyHandlerTests : IDisposable
         Assert.Equal(new HotkeyCombo(HotkeyHandler.ModControl, 0x54), reopened.ClickThrough);
     }
 
+    /// <summary>
+    /// 나중에 붙은 네 단축키(허수아비 2개 · UI 분리모드 · 컨텐츠 관리)는 <b>조합 없이</b> 출고된다.
+    /// RegisterHotKey 실패는 조용해서, 우리가 고른 조합이 인게임 키와 겹치면 "눌러도 아무 일이 없다"만
+    /// 남고 원인을 짚을 방법이 없기 때문이다. 누가 <c>LoadOptional</c> 을 기본값 있는 <c>Load</c> 로
+    /// 바꾸면 그 순간 출고 기본값이 생기는데, 그 회귀를 잡아 줄 곳이 여기뿐이다.
+    /// </summary>
+    [Fact]
+    public void Later_hotkeys_ship_unassigned_and_round_trip()
+    {
+        var handler = new HotkeyHandler(new PropertyHandler(_temp));
+        Assert.Null(handler.DummyToggle);
+        Assert.Null(handler.DummyReset);
+        Assert.Null(handler.SplitUi);
+        Assert.Null(handler.AetherList);
+
+        handler.SetAetherList(new HotkeyCombo(HotkeyHandler.ModControl | HotkeyHandler.ModShift, 0x4B));
+
+        var reopened = new HotkeyHandler(new PropertyHandler(_temp));
+        Assert.Equal(new HotkeyCombo(HotkeyHandler.ModControl | HotkeyHandler.ModShift, 0x4B), reopened.AetherList);
+        Assert.Null(reopened.SplitUi); // 이웃 키를 건드리지 않는다
+
+        reopened.SetAetherList(null);
+        Assert.Null(new HotkeyHandler(new PropertyHandler(_temp)).AetherList);
+    }
+
     [Fact]
     public void Unassigned_marker_does_not_fall_back_to_default()
     {

@@ -656,7 +656,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
 
     public MeterLayoutVisual RefreshLayout()
     {
-        MeterLayoutVisual visual = MeterLayoutVisual.For(_settings.MeterLayoutId, _settings.RowHeight);
+        MeterLayoutVisual visual = MeterLayoutVisual.For(
+            _settings.MeterLayoutId, _settings.RowHeight, _settings.BossSlotScalePercent);
         Layout = visual;
         return visual;
     }

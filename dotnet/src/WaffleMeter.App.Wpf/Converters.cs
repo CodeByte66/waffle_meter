@@ -356,6 +356,66 @@ public sealed class RowHeightToFontSizeConverter : IValueConverter
 }
 
 /// <summary>
+/// 보스칸 배율(<c>Layout.BossScale</c>) × 파라미터에 적은 100% 기준값. 보스칸 안의 치수를 칸 높이와
+/// 같은 비율로 함께 움직이는 유일한 경로다.
+///
+/// <para>🔑 기준값을 <c>ConverterParameter</c> 에 두는 이유: 그 숫자가 쓰이는 자리에 그대로 남아야
+/// "왜 이 값인지"를 방어하는 주석들(띠 20px, 트랙 반경 4 와 채움 3 의 1 차이, 계기판 HP% MinWidth 96 …)이
+/// 계속 자기 숫자 옆에 붙어 있다. 뷰모델 프로퍼티로 옮기면 주석과 값이 두 파일로 갈라진다.</para>
+///
+/// <para>결과 타입은 대상 속성이 정한다 — <c>double</c>(FontSize·Height·Width·MinWidth),
+/// <c>Thickness</c>(Margin; 파라미터는 "0,8,0,7" 네 값 또는 한 값), <c>CornerRadius</c>.
+/// ⚠️ 콤마가 든 파라미터는 반드시 작은따옴표로 감싼다 — 안 그러면 마크업 확장의 인자 구분자로 먹힌다.</para>
+///
+/// <para>⚠️ <b>가로 여백은 여기에 태우지 않는다</b>(카드 좌우 Padding, 무대의 -11 되밀기, 칩·아이콘
+/// 오른쪽 간격). 보스칸의 좌우 정렬선은 아래 행들과 공유하는 축이라 배율을 따라 움직이면 보스 이름과
+/// 행 이름의 왼쪽 끝이 어긋난다. 배율이 거는 건 높이·글자·세로 여백뿐이다.</para>
+/// </summary>
+public sealed class BossScaleConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        double scale = value switch { double d => d, int i => i, _ => 1.0 };
+        double[] p = Parse(parameter as string);
+        double first = p.Length > 0 ? p[0] : 0.0;
+
+        if (targetType == typeof(Thickness))
+        {
+            return p.Length >= 4
+                ? new Thickness(p[0] * scale, p[1] * scale, p[2] * scale, p[3] * scale)
+                : new Thickness(first * scale);
+        }
+
+        if (targetType == typeof(CornerRadius))
+        {
+            return new CornerRadius(first * scale);
+        }
+
+        return first * scale;
+    }
+
+    private static double[] Parse(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+        {
+            return [];
+        }
+
+        string[] parts = spec.Split(',');
+        var values = new double[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            double.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]);
+        }
+
+        return values;
+    }
+
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>
 /// 레이아웃 스펙의 <c>double</c> 반경을 <see cref="CornerRadius"/> 로 넓힌다. 한 값이 채움 Border 와
 /// <c>GaugeFxLayer.CornerRadius</c>(자기 클립 모양의 근거) 를 **동시에** 물어야 모서리가 어긋나지 않는다 —
 /// 둘을 따로 두면 무대(0)에서 장식만 둥근 노치를 남긴다.

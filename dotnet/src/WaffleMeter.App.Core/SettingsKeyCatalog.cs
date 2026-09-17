@@ -69,6 +69,7 @@ public static class SettingsKeyCatalog
         new("fontFamily", FD, "크기와 글꼴", "글꼴"),
         new("meterScalePercent", FD, "크기와 글꼴", "미터 크기"),
         new("rowHeight", FD, "크기와 글꼴", "행 높이"),
+        new("bossSlotScale", FD, "크기와 글꼴", "보스칸 높이"),
         new("meterOpacity", FD, "크기와 글꼴", "미터 투명도"),
 
         // ── 색상 · 스킨 ────────────────────────────────────────────────────────────
@@ -182,6 +183,7 @@ public static class SettingsKeyCatalog
         new("dummyToggleHotkey", F, "단축키", "허수아비 켜기/끄기", External: true),
         new("dummyResetHotkey", F, "단축키", "허수아비 DPS 초기화", External: true),
         new("splitUiHotkey", F, "단축키", "UI 분리모드 켜기/끄기", External: true),
+        new("aetherListHotkey", F, "단축키", "컨텐츠 관리 열기/닫기", External: true),
     };
 
     /// <summary>

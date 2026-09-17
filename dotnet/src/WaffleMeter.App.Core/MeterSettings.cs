@@ -77,6 +77,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _closeAction = ReadEnum("closeAction", "ask", CloseActions);
         _fontFamily = _props.GetProperty("fontFamily") ?? "NEXON Lv2 Gothic Medium";
         _rowHeight = ReadInt("rowHeight", 36);
+        _bossSlotScalePercent = ReadInt("bossSlotScale", MeterLayout.BossScaleDefault);
         _meterOpacity = ReadDouble("meterOpacity", 0.4);
         _isMinimal = ReadBool("isMinimal", false);
         _showCombatTimerInMinimal = ReadBool("showCombatTimerInMinimal", true);
@@ -199,6 +200,19 @@ public sealed class MeterSettings : INotifyPropertyChanged
 
     private int _rowHeight;
     public int RowHeight { get => _rowHeight; set => SetInt(ref _rowHeight, "rowHeight", value); }
+
+    private int _bossSlotScalePercent;
+    /// <summary>보스칸(보스 HP 칸) 높이 배율(퍼센트, 기본 100). 칸 높이와 칸 안의 글자·게이지가 같은
+    /// 비율로 함께 움직인다. px 가 아니라 퍼센트로 저장하는 이유: 100% 기준 높이가 레이아웃마다 다르고
+    /// (전장 104 / 계기판 52 / 무대 70) px 로 저장하면 레이아웃을 바꾼 순간 같은 숫자가 다른 뜻이 된다
+    /// — 계기판에서 104px 는 빈 판이고 전장에서 52px 는 잘린 판이다.
+    /// getter 도 클램프하는 이유: 남의 공유코드는 SettingsBundleApplier 가 값 검증 없이 그대로 심는다.</summary>
+    public int BossSlotScalePercent
+    {
+        get => Math.Clamp(_bossSlotScalePercent, MeterLayout.BossScaleMin, MeterLayout.BossScaleMax);
+        set => SetInt(ref _bossSlotScalePercent, "bossSlotScale",
+            Math.Clamp(value, MeterLayout.BossScaleMin, MeterLayout.BossScaleMax));
+    }
 
     private double _meterOpacity;
     public double MeterOpacity { get => _meterOpacity; set => SetDouble(ref _meterOpacity, "meterOpacity", value); }

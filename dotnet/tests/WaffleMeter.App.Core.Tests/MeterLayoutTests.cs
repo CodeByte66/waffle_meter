@@ -44,8 +44,8 @@ public class MeterLayoutTests
     [Theory]
     // 🔑 전장 70 은 회귀 앵커다 — 이 값이 변하면 계산식이 틀린 것이다(기존 사용자 화면이 안 바뀌어야 한다).
     [InlineData("battlefield", 36, 70.0)] // rail 11 + 순위칩 28 + 아이콘(23+8)
-    [InlineData("dashboard", 28, 25.0)]   // 카드패딩 8 + 맨 숫자 거터(13+4) — 시안 --excl:25 와 같다   // 레일 없음 + 맨 숫자 거터(13+9) — 예전엔 유령 rail 11 을 세고 있었다
-    [InlineData("stage", 34, 27.0)]       // 카드패딩 11 + 직업 점(7+9)
+    [InlineData("dashboard", 28, 51.0)]   // 카드패딩 8 + 맨 숫자 거터(13+4) + 아이콘(18+8)
+    [InlineData("stage", 34, 41.0)]       // 카드패딩 11 + 아이콘(22+8) — 순위 숫자를 안 그린다
     public void GaugeExclusionLeft_matches_the_real_left_cluster(string id, int rowHeight, double expected)
     {
         Assert.Equal(expected, MeterLayout.GaugeExclusionLeft(id, rowHeight), 3);
@@ -176,6 +176,76 @@ public class MeterLayoutTests
         foreach (MeterLayout layout in MeterLayout.All)
         {
             Assert.InRange(layout.DefaultRowHeight, 24, 80);
+        }
+    }
+
+    // ── 보스칸 높이(사용자 배율) ──────────────────────────────────────────────────
+    // BossBarView 루트 Border 는 고정 높이 + ClipToBounds 다. 칸과 칸 안 내용이 **같은 배율**을 곱한다는
+    // 불변식이 깨지면 글자가 잘린 채 조용히 렌더되고, 그건 화면을 봐야만 보인다 — App.Wpf 에는 그걸
+    // 잡아 줄 테스트가 없으므로 여기서 잠근다.
+
+    /// <summary>100% 는 출고 높이와 **정확히** 같아야 한다. 기본값 사용자의 화면이 1px 도 변하면 안 된다.</summary>
+    [Theory]
+    [InlineData(BossStyle.Band, 104.0)]
+    [InlineData(BossStyle.Readout, 52.0)]
+    [InlineData(BossStyle.Canvas, 70.0)]
+    public void Boss_slot_at_100_percent_is_exactly_the_shipped_height(BossStyle style, double expected)
+    {
+        Assert.Equal(expected, MeterLayout.BossNaturalHeight(style), 6);
+        Assert.Equal(expected, MeterLayout.BossSlotHeight(style, MeterLayout.BossScaleDefault), 6);
+    }
+
+    /// <summary>
+    /// 🔑 내용이 들어갈 자리는 어느 배율에서도 "기준 자리 × 배율" 이어야 한다. 내용은 배율을 곱하고
+    /// 세로 크롬(테두리 1px 위아래)은 안 곱하므로, 칸 높이도 크롬을 뺀 뒤 곱해야 비율이 보존된다 —
+    /// 전체를 그냥 곱하면 축소할수록 크롬 몫이 상대적으로 커져 여유가 없는 계기판에서 아랫줄이 잘린다.
+    /// </summary>
+    [Theory]
+    [InlineData(BossStyle.Band)]
+    [InlineData(BossStyle.Readout)]
+    [InlineData(BossStyle.Canvas)]
+    public void Boss_slot_keeps_the_same_room_for_its_contents_at_every_scale(BossStyle style)
+    {
+        double room100 = MeterLayout.BossNaturalHeight(style) - MeterLayout.BossChromeHeight;
+        for (int percent = MeterLayout.BossScaleMin; percent <= MeterLayout.BossScaleMax; percent++)
+        {
+            double room = MeterLayout.BossSlotHeight(style, percent) - MeterLayout.BossChromeHeight;
+            Assert.Equal(room100 * MeterLayout.BossScale(percent), room, 6);
+        }
+    }
+
+    /// <summary>슬라이더 밖 값(수기 편집·남의 공유코드)은 범위로 접힌다.</summary>
+    [Fact]
+    public void Boss_scale_clamps_outside_the_slider_range()
+    {
+        Assert.Equal(MeterLayout.BossScaleMin / 100.0, MeterLayout.BossScale(1), 6);
+        Assert.Equal(MeterLayout.BossScaleMax / 100.0, MeterLayout.BossScale(9999), 6);
+        Assert.Equal(1.0, MeterLayout.BossScale(MeterLayout.BossScaleDefault), 6);
+    }
+
+    /// <summary>슬라이더를 오른쪽으로 끌면 칸은 반드시 커진다(어느 레이아웃에서도).</summary>
+    [Fact]
+    public void Boss_slot_height_grows_with_the_slider()
+    {
+        foreach (MeterLayout l in MeterLayout.All)
+        {
+            for (int p = MeterLayout.BossScaleMin; p < MeterLayout.BossScaleMax; p++)
+            {
+                Assert.True(MeterLayout.BossSlotHeight(l.BossStyle, p)
+                    < MeterLayout.BossSlotHeight(l.BossStyle, p + 1));
+            }
+        }
+    }
+
+    /// <summary>기본 배율은 슬라이더 범위 안에 있고, 양 끝에서도 칸이 사라지지 않는다.</summary>
+    [Fact]
+    public void Boss_scale_default_sits_inside_the_slider_range()
+    {
+        Assert.InRange(MeterLayout.BossScaleDefault, MeterLayout.BossScaleMin, MeterLayout.BossScaleMax);
+        foreach (MeterLayout l in MeterLayout.All)
+        {
+            Assert.True(MeterLayout.BossSlotHeight(l.BossStyle, MeterLayout.BossScaleMin) > 0.0);
+            Assert.True(MeterLayout.BossSlotHeight(l.BossStyle, MeterLayout.BossScaleMax) > 0.0);
         }
     }
 

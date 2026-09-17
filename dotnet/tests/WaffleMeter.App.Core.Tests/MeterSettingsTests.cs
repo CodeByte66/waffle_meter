@@ -61,6 +61,28 @@ public sealed class MeterSettingsTests : IDisposable
         Assert.Equal(80, new MeterSettings(props).BuffUiIconSize);
     }
 
+    // 보스칸 높이는 퍼센트로 저장된다 — 100% 기준 높이가 레이아웃마다 달라(전장 104 / 계기판 52 / 무대 70)
+    // px 로 저장하면 레이아웃을 바꾼 순간 같은 숫자가 다른 뜻이 되기 때문. 범위 밖 값은 칸이 내용을
+    // 못 담게 만들고 그 실패는 조용하므로(ClipToBounds) 버프 아이콘처럼 읽기/쓰기 양쪽에서 막는다.
+    [Fact]
+    public void Boss_slot_scale_defaults_to_100_and_clamps_on_write_and_on_read()
+    {
+        var props = new PropertyHandler(_temp);
+        var s = new MeterSettings(props);
+        Assert.Equal(MeterLayout.BossScaleDefault, s.BossSlotScalePercent);
+
+        s.BossSlotScalePercent = 85;
+        Assert.Equal("85", props.GetProperty("bossSlotScale"));
+        Assert.Equal(85, new MeterSettings(props).BossSlotScalePercent);
+
+        s.BossSlotScalePercent = 9999;
+        Assert.Equal(MeterLayout.BossScaleMax, s.BossSlotScalePercent);
+
+        // 값 검증 없이 심기는 경로(공유코드 적용·수기 편집)를 흉내 낸다.
+        props.SetProperty("bossSlotScale", "5");
+        Assert.Equal(MeterLayout.BossScaleMin, new MeterSettings(props).BossSlotScalePercent);
+    }
+
     // 종전 "작게" 값 34px 은 정확히 85% — 새 슬라이더의 5% 눈금 위에 그대로 있어야 한다. 아래 범위로
     // 밀려나면 설정창을 여는 것만으로 사용자 값이 조용히 재기록된다.
     [Fact]
