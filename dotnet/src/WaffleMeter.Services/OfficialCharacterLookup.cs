@@ -136,14 +136,16 @@ public sealed class OfficialCharacterLookup : IOfficialCharacterLookup
             return null;
         }
 
-        IReadOnlyDictionary<int, int> skills = FetchEquippedSkills(character.CharacterId, character.ServerId);
+        (IReadOnlyDictionary<int, int> equipped, IReadOnlyDictionary<int, int> unequipped) =
+            FetchSkills(character.CharacterId, character.ServerId);
         int power = FetchCombatPower(character.CharacterId, character.ServerId);
         return new OfficialCharacterInfo(
             nickname,
             character.ServerId,
             character.Job ?? fallbackJob,
             power,
-            skills);
+            equipped,
+            unequipped);
     }
 
     /// <summary>공식 검색 API 가 요구하는 종족 값을 서버 id 에서 뽑는다. 1 = 천족, 2 = 마족.
@@ -250,7 +252,15 @@ public sealed class OfficialCharacterLookup : IOfficialCharacterLookup
         return best;
     }
 
-    private IReadOnlyDictionary<int, int> FetchEquippedSkills(string characterId, int server)
+    /// <summary>
+    /// Split the site's skill list into equipped and merely-owned, both as code → level.
+    /// <para>The equip flag is meaningful for actives and stigmas (the character slots them) and meaningless
+    /// for passives, which the site reports as <c>equip:0</c> forever. Returning both halves lets the caller
+    /// apply the right rule per code instead of this layer guessing; a level of 0 is dropped either way,
+    /// because a badge reading "Lv0" is worse than no badge.</para>
+    /// </summary>
+    private (IReadOnlyDictionary<int, int> Equipped, IReadOnlyDictionary<int, int> Unequipped) FetchSkills(
+        string characterId, int server)
     {
         string url = $"{BaseUrl}/api/character/equipment?{Query(
             ("lang", "ko"),
@@ -259,20 +269,20 @@ public sealed class OfficialCharacterLookup : IOfficialCharacterLookup
 
         using JsonDocument doc = JsonDocument.Parse(_httpGet(url));
         JsonElement root = doc.RootElement;
+        var equippedMap = new Dictionary<int, int>();
+        var unequippedMap = new Dictionary<int, int>();
         if (!root.TryGetProperty("skill", out JsonElement skill) || skill.ValueKind != JsonValueKind.Object ||
             !skill.TryGetProperty("skillList", out JsonElement skillList) || skillList.ValueKind != JsonValueKind.Array)
         {
-            return new Dictionary<int, int>();
+            return (equippedMap, unequippedMap);
         }
 
-        var result = new Dictionary<int, int>();
         foreach (JsonElement element in skillList.EnumerateArray())
         {
             int acquired = IntOrNull(element, "acquired") ?? 0;
-            int equipped = IntOrNull(element, "equip") ?? 0;
-            if (acquired <= 0 || equipped != 1)
+            if (acquired <= 0)
             {
-                continue;
+                continue; // not learned — there is no level to report
             }
 
             int? code = IntOrNull(element, "id");
@@ -281,10 +291,23 @@ public sealed class OfficialCharacterLookup : IOfficialCharacterLookup
                 continue;
             }
 
-            result[code.Value] = IntOrNull(element, "skillLevel") ?? 0;
+            int equipped = IntOrNull(element, "equip") ?? 0;
+            if (equipped == 1)
+            {
+                equippedMap[code.Value] = IntOrNull(element, "skillLevel") ?? 0;
+                continue;
+            }
+
+            // Owned but not slotted. Only a real level is worth carrying: the passive badges downstream print
+            // "Lv{n}", so a 0 would read as a level rather than as "the site did not say".
+            int level = IntOrNull(element, "skillLevel") ?? 0;
+            if (level > 0)
+            {
+                unequippedMap[code.Value] = level;
+            }
         }
 
-        return result;
+        return (equippedMap, unequippedMap);
     }
 
     private int FetchCombatPower(string characterId, int server)

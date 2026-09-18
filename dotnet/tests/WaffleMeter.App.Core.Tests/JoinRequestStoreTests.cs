@@ -289,4 +289,46 @@ public class JoinRequestStoreTests
         Assert.Equal(50, row.Power);     // refreshed from the new packet
         Assert.Equal(skills, row.Skill); // badges carried forward, not blanked
     }
+
+    /// <summary>
+    /// 🔑 주요 패시브의 레벨은 <b>미장착</b> 쪽에서 온다. 공식 홈은 패시브를 영원히 <c>equip:0</c> 으로
+    /// 주므로(2026-08-23 라이브 108명 실측), 장착 맵만 보면 패시브는 한 번도 안 뜬다.
+    /// <para>동시에 미장착을 통째로 가져오면 안 된다 — 신청자가 <b>안 낀</b> 액티브가 낀 것처럼 카드에 뜬다.
+    /// 그 "안 꼈다"는 사실 자체가 패널이 빠뜨림으로 보여 주려는 정보다.</para>
+    /// </summary>
+    [Fact]
+    public void Enrichment_takes_passive_levels_from_unequipped_but_leaves_unequipped_actives_out()
+    {
+        var store = new JoinRequestStore(() => 1000);
+        var data = new DataManager
+        {
+            OfficialLookup = new FakeLookup(new OfficialCharacterInfo(
+                "u1", 3, null, 900,
+                Skills: new Dictionary<int, int> { [11020000] = 7 },        // 예리한 일격 — 장착 액티브
+                Unequipped: new Dictionary<int, int>
+                {
+                    [11780000] = 34,   // 노련한 반격 — 주요 패시브. equip:0 이지만 레벨은 실려 온다
+                    [11050000] = 9,    // 분쇄 파동 — 안 낀 액티브. 넘어오면 안 된다
+                    [11800000] = 0,    // 살기 파열이지만 레벨 0 = 사이트가 말해 주지 않은 것. 버린다
+                })),
+        };
+        var adapter = new JoinRequestSinkAdapter(store, data);
+
+        adapter.OnJoinRequest(1, "u1", 0, 3, 50, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+        JoinRequestUser row = Assert.Single(store.Snapshot());
+        Assert.Equal(7, row.Skill[11020000]);            // 장착 액티브는 그대로
+        Assert.Equal(34, row.Skill[11780000]);           // 패시브 레벨이 들어왔다
+        Assert.DoesNotContain(11050000, row.Skill.Keys); // 안 낀 액티브는 빠진다
+        Assert.DoesNotContain(11800000, row.Skill.Keys); // 레벨 0 은 "Lv0" 뱃지가 되느니 없는 편이 낫다
+    }
+
+    /// <summary>콜백을 그 자리에서 부르는 조회기 — 배선만 보면 되므로 스레드를 끌어들이지 않는다.</summary>
+    private sealed class FakeLookup(OfficialCharacterInfo info) : IOfficialCharacterLookup
+    {
+        public void LookupAsync(string? nickname, int server, JobClass? fallbackJob, Action<OfficialCharacterInfo> callback)
+            => callback(info);
+
+        public OfficialCharacterInfo? LookupBlocking(string? nickname, int server, JobClass? fallbackJob) => info;
+    }
 }

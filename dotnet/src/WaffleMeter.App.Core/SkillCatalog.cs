@@ -1,10 +1,19 @@
 ﻿namespace WaffleMeter.App.Core;
 
-/// <summary>One tracked skill (port of codes.ts SkillMeta).</summary>
-public sealed record SkillMeta(int Code, string Job, string Name, bool IsStigma);
+/// <summary>One tracked skill (port of codes.ts SkillMeta).
+/// <para><paramref name="IsPassive"/> is a THIRD kind, not a flavour of the other two, and it changes where the
+/// level comes from: the site reports every passive as <c>equip:0</c>, so a passive is read out of
+/// <see cref="WaffleMeter.Data.OfficialCharacterInfo.Unequipped"/> while actives and stigmas come from the
+/// equipped map. Marking one of these <c>IsStigma</c> instead would put it in a group whose codes are looked
+/// up in the wrong map, and it would silently never appear.</para></summary>
+public sealed record SkillMeta(int Code, string Job, string Name, bool IsStigma, bool IsPassive = false);
 
 /// <summary>Per-job grouping for the skill-settings flyout (port of GroupedJobSkills).</summary>
-public sealed record GroupedJobSkills(string Job, IReadOnlyList<int> NormalSkills, IReadOnlyList<int> StigmaSkills);
+public sealed record GroupedJobSkills(
+    string Job,
+    IReadOnlyList<int> NormalSkills,
+    IReadOnlyList<int> StigmaSkills,
+    IReadOnlyList<int> PassiveSkills);
 
 /// <summary>
 /// Port of React constants/codes.ts: the tracked-skill catalog used by the join panel skill badges +
@@ -197,6 +206,31 @@ public static class SkillCatalog
         new(19350000, "권성", "집중 막기", true),
         new(19320000, "권성", "혈류 차단", true),
         new(19460000, "권성", "순보", true),
+
+        // ── 주요 패시브 ──────────────────────────────────────────────────────────────────────────────
+        // 모집자가 신청자를 볼 때 가장 큰 딜 차이를 만드는 축이라 별도 묶음으로 낸다. 액티브와 달리
+        // 장착 개념이 없어 공식 사이트가 전부 equip:0 으로 주므로, 레벨은 Unequipped 쪽에서 읽는다
+        // (SkillMeta.IsPassive 주석 참고).
+        new(11780000, "검성", "노련한 반격", false, IsPassive: true),
+        new(11800000, "검성", "살기 파열", false, IsPassive: true),
+        new(12780000, "수호성", "격앙", false, IsPassive: true),
+        new(12770000, "수호성", "모욕의 포효", false, IsPassive: true),
+        new(13740000, "살성", "배후 강타", false, IsPassive: true),
+        new(13720000, "살성", "빈틈 노리기", false, IsPassive: true),
+        new(14740000, "궁성", "집중의 눈", false, IsPassive: true),
+        new(14750000, "궁성", "사냥꾼의 결의", false, IsPassive: true),
+        new(15740000, "마도성", "불꽃의 로브", false, IsPassive: true),
+        new(16710000, "정령성", "정령 타격", false, IsPassive: true),
+        new(16760000, "정령성", "정신 집중", false, IsPassive: true),
+        new(18800000, "호법성", "바람의 약속", false, IsPassive: true),
+        new(18760000, "호법성", "충격 적중", false, IsPassive: true),
+        new(17780000, "치유성", "대지의 은총", false, IsPassive: true),
+        new(17730000, "치유성", "주신의 은총", false, IsPassive: true),
+        // 권성의 '폭주 증폭'은 액티브 '폭주'(19130000) 및 스킬별 [폭주] 변형들과 다른 코드다. 2026-08-12
+        // 패치에서 클라가 맞바꾼 것은 그 [폭주]/평상시 액티브 쌍(19150000↔19160000 등)이고 09-01에 교정됐다
+        // — 패시브 대역인 이 둘은 그 사건과 무관하다. [[fighter-pokju-label-swap-2026-09-01]]
+        new(19740000, "권성", "위세", false, IsPassive: true),
+        new(19750000, "권성", "폭주 증폭", false, IsPassive: true),
     };
 
     private static readonly Dictionary<int, SkillMeta> Map = Skills.ToDictionary(s => s.Code);
@@ -209,9 +243,15 @@ public static class SkillCatalog
     public static readonly IReadOnlyList<GroupedJobSkills> GroupedByJob = JobPrefix.Keys
         .Select(job => new GroupedJobSkills(
             job,
-            Skills.Where(s => s.Job == job && !s.IsStigma).Select(s => s.Code).ToList(),
-            Skills.Where(s => s.Job == job && s.IsStigma).Select(s => s.Code).ToList()))
+            Skills.Where(s => s.Job == job && !s.IsStigma && !s.IsPassive).Select(s => s.Code).ToList(),
+            Skills.Where(s => s.Job == job && s.IsStigma).Select(s => s.Code).ToList(),
+            Skills.Where(s => s.Job == job && s.IsPassive).Select(s => s.Code).ToList()))
         .ToList();
+
+    /// <summary>Codes the site never reports as equipped, so their level has to be read out of
+    /// <see cref="WaffleMeter.Data.OfficialCharacterInfo.Unequipped"/> instead of the equipped map.</summary>
+    public static readonly IReadOnlySet<int> PassiveCodes =
+        Skills.Where(s => s.IsPassive).Select(s => s.Code).ToHashSet();
 
     public static SkillMeta? Get(int code) => Map.GetValueOrDefault(code);
 

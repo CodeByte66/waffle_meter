@@ -257,7 +257,8 @@ public sealed class JoinRequestSinkAdapter(JoinRequestStore store, DataManager d
         // background thread; store.Add is thread-safe and re-renders the card with the skill badges.
         data.RequestOfficialCharacterLookup(requester, nickname, server, job, info =>
         {
-            if (info.Skills.Count == 0)
+            Dictionary<int, int> skills = MergeSkillsAndPassives(info);
+            if (skills.Count == 0)
             {
                 return;
             }
@@ -272,11 +273,33 @@ public sealed class JoinRequestSinkAdapter(JoinRequestStore store, DataManager d
             // re-opened the panel on the empty->non-empty transition.
             store.Enrich(requester, current => current with
             {
-                Skill = new Dictionary<int, int>(info.Skills),
+                Skill = skills,
                 Power = current.Power > 0 ? current.Power : info.Power,
                 Job = current.Job ?? info.Job?.ClassName(),
             });
         });
+    }
+
+    /// <summary>
+    /// The equipped skills, plus the levels of the tracked PASSIVES — which the official site reports as
+    /// <c>equip:0</c> forever and which therefore arrive in the unequipped half.
+    /// <para>Only codes the catalogue actually marks passive are taken across. Pulling in everything
+    /// unequipped would put an active the applicant owns but has NOT slotted on their card as though they
+    /// had, and "not slotted" is a thing the panel is meant to show by omission.</para>
+    /// </summary>
+    private static Dictionary<int, int> MergeSkillsAndPassives(OfficialCharacterInfo info)
+    {
+        var merged = new Dictionary<int, int>(info.Skills);
+        foreach ((int rawCode, int level) in info.UnequippedOrEmpty)
+        {
+            int code = SkillCatalog.Normalize(rawCode);
+            if (level > 0 && SkillCatalog.PassiveCodes.Contains(code) && !merged.ContainsKey(code))
+            {
+                merged[code] = level;
+            }
+        }
+
+        return merged;
     }
 
     public void OnJoinRequestRemove(int requester, bool admit) => store.Remove(requester, admit);

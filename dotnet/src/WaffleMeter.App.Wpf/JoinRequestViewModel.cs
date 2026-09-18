@@ -240,11 +240,14 @@ public sealed class JoinRequestRowViewModel : INotifyPropertyChanged
         BorderBrush = colors.Border;
         AccentBrush = colors.Accent;
 
-        BuildBadges(u.Skill, visibleCodes, colors, out List<JoinSkillBadge> normal, out List<JoinSkillBadge> stigma);
+        BuildBadges(u.Skill, visibleCodes, colors,
+            out List<JoinSkillBadge> normal, out List<JoinSkillBadge> stigma, out List<JoinSkillBadge> passive);
         NormalBadges = normal;
         StigmaBadges = stigma;
+        PassiveBadges = passive;
         NormalBadgesVisibility = normal.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         StigmaBadgesVisibility = stigma.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        PassiveBadgesVisibility = passive.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Anonymous stats identity for this applicant, or null when nickname/server are unusable.</summary>
@@ -324,22 +327,28 @@ public sealed class JoinRequestRowViewModel : INotifyPropertyChanged
     public Brush AccentBrush { get; }
     public IReadOnlyList<JoinSkillBadge> NormalBadges { get; }
     public IReadOnlyList<JoinSkillBadge> StigmaBadges { get; }
+
+    /// <summary>주요 패시브. 액티브/스티그마와 줄을 나눈다 — 모집자가 보려는 숫자가 이쪽이라, 배지 20개
+    /// 사이에 섞어 놓으면 따로 낼 이유가 없어진다.</summary>
+    public IReadOnlyList<JoinSkillBadge> PassiveBadges { get; }
     public Visibility NormalBadgesVisibility { get; }
     public Visibility StigmaBadgesVisibility { get; }
+    public Visibility PassiveBadgesVisibility { get; }
 
     // From the requester's skills: normalize → keep only visible → dedupe (max lv) → sort by catalog
-    // order → split 일반/스티그마 (port of JoinRequestPanel badgeMap + SkillBadges).
+    // order → split 일반/스티그마/패시브 (port of JoinRequestPanel badgeMap + SkillBadges).
     private static void BuildBadges(IReadOnlyDictionary<int, int> skill, ISet<int> visibleCodes, JobColors colors,
-        out List<JoinSkillBadge> normal, out List<JoinSkillBadge> stigma)
+        out List<JoinSkillBadge> normal, out List<JoinSkillBadge> stigma, out List<JoinSkillBadge> passive)
     {
         normal = new List<JoinSkillBadge>();
         stigma = new List<JoinSkillBadge>();
+        passive = new List<JoinSkillBadge>();
         if (skill.Count == 0)
         {
             return;
         }
 
-        var merged = new Dictionary<int, (string Name, int Lv, bool Stigma)>();
+        var merged = new Dictionary<int, (string Name, int Lv, bool Stigma, bool Passive)>();
         foreach ((int rawCode, int lv) in skill)
         {
             int code = SkillCatalog.Normalize(rawCode);
@@ -351,14 +360,15 @@ public sealed class JoinRequestRowViewModel : INotifyPropertyChanged
             SkillMeta? meta = SkillCatalog.Get(code);
             string name = meta?.Name ?? rawCode.ToString();
             bool isStigma = meta?.IsStigma ?? false;
+            bool isPassive = meta?.IsPassive ?? false;
             int level = merged.TryGetValue(code, out var prev) ? Math.Max(prev.Lv, lv) : lv;
-            merged[code] = (name, level, isStigma);
+            merged[code] = (name, level, isStigma, isPassive);
         }
 
         foreach ((int code, var b) in merged.OrderBy(kv => SkillCatalog.Order(kv.Key)))
         {
             var badge = new JoinSkillBadge(JoinIcons.Skill(code), $"{b.Name} Lv{b.Lv}", colors.BadgeBg, colors.Border);
-            (b.Stigma ? stigma : normal).Add(badge);
+            (b.Passive ? passive : b.Stigma ? stigma : normal).Add(badge);
         }
     }
 

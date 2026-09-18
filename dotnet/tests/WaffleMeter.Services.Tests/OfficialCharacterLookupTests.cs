@@ -187,6 +187,11 @@ public sealed class OfficialCharacterLookupTests
         Assert.Equal(JobClass.GLADIATOR, info.Job); // pcId 5 -> GLADIATOR (not the fallback)
         Assert.Equal(12345, info.Power);
         Assert.Equal(new Dictionary<int, int> { [11000001] = 3 }, info.Skills); // only acquired>0 && equip==1
+
+        // 🔑 acquired 지만 equip:0 인 것은 버리지 않고 따로 담는다 — 공식 홈이 패시브를 영원히 equip:0 으로
+        // 주기 때문이다(2026-08-23 라이브 108명 실측). 레벨은 같은 행에 그대로 실려 온다.
+        // acquired:0 은 아예 배운 적이 없는 것이라 어느 쪽에도 안 들어간다.
+        Assert.Equal(new Dictionary<int, int> { [11000002] = 5 }, info.UnequippedOrEmpty);
     }
 
     [Fact]

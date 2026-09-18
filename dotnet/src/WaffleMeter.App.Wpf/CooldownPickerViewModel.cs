@@ -40,7 +40,9 @@ public sealed class CooldownPickerViewModel : INotifyPropertyChanged
                 var grouped = new GroupedJobSkills(
                     jobName[g.Key],
                     g.Where(s => !s.IsStigma).OrderBy(s => s.Order).Select(s => s.BaseCode).ToList(),
-                    g.Where(s => s.IsStigma).OrderBy(s => s.Order).Select(s => s.BaseCode).ToList());
+                    g.Where(s => s.IsStigma).OrderBy(s => s.Order).Select(s => s.BaseCode).ToList(),
+                    // 쿨타임 카탈로그에는 패시브가 없다 — 쿨이 도는 스킬만 싣는다. 빈 묶음은 픽커에서 접힌다.
+                    Array.Empty<int>());
 
                 return new SkillJobGroupViewModel(
                     grouped, visibility, OnChipToggled,

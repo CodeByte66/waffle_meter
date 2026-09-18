@@ -60,20 +60,27 @@ public sealed class SkillJobGroupViewModel : INotifyPropertyChanged
         JobIcon = JoinIcons.Job(group.Job);
         NormalChips = group.NormalSkills.Select(c => Chip(c)).ToList();
         StigmaChips = group.StigmaSkills.Select(c => Chip(c)).ToList();
+        PassiveChips = group.PassiveSkills.Select(c => Chip(c)).ToList();
     }
 
     public string Job { get; }
     public ImageSource? JobIcon { get; }
     public IReadOnlyList<SkillChipViewModel> NormalChips { get; }
     public IReadOnlyList<SkillChipViewModel> StigmaChips { get; }
+
+    /// <summary>주요 패시브. 비어 있는 직업(권성)은 픽커에서 이 묶음이 통째로 접힌다.</summary>
+    public IReadOnlyList<SkillChipViewModel> PassiveChips { get; }
     public bool HasNormal => NormalChips.Count > 0;
     public bool HasStigma => StigmaChips.Count > 0;
+    public bool HasPassive => PassiveChips.Count > 0;
 
     /// <summary>이 직업에서 켜 둔 스킬 수 / 전체. 픽커 헤더가 "16 / 30" 으로 보여 준다 — 칩 30개를 눈으로
     /// 세지 않고도 어느 직업을 손댔는지 알 수 있다.</summary>
-    public int SelectedCount => NormalChips.Concat(StigmaChips).Count(c => c.IsVisible);
+    public int SelectedCount => AllChips.Count(c => c.IsVisible);
 
-    public int TotalCount => NormalChips.Count + StigmaChips.Count;
+    public int TotalCount => NormalChips.Count + StigmaChips.Count + PassiveChips.Count;
+
+    private IEnumerable<SkillChipViewModel> AllChips => NormalChips.Concat(StigmaChips).Concat(PassiveChips);
 
     public string CountText => $"{SelectedCount} / {TotalCount}";
 
@@ -91,7 +98,7 @@ public sealed class SkillJobGroupViewModel : INotifyPropertyChanged
     /// <summary>Re-read every chip in this group from the shared set. See <see cref="SkillSettingsViewModel.Refresh"/>.</summary>
     public void Refresh()
     {
-        foreach (SkillChipViewModel chip in NormalChips.Concat(StigmaChips))
+        foreach (SkillChipViewModel chip in AllChips)
         {
             chip.Refresh();
         }
@@ -101,7 +108,7 @@ public sealed class SkillJobGroupViewModel : INotifyPropertyChanged
 
     private void SetAll(bool on)
     {
-        IEnumerable<int> all = NormalChips.Concat(StigmaChips).Select(c => c.Code);
+        IEnumerable<int> all = AllChips.Select(c => c.Code);
         _visibility.SetMany(all, on);
         Refresh();
         _onChanged();
