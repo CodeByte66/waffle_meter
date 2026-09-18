@@ -14,8 +14,6 @@ namespace WaffleMeter.App.Wpf;
 /// </summary>
 public sealed class HotkeyCaptureBox : TextBox
 {
-    private static readonly int[] PureModifiers = { 0x10, 0x11, 0x12, 0x5B, 0x5C };
-
     public static readonly DependencyProperty ComboProperty = DependencyProperty.Register(
         nameof(Combo),
         typeof(HotkeyCombo),
@@ -48,9 +46,13 @@ public sealed class HotkeyCaptureBox : TextBox
 
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
         int vk = KeyInterop.VirtualKeyFromKey(key);
-        if (Array.IndexOf(PureModifiers, vk) >= 0)
+        if (HotkeyCombo.IsPureModifierVk(vk))
         {
-            return; // a pure modifier was pressed alone — wait for the actual key
+            // A modifier was pressed on its own — it is the START of a combo, not the combo. Wait for the
+            // real key. The list this used to consult held only the GENERIC codes (VK_CONTROL 0x11 …), which
+            // WPF never reports: Key has LeftCtrl/RightCtrl, so KeyInterop hands back VK_LCONTROL (0xA2).
+            // So the guard matched nothing, and simply reaching for Ctrl wrote "CTRL + VK_162" into the box.
+            return;
         }
 
         // Single key (no modifier) is allowed; Ctrl/Alt combine if held. Shift/Win are ignored as

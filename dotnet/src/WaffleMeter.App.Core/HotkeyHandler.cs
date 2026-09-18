@@ -9,6 +9,22 @@ public sealed record HotkeyCombo(int Modifiers, int VkCode)
 {
     public override string ToString() => $"modifiers={Modifiers},vkCode={VkCode}";
 
+    /// <summary>
+    /// Is this virtual-key a modifier in its own right, i.e. unusable as a combo's main key?
+    /// <para>🔑 The left/right pairs (0xA0–0xA5) are the load-bearing half. WPF's <c>Key</c> enum has no
+    /// generic Ctrl/Shift/Alt member, so <c>KeyInterop.VirtualKeyFromKey</c> on a real keypress returns
+    /// VK_LCONTROL (0xA2) and never VK_CONTROL (0x11). A filter that lists only the generic codes therefore
+    /// matches NOTHING a user can actually press — which is exactly how "CTRL + VK_162" got stored.</para>
+    /// <para>The generic codes stay listed anyway: they are what a hand-edited properties file or a combo
+    /// ported from the old Kotlin build can contain, and they are no more registrable than the specific ones.</para>
+    /// </summary>
+    public static bool IsPureModifierVk(int vk) => vk is
+        0x10 or 0x11 or 0x12          // VK_SHIFT / VK_CONTROL / VK_MENU — generic, never produced by WPF
+        or 0xA0 or 0xA1               // VK_LSHIFT / VK_RSHIFT
+        or 0xA2 or 0xA3               // VK_LCONTROL / VK_RCONTROL
+        or 0xA4 or 0xA5               // VK_LMENU / VK_RMENU
+        or 0x5B or 0x5C;              // VK_LWIN / VK_RWIN
+
     public static HotkeyCombo? TryParse(string s)
     {
         try
@@ -30,7 +46,13 @@ public sealed record HotkeyCombo(int Modifiers, int VkCode)
                 return null;
             }
 
-            return new HotkeyCombo(modifiers, vkCode);
+            // A combo whose MAIN key is itself a modifier is not a usable hotkey, and until the capture box
+            // was fixed it was easy to save one: pressing Ctrl to start a combo stored "CTRL + VK_162"
+            // (VK_LCONTROL) on the way to the real key. RegisterHotKey accepts it, so the action then fired on
+            // bare Ctrl presses — the "컨텐츠 관리가 되다말다" report. Rejecting it HERE retires the values
+            // already on disk: Load falls back to the default and LoadOptional yields 미지정, either of which
+            // the user can reassign. Without this the fix would only help installs that never hit the bug.
+            return IsPureModifierVk(vkCode) ? null : new HotkeyCombo(modifiers, vkCode);
         }
         catch
         {

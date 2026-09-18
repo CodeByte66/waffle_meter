@@ -155,6 +155,63 @@ public sealed class HotkeyHandlerTests : IDisposable
         Assert.True(HotkeyHandler.ShouldFire(hasPrevious: true, previousTick: 1000, nowTick: 1000 + gapMs));
     }
 
+    /// <summary>
+    /// 🔑 The left/right codes are the whole point. WPF's <c>Key</c> enum has no generic Ctrl/Shift/Alt, so a
+    /// real keypress comes back from <c>KeyInterop.VirtualKeyFromKey</c> as VK_LCONTROL (0xA2), never
+    /// VK_CONTROL (0x11). A guard listing only the generic codes matched nothing a user could press.
+    /// </summary>
+    [Theory]
+    [InlineData(0x10)] // VK_SHIFT     — generic; a hand-edited file or an old Kotlin combo can hold these
+    [InlineData(0x11)] // VK_CONTROL
+    [InlineData(0x12)] // VK_MENU
+    [InlineData(0xA0)] // VK_LSHIFT    — these are what WPF actually reports
+    [InlineData(0xA1)] // VK_RSHIFT
+    [InlineData(0xA2)] // VK_LCONTROL  ← the one behind "CTRL + VK_162"
+    [InlineData(0xA3)] // VK_RCONTROL
+    [InlineData(0xA4)] // VK_LMENU
+    [InlineData(0xA5)] // VK_RMENU
+    [InlineData(0x5B)] // VK_LWIN
+    [InlineData(0x5C)] // VK_RWIN
+    public void A_modifier_is_not_usable_as_a_combos_main_key(int vk)
+    {
+        Assert.True(HotkeyCombo.IsPureModifierVk(vk));
+        Assert.Null(HotkeyCombo.TryParse($"modifiers=2,vkCode={vk}"));
+    }
+
+    [Theory]
+    [InlineData(0x52)] // R  — the reset default
+    [InlineData(0x48)] // H
+    [InlineData(0x70)] // F1
+    [InlineData(0x60)] // NUMPAD 0
+    [InlineData(0x1B)] // ESC
+    [InlineData(0x5A)] // Z — adjacent to VK_LWIN (0x5B); the range must not swallow it
+    [InlineData(0x5D)] // VK_APPS — the other side of the Win pair
+    [InlineData(0x9F)] // adjacent to VK_LSHIFT (0xA0)
+    [InlineData(0xA6)] // adjacent to VK_RMENU (0xA5)
+    public void An_ordinary_key_is_still_a_valid_main_key(int vk)
+    {
+        Assert.False(HotkeyCombo.IsPureModifierVk(vk));
+        Assert.Equal(new HotkeyCombo(2, vk), HotkeyCombo.TryParse($"modifiers=2,vkCode={vk}"));
+    }
+
+    /// <summary>
+    /// Installs that already hit the bug have "modifiers=2,vkCode=162" on disk, and RegisterHotKey accepts it —
+    /// the action then fires on every bare Ctrl press. Retiring it at load is what makes those installs
+    /// recover: a defaulted action returns to its default, an opt-in one returns to 미지정.
+    /// </summary>
+    [Fact]
+    public void A_stored_modifier_only_combo_is_retired_on_load()
+    {
+        var props = new PropertyHandler(_temp);
+        props.SetProperty("hotkey", "modifiers=2,vkCode=162");        // has a default
+        props.SetProperty("aetherListHotkey", "modifiers=2,vkCode=162"); // ships unassigned
+
+        var handler = new HotkeyHandler(props);
+
+        Assert.Equal(new HotkeyCombo(HotkeyHandler.ModControl, 0x52), handler.Reset); // back to Ctrl+R
+        Assert.Null(handler.AetherList);                                              // back to 미지정
+    }
+
     [Fact]
     public void RepeatGuard_window_stays_between_auto_repeat_and_a_deliberate_tap()
     {
