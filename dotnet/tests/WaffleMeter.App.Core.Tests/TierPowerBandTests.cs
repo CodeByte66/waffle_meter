@@ -83,7 +83,8 @@ public sealed class TierPowerBandTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
-    public void Both_schemas_are_accepted(int schemaVersion)
+    [InlineData(3)]
+    public void Every_supported_schema_is_accepted(int schemaVersion)
     {
         Assert.True(TierArtifact.IsSupportedSchemaVersion(schemaVersion));
         Assert.NotNull(Build(schemaVersion, Row(0, "검성", 3, 5, step: 100, g: null)));
@@ -91,7 +92,7 @@ public sealed class TierPowerBandTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(3)]
+    [InlineData(4)]
     [InlineData(-1)]
     public void An_unknown_schema_is_still_refused(int schemaVersion)
     {

@@ -172,12 +172,12 @@ public sealed class TierComparisonBasisTests
     [Fact]
     public void The_manifest_request_asks_for_the_highest_schema_this_build_reads()
     {
-        Assert.Equal(2, TierArtifact.MaxSupportedSchemaVersion);
+        Assert.Equal(3, TierArtifact.MaxSupportedSchemaVersion);
         Assert.Equal(TierArtifact.SupportedSchemaVersions.Max(), TierArtifact.MaxSupportedSchemaVersion);
 
         string url = ManifestUrl(TierArtifact.MaxSupportedSchemaVersion);
 
-        Assert.Contains("/api/v1/tiers/manifest?schema=2", url);
+        Assert.Contains("/api/v1/tiers/manifest?schema=3", url);
     }
 
     /// <summary>The client holds no schema literal of its own — it sends what the composition root derived.

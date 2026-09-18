@@ -81,8 +81,16 @@ public sealed class TierArtifact
     /// a rollout to have no gap, and the meter is the side that must go first.</para>
     /// <para>v1 → v2 added the combat-power band axis (<c>g</c>) to each row. v1 rows read back as
     /// <see cref="WholeCohortBand"/>, which is exactly what they are.</para>
+    /// <para>v2 → v3 changes NOTHING about the document's shape — same keys, same row schema, parsed by the
+    /// same code. The version exists only to SPLIT THE AUDIENCE: v3 declares a narrower
+    /// <see cref="PowerBandSize"/> (25k rather than 50k), and a build older than 2.10.0 ignores that
+    /// declaration and bands on a hardcoded 50k grid. Because every multiple of 50k is also a multiple of 25k,
+    /// such a build's row key still RESOLVES — to the band below the character's real one. It would be ranked
+    /// against a weaker population, with no miss to fall back from and no way for anyone to notice. Serving
+    /// those builds a v2 (50k) document and this one a v3 is what keeps that from happening, so the server
+    /// publishes both and answers each client with the highest version it asked for.</para>
     /// </summary>
-    public static readonly IReadOnlySet<int> SupportedSchemaVersions = new HashSet<int> { 1, 2 };
+    public static readonly IReadOnlySet<int> SupportedSchemaVersions = new HashSet<int> { 1, 2, 3 };
 
     /// <summary>Row sentinel for "not split by combat power" — the fallback every banded lookup falls back to,
     /// and what every row of a v1 artifact is.</summary>

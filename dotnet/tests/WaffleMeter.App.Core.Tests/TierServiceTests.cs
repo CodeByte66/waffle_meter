@@ -158,13 +158,14 @@ public sealed class TierServiceTests : IDisposable
         Assert.NotNull(service.Artifact);
 
         // Server moves to a shape this build does not know: keep serving the old ladder rather than guessing.
-        // v2 is deliberately NOT used here — this build reads it, and the point of the test is the refusal.
-        api.ManifestSchemaVersion = 3;
+        // The number has to stay one version ABOVE what this build reads — v1/v2/v3 are all accepted, so using
+        // any of them would assert the opposite of what this test is named for.
+        api.ManifestSchemaVersion = TierArtifact.MaxSupportedSchemaVersion + 1;
         service.TryRefresh();
 
         Assert.NotNull(service.Artifact);
         Assert.Equal("abc0123456789def", service.Artifact!.ArtifactId);
-        Assert.Equal("unsupported_schema_3", service.Status().LastError);
+        Assert.Equal($"unsupported_schema_{TierArtifact.MaxSupportedSchemaVersion + 1}", service.Status().LastError);
     }
 
     /// <summary>The rollout depends on this: the meter has to take a v2 manifest BEFORE the server starts

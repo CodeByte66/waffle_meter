@@ -27,11 +27,11 @@ public sealed class TierBandSpecFromArtifactTests
     };
 
     /// <summary>파서가 요구하는 최소 문서 + 밴드 규격만 바꿔 끼운다(TierPowerBandTests의 픽스처와 같은 형태).</summary>
-    private static TierArtifact? Build(int? bandSize, int? bandFloor)
+    private static TierArtifact? Build(int? bandSize, int? bandFloor, int schemaVersion = 2)
     {
         var document = new Dictionary<string, object?>
         {
-            ["schemaVersion"] = 2,
+            ["schemaVersion"] = schemaVersion,
             ["artifactId"] = "band-spec-fixture",
             ["windowDays"] = 7,
             ["generatedAt"] = "2026-08-10T00:00:00.000Z",
@@ -112,5 +112,47 @@ public sealed class TierBandSpecFromArtifactTests
         var evaluation = new TierEvaluation(0, 0, 3.2, 2, PowerBand: 600_000, PowerBandSize: 20_000);
 
         Assert.Equal("전투력 600k–620k 미만 기준", evaluation.ComparisonBasis);
+    }
+
+    /// <summary>
+    /// v3 = v2와 문서 형태가 같고 <c>powerBandSize</c>만 25k로 좁힌 것. 파서에 버전 분기가 없다는 게 요점이다.
+    /// </summary>
+    [Fact]
+    public void A_v3_artifact_is_parsed_by_the_same_code_and_bands_at_the_width_it_declares()
+    {
+        TierArtifact? a = Build(25_000, 400_000, schemaVersion: 3);
+
+        Assert.NotNull(a);
+        Assert.Equal(25_000, a!.PowerBandSize);
+        Assert.Equal(400_000, a.PowerBandFloor);
+        Assert.Equal(425_000, a.BandFor(440_000));
+        Assert.Equal("전투력 425k–450k 미만 기준", TierLadder.FormatComparisonBasis(425_000, a.PowerBandSize));
+    }
+
+    /// <summary>
+    /// 🔑 v3라는 버전 번호가 존재하는 이유 — <b>청중을 가르는 것</b> 하나뿐이다.
+    /// <para>2.10.0 미만 빌드는 <c>powerBandSize</c> 선언을 무시하고 50k 격자로 행 키를 만든다. 그런데 50k의
+    /// 배수는 전부 25k의 배수이기도 해서, 그 키는 25k 아티팩트에서 <b>조회에 실패하지 않는다</b> — 한 칸 아래의
+    /// 멀쩡한 밴드에 붙는다. 미스가 안 나니 전체 코호트 폴백도 안 걸리고, 라벨도 "전체 기준"으로 바뀌지 않으며,
+    /// 그 사용자는 자기보다 약한 모집단과 비교된 상위%를 아무 신호 없이 받는다. 폭을 좁히면서 그 빌드에게는
+    /// 계속 v2(50k)를 주는 것이 이 사고를 막는 유일한 수단이고, 그래서 서버가 두 버전을 함께 발행한다.</para>
+    /// </summary>
+    [Fact]
+    public void An_old_builds_50k_key_still_resolves_in_a_25k_grid_which_is_why_v2_must_keep_being_published()
+    {
+        TierArtifact? v3 = Build(25_000, 400_000, schemaVersion: 3);
+        Assert.NotNull(v3);
+
+        // 전투력 440k. 구버전은 폭을 못 읽으므로 언제나 50k 격자로 키를 만든다.
+        int oldKey = TierArtifact.BandFor(440_000, TierArtifact.DefaultPowerBandSize, TierArtifact.DefaultPowerBandFloor);
+        int newKey = v3!.BandFor(440_000);
+
+        Assert.Equal(400_000, oldKey);
+        Assert.Equal(425_000, newKey);
+        Assert.NotEqual(newKey, oldKey);
+
+        // 그리고 그 옛 키는 25k 격자에서 '없는 밴드'가 아니라 410k 캐릭터가 속하는 실재 밴드다.
+        // 조회가 빗나가 주지 않으므로 폴백이 구제해 줄 기회 자체가 없다.
+        Assert.Equal(oldKey, v3.BandFor(410_000));
     }
 }
