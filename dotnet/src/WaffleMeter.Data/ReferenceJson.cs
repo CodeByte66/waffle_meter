@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using WaffleMeter.Capture;
 
@@ -32,7 +32,7 @@ public static class ReferenceJson
 
     /// <summary>content-types.json: { "categories": { "expedition": [codes], "transcendence": [...],
     /// "sanctuary": [...] } } — instanced (원정/초월/성역) boss mobCode -> category. Returns code -> category.
-    /// Used by the opt-in "던전 강제 집계" toggle to scope the bare-actor display bypass to these bosses only.</summary>
+    /// Used as the roster rescue's party-scene proof: instanced content admits no outsiders.</summary>
     public static Dictionary<int, string> LoadContentTypes(string path)
     {
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));

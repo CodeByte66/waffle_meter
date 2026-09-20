@@ -1,4 +1,5 @@
-﻿using WaffleMeter.Capture;
+﻿using System.Text.Json.Serialization;
+using WaffleMeter.Capture;
 
 namespace WaffleMeter.Data;
 
@@ -195,6 +196,9 @@ public sealed class AnalyzedSkill
 /// <param name="Level">이 행이 모은 적용들 중 가장 높은 어노멀 레벨(0 = 모름). 시전자별로 이미 행이
 /// 갈라져 있으므로 사실상 "그 시전자가 이 스킬을 몇 레벨로 갖고 있나"다. 전투 도중 랭크가 오르는 일은
 /// 없으니 최댓값이 곧 대표값이고, 레벨을 못 읽은 적용(0)이 섞여도 끌어내리지 않는다.</param>
+// ⚠ [method: JsonConstructor] — 아래 편의 생성자 때문에 공개 생성자가 둘이라, 없으면 System.Text.Json 이
+// 어느 쪽을 써야 할지 몰라 역직렬화에서 터진다(저장된 전투 기록을 다시 읽는 경로).
+[method: JsonConstructor]
 public sealed record OperatingData(
     int Code,
     string Name,
@@ -265,7 +269,14 @@ public sealed record Buff(int Code, string Name, string Summary, string Effect);
 /// <para>여기 담기 전까지 레벨은 라이브 오버레이 스토어에서만 살아남아 배타 버프 쌍 승자 판정에만 쓰였다.
 /// 집계·상세·통계로 넘기려면 구간과 함께 보관해야 한다 — 시너지 버프의 효과량이 레벨 선형이라(예: 노련한
 /// 반격 = 5.4% + 0.4%/레벨) 레벨 없이는 nDPS/rDPS가 랭크 스냅샷 근사에 머문다.</para></param>
-public sealed record UseBuff(int SkillCode, long BuffStart, long BuffEnd, long Duration, int ActorId, int Level = 0);
+/// <param name="Slot">그 대상의 버프 슬롯 번호(0 = 모름). 제거 브로드캐스트(0x382C)가 코드가 아니라
+/// <b>슬롯</b>을 지목하므로, 이걸 들고 있어야 조기 해제가 왔을 때 정확히 그 인스턴스의 구간만 끊을 수 있다.
+/// <para>종전에는 오버레이 사전에만 실리고 이 레코드에는 안 실렸다. 그래서 <b>오버레이는 즉시 지워지는데
+/// 상세창 가동률은 선언 duration이 다 흐를 때까지 계속 세는</b> 비대칭이 있었다 — 같은 화면에서 한쪽은
+/// 버프가 없다고 하고 다른 쪽은 아직 걸려 있다고 말한 셈이다. 그 값은 선형으로 nDPS/rDPS와 업로드
+/// <c>OperatingRate</c>까지 따라간다(단일 원천이라 여기 하나를 고치면 셋이 같이 맞는다).</para>
+/// <para>0은 fail-open이다 — 슬롯을 모르는 항목은 끊지 않고 기존 만료 로직에 맡긴다.</para></param>
+public sealed record UseBuff(int SkillCode, long BuffStart, long BuffEnd, long Duration, int ActorId, int Level = 0, int Slot = 0);
 
 /// <summary>
 /// One buff/debuff's merged applied intervals on a single entity, for the combat-detail DPS-graph timeline
@@ -420,7 +431,8 @@ public sealed class DpsReport
     public int ExecutorId { get; set; }
 
     /// <summary>True when the current target is a classified instanced (원정/초월/성역) boss. Set live in
-    /// <c>DpsCalculator.GetDps</c>; scopes the opt-in "던전 강제 집계" display bypass to these bosses only.</summary>
+    /// <c>DpsCalculator.GetDps</c>. Read by the roster rescue as positive proof that this is a party scene --
+    /// instanced content has no outsiders, so a nameless row in one cannot be a stranger.</summary>
     public bool TargetInstanced { get; set; }
 
     /// <summary>Frozen party/raid sub-group slots (uid -&gt; slot 1-8 from the 0x9702 roster), populated at

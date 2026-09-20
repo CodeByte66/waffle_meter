@@ -95,6 +95,20 @@ public sealed class OfficialCharacterLookup : IOfficialCharacterLookup
         });
     }
 
+    /// <summary>캐시에 있는 답만. 네트워크를 타지 않는다 — <see cref="IOfficialCharacterLookup.LookupCached"/> 참고.</summary>
+    public OfficialCharacterInfo? LookupCached(string? nickname, int server)
+    {
+        string? normalized = NormalizeNickname(nickname);
+        if (normalized == null || server <= 0)
+        {
+            return null;
+        }
+
+        return _cache.TryGetValue(CacheKey(normalized, server), out CacheEntry? cached) && cached.ExpiresAt > _clock()
+            ? cached.Info
+            : null;
+    }
+
     public OfficialCharacterInfo? LookupBlocking(string? nickname, int server, JobClass? fallbackJob)
     {
         string? normalized = NormalizeNickname(nickname);

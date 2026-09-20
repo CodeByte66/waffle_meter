@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using System.Windows.Media;
 using WaffleMeter.App.Core;
 using WaffleMeter.Data;
@@ -28,8 +29,18 @@ public sealed class BuffPickerViewModel : INotifyPropertyChanged
         _voice = MeterSettings.ParseCodeSet(settings.BuffUiVoice);
         _pinned = MeterSettings.ParseCodeList(settings.BuffUiPinned);
         Rebuild();
-        _data.BuffCatalogChanged += OnCatalogChanged;
+
+        // 🔑 이 이벤트는 **캡처 소비자 스레드**에서 올라온다. 핸들러가 바인딩된 `Groups`(ObservableCollection)를
+        // 건드리므로 그 스레드에서 그대로 실행하면 WPF 가 NotSupportedException 을 던진다 — 설정창 버프 탭을
+        // 열어 둔 채 전투하면 픽커가 새 버프 코드로 갱신되지 않는 것이 그 증상이다. 디스패처로 넘긴다.
+        // 구독/해제가 **같은 델리게이트**여야 Dispose 가 실제로 떼어낸다(람다를 직접 += 하면 -= 가 무효다).
+        // 본보기: App.xaml.cs 의 `BuffCatalogChanged += () => Dispatcher.BeginInvoke(...)`.
+        _catalogChanged = () => Application.Current?.Dispatcher.BeginInvoke(OnCatalogChanged);
+        _data.BuffCatalogChanged += _catalogChanged;
     }
+
+    /// <summary>구독에 쓴 델리게이트 그대로. Dispose 가 이것으로 해제한다.</summary>
+    private readonly Action _catalogChanged;
 
     public ObservableCollection<BuffJobGroup> Groups { get; } = new();
 
@@ -165,7 +176,7 @@ public sealed class BuffPickerViewModel : INotifyPropertyChanged
         _data.SetVoiceBuffBases(_voice);
     }
 
-    public void Dispose() => _data.BuffCatalogChanged -= OnCatalogChanged;
+    public void Dispose() => _data.BuffCatalogChanged -= _catalogChanged;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)

@@ -36,7 +36,7 @@ public sealed class BuffSlotRemovalTests
         dm.SaveUseBuff(Me, BuffB, t0, t0 + 60_000, 60_000, Me, level: 10, slot: 66);
         Assert.Equal(new[] { BaseA, BaseB }, Codes(dm, t0 + 1_000));
 
-        dm.RemoveBuffSlots(Me, new[] { 65 });
+        dm.RemoveBuffSlots(Me, new[] { 65 }, t0 + 1_000);
 
         Assert.Equal(new[] { BaseB }, Codes(dm, t0 + 1_000)); // 남은 수명이 한참인데도 즉시 사라진다
     }
@@ -49,7 +49,7 @@ public sealed class BuffSlotRemovalTests
         dm.SaveUseBuff(Me, BuffA, t0, t0 + 60_000, 60_000, Me, level: 10, slot: 65);
         dm.SaveUseBuff(Me, BuffB, t0, t0 + 60_000, 60_000, Me, level: 10, slot: 66);
 
-        dm.RemoveBuffSlots(Me, new[] { 65, 66 });
+        dm.RemoveBuffSlots(Me, new[] { 65, 66 }, t0 + 1_000);
 
         Assert.Empty(dm.ActiveOwnerBuffs(t0 + 1_000));
     }
@@ -61,7 +61,7 @@ public sealed class BuffSlotRemovalTests
         DataManager dm = Self(t0);
         dm.SaveUseBuff(Me, BuffA, t0, t0 + 60_000, 60_000, Me, level: 10, slot: 65);
 
-        dm.RemoveBuffSlots(Ally, new[] { 65 });
+        dm.RemoveBuffSlots(Ally, new[] { 65 }, t0 + 1_000);
 
         Assert.Equal(new[] { BaseA }, Codes(dm, t0 + 1_000));
     }
@@ -74,7 +74,7 @@ public sealed class BuffSlotRemovalTests
         DataManager dm = Self(t0);
         dm.SaveUseBuff(Me, BuffA, t0, t0 + 60_000, 60_000, Me, level: 10, slot: 65);
 
-        dm.RemoveBuffSlots(Me, new[] { 99 });
+        dm.RemoveBuffSlots(Me, new[] { 99 }, t0 + 1_000);
 
         Assert.Equal(new[] { BaseA }, Codes(dm, t0 + 1_000));
     }
@@ -87,7 +87,7 @@ public sealed class BuffSlotRemovalTests
         DataManager dm = Self(t0);
         dm.SaveUseBuff(Me, BuffA, t0, t0 + 60_000, 60_000, Me, level: 10, slot: 0);
 
-        dm.RemoveBuffSlots(Me, new[] { 0 });
+        dm.RemoveBuffSlots(Me, new[] { 0 }, t0 + 1_000);
 
         Assert.Equal(new[] { BaseA }, Codes(dm, t0 + 1_000));
     }
@@ -101,10 +101,10 @@ public sealed class BuffSlotRemovalTests
         dm.SaveUseBuff(Me, BuffA, t0, t0 + 60_000, 60_000, Me, level: 10, slot: 65);
         dm.SaveUseBuff(Me, BuffA, t0 + 100, t0 + 60_100, 60_000, Me, level: 10, slot: 70);
 
-        dm.RemoveBuffSlots(Me, new[] { 65 });
+        dm.RemoveBuffSlots(Me, new[] { 65 }, t0 + 1_000);
         Assert.Equal(new[] { BaseA }, Codes(dm, t0 + 1_000)); // 옛 슬롯 = 무효
 
-        dm.RemoveBuffSlots(Me, new[] { 70 });
+        dm.RemoveBuffSlots(Me, new[] { 70 }, t0 + 1_000);
         Assert.Empty(dm.ActiveOwnerBuffs(t0 + 1_000));
     }
 }

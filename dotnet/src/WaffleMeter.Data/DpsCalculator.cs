@@ -40,6 +40,19 @@ public sealed class DpsCalculator
     // being re-anchored (StartAnchor caps back-dating) — the dense per-report array is re-based at build time.
     private readonly Dictionary<int, Dictionary<long, long>> _cachedDpsBuckets = new();
 
+    /// <summary><see cref="_cachedSkillDetails"/>·<see cref="_cachedDpsBuckets"/> 전용 게이트.
+    /// <para><b>왜 필요한가.</b> 이 클래스는 캡처 소비자 스레드 전용이라는 계약(<c>MeterServices</c> 주석
+    /// "the meter is not internally synchronized")으로 살아왔고, 리포트 틱은 블로킹
+    /// <c>Dispatcher.Invoke</c> 펜스 안에서 돌아 실제로 안전하다. 그 계약을 깨는 경로가 딱 하나 있다 —
+    /// 라이브 전투 중 미터 <b>행 클릭</b>: <c>new DetailsViewModel(...)</c> 생성자가 UI 스레드에서 곧바로
+    /// <see cref="BattleDetails"/>/<see cref="GetDpsSeries"/> 를 부르는데 그건 펜스 밖이고, 그동안 파서는
+    /// 계속 이 두 사전에 키를 꽂는다. 그러면 열거가 예외로 끝나고 게임 위에 오류 대화상자가 뜬다.
+    /// <b>try/catch 로 덮는 것은 답이 아니다</b> — 증상만 숨고 상세창은 그대로 안 열린다.</para>
+    /// <para>규칙: 이 두 사전은 <b>읽기·쓰기 모두</b> 이 락 안에서만 만진다. UI 쪽은 락 안에서 <b>복사</b>만
+    /// 하고 나간다(소비자 스레드를 오래 잡지 않는다). <see cref="SkillCastRepository"/>·
+    /// <see cref="UseBuffRepository"/>가 같은 이유로 같은 모양의 락을 갖는다.</para></summary>
+    private readonly Lock _cacheGate = new();
+
     /// <summary>The uploader's own judgment cross-tabs for the battle in progress. Shares
     /// <see cref="_cachedSkillDetails"/>'s lifecycle exactly — see <see cref="SelfJudgmentAccumulator"/> for
     /// why any other clearing schedule is a silent bug.</summary>
@@ -67,8 +80,12 @@ public sealed class DpsCalculator
         _lastProcessedSequence = 0L;
         _cachedInfo.Clear();
         _cachedContributors.Clear();
-        _cachedSkillDetails.Clear();
-        _cachedDpsBuckets.Clear();
+        lock (_cacheGate) // 구조적 변경 — 상세창 클릭이 같은 순간 열거하고 있을 수 있다(_cacheGate 주석)
+        {
+            _cachedSkillDetails.Clear();
+            _cachedDpsBuckets.Clear();
+        }
+
         _cachedJudgment.Clear();
         _cachedBattleEnd = 0L;
         _cachedBattleStart = 0L;
@@ -182,6 +199,23 @@ public sealed class DpsCalculator
         }
 
         return false;
+    }
+
+    /// <summary>산 <see cref="_cachedSkillDetails"/>의 <b>구조만</b> 복사한 스냅샷(안쪽 <see cref="AnalyzedSkill"/>
+    /// 는 공유 참조). 열거 안전성이 목적이므로 이 정도면 충분하다 — 값이 한 틱 찢어지는 것은 다음 틱에 덮이지만
+    /// 열거 중 예외는 상세창이 아예 안 열린다. 값까지 얼려야 하는 저장 경로는 <see cref="CloneSkillDetails"/>.</summary>
+    private Dictionary<int, Dictionary<string, AnalyzedSkill>> SnapshotSkillDetails()
+    {
+        lock (_cacheGate)
+        {
+            var copy = new Dictionary<int, Dictionary<string, AnalyzedSkill>>(_cachedSkillDetails.Count);
+            foreach (KeyValuePair<int, Dictionary<string, AnalyzedSkill>> kv in _cachedSkillDetails)
+            {
+                copy[kv.Key] = new Dictionary<string, AnalyzedSkill>(kv.Value);
+            }
+
+            return copy;
+        }
     }
 
     private static Dictionary<int, Dictionary<string, AnalyzedSkill>> CloneSkillDetails(
@@ -322,7 +356,10 @@ public sealed class DpsCalculator
         // 접힘 판정은 여기서만 할 수 있다. ResolveActor 는 순수 함수(부작용을 넣으면 재생 안전성 추론이
         // 무너진다)이고, 그 안에서 세면 바로 아래 user == null 분기가 통째로 버리는 패킷까지 세어 과다 차감된다.
         bool folded = actor != packet.ActorId;
-        AccumulateSkillDetail(_cachedSkillDetails, packet, user.Id, folded);
+        lock (_cacheGate) // 새 액터/스킬 키 삽입 = 구조적 변경 (_cacheGate 주석)
+        {
+            AccumulateSkillDetail(_cachedSkillDetails, packet, user.Id, folded);
+        }
 
         // 판정 교차표는 업로더 본인의 접히지 않은 타격만 받는다 — 스탯 스탬프는 본인 시트이므로, 소환수 타격을
         // 넣으면 한 주체의 발동률을 다른 주체의 스탯과 짝지어 버린다.
@@ -337,14 +374,18 @@ public sealed class DpsCalculator
         // so it is immune to the reported start being re-anchored below; the dense array is re-based at build.
         if (ts > 0L)
         {
-            if (!_cachedDpsBuckets.TryGetValue(user.Id, out Dictionary<long, long>? buckets))
+            // 초당 새 키가 꽂히는 사전이라, 라이브 중 DPS 그래프를 여는 클릭과 정확히 부딪친다 (_cacheGate 주석).
+            lock (_cacheGate)
             {
-                buckets = new Dictionary<long, long>();
-                _cachedDpsBuckets[user.Id] = buckets;
-            }
+                if (!_cachedDpsBuckets.TryGetValue(user.Id, out Dictionary<long, long>? buckets))
+                {
+                    buckets = new Dictionary<long, long>();
+                    _cachedDpsBuckets[user.Id] = buckets;
+                }
 
-            long second = ts / 1000L;
-            buckets[second] = buckets.GetValueOrDefault(second) + packet.Damage;
+                long second = ts / 1000L;
+                buckets[second] = buckets.GetValueOrDefault(second) + packet.Damage;
+            }
         }
 
         if (_cachedBattleStart == 0L)
@@ -427,6 +468,12 @@ public sealed class DpsCalculator
             battleEnd = dummyFixedEnd;
         }
 
+        (Dictionary<int, int> cachedSlots, int cachedRosterSize) = _dm.FreshPartySlots(_cachedInfo.Keys
+            .Select(uid => _dm.User(uid))
+            .Where(u => u != null)
+            .Select(u => u!)
+            .ToList());
+
         var report = new DpsReport
         {
             Contributors = FreezeContributors(),
@@ -434,8 +481,24 @@ public sealed class DpsCalculator
             BattleEnd = battleEnd,
             Packets = null,
             Target = targetInfo,
+            // 🔑 슬롯·정원을 **라이브 리포트에도** 싣는다. 티어 resolver 는 라이브·기록 공용이라, 저장본에만
+            // 실으면 같은 전투가 두 숫자를 낸다: 라이브는 PartySlots 가 비어 IsSynergyTrusted 가 false → R2 로
+            // 떨어지고, 기록은 trusted → R0 를 쓴다. 그리고 **밴드행은 rung 0 에만 실리므로** 라이브는 시너지
+            // 버킷뿐 아니라 전투력 밴드까지 통째로 잃는다(900k 캐릭터가 전 전투력 풀과 비교된다).
+            // 게이트는 FreshPartySlots 안에 있다 — 저장 경로와 같은 시계를 봐야 새 불일치가 안 생긴다.
+            PartySlots = cachedSlots,
+            PartyRosterSize = cachedRosterSize,
             // 이 전투의 시련 난이도를 지금 박아 둔다 — 나중에 몹 코드로는 되짚을 수 없다(DpsReport 주석).
             TrialDifficulty = _dm.TrialDifficulty.Current,
+            // ⚠️ 이 줄을 빼면 <b>보스가 죽는 바로 그 틱</b>에 로스터로 구제한 파티원 행이 사라진다.
+            // 이 리포트가 _recentData 를 교체하는데 TargetInstanced 의 대입은 라이브 경로 한 곳뿐이라,
+            // 여기서 이월하지 않으면 기본값 false 로 떨어진다 — 그런데 그 플래그가 표시 계층의
+            // '여기는 파티 씬이다' 증거(인스턴스에는 외부인이 없다)라, 꺼지면 구제가 닫히고 사용자가
+            // 결과를 읽는 바로 그 순간 행이 줄고 비중 합이 100%에 못 미친다. 몹 코드를 알면 다시 묻고,
+            // 모르면(타깃 인식 실패) 직전 값을 그대로 들고 간다.
+            TargetInstanced = targetInfo != null
+                ? _dm.IsInstancedBoss(targetInfo.Mob.Code)
+                : _recentData.TargetInstanced,
             ExecutorId = _dm.ExecutorId(), // freeze 본인 uid so the post-combat idle ("대기 중") view self-colors the
                                            // own row in 직업 강조 mode — this is the report returned in the idle state,
                                            // so without it self-id falls to the transient _selfId and reverts to job color
@@ -538,13 +601,23 @@ public sealed class DpsCalculator
                     FreezeTargetHp(previousTarget);
                     RefreshRecentReportFromCache(previousTarget, _recentData.Target);
                 }
-            }
 
-            _dm.FlushPacket();
-            if (isNewBattleEnd && !_recentData.IsEmpty())
-            {
-                SaveRecentBattleLog();
-                _recentDataSaved = true;
+                // 통짜 비우기는 <b>전투가 끝난 그 한 틱</b>에만 돈다. 예전에는 이 줄이 이 블록 <b>밖</b>에
+                // 있어서 대기 중 매 틱(기본 500ms) 전 타깃의 링버퍼를 비웠고, 그래서 다음 보스에 넣은
+                // 오프너(교전 토글보다 먼저 들어간 타격)가 토글이 오기 전에 이미 지워져 누적 피해·기여도·
+                // DPS 분자에서 빠졌다 — ActivePacketCutoff 가 admit 해도 돌아올 것이 없었다. 더 큰 갈래는
+                // PromoteUnresolvedStart(TTL 60초) 대기 구간으로, 그 내내 CurrentTarget()==-1 이라 매 틱
+                // 플러시가 돌아 토글~스폰 사이 파티 전체 피해가 소각되고 시작 시각만 back-date 돼
+                // "분모는 길고 분자는 빈 전투"가 저장·업로드됐다.
+                // 유휴 중 GC 는 PacketRepository.Save 의 시간 기준 스윕(IdleRetentionMs)이 대신 맡는다 —
+                // ⚠️ 이 줄을 블록 밖으로 되돌리면 그 두 가지가 같이 재발한다.
+                _dm.FlushPacket();
+
+                if (!_recentData.IsEmpty())
+                {
+                    SaveRecentBattleLog();
+                    _recentDataSaved = true;
+                }
             }
 
             // 대기 상태에서 계속 내보내는 이 리포트는 더 이상 진행 중이 아니다. 표시 계층이 "직전 전투 위로
@@ -609,9 +682,18 @@ public sealed class DpsCalculator
 
         long dmStart = _dm.CurrentBattleStart();
         long dmEnd = _dm.CurrentBattleEnd();
+        List<User> liveContributors = CopyContributors();
+        (Dictionary<int, int> liveSlots, int liveRosterSize) = _dm.FreshPartySlots(liveContributors);
         var report = new DpsReport
         {
-            Contributors = CopyContributors(),
+            Contributors = liveContributors,
+            // 🔑 슬롯·정원을 **라이브 리포트에도** 싣는다. 티어 resolver 는 라이브·기록 공용이라, 저장본에만
+            // 실으면 같은 전투가 두 숫자를 낸다: 라이브는 PartySlots 가 비어 IsSynergyTrusted 가 false → R2 로
+            // 떨어지고, 기록은 trusted → R0 를 쓴다. 그리고 **밴드행은 rung 0 에만 실리므로** 라이브는 시너지
+            // 버킷뿐 아니라 전투력 밴드까지 통째로 잃는다(900k 캐릭터가 전 전투력 풀과 비교된다).
+            // 게이트는 FreshPartySlots 안에 있다 — 저장 경로와 같은 시계를 봐야 새 불일치가 안 생긴다.
+            PartySlots = liveSlots,
+            PartyRosterSize = liveRosterSize,
             // Duration basis MUST match the FINAL/saved report (RefreshRecentReportFromCache, which uses
             // _cachedBattleStart only): once any damage exists, count from the first DAMAGE timestamp
             // (_cachedBattleStart), falling back to the battle-start toggle wall-clock (CurrentBattleStart)
@@ -646,7 +728,7 @@ public sealed class DpsCalculator
                     RemainHp = _dm.MobHp(_currentTarget) ?? 0,
                     MaxHp = _dm.MobMaxHp(_currentTarget) ?? 0,
                 };
-                report.TargetInstanced = _dm.IsInstancedBoss(mobCode!.Value); // scopes the "던전 강제 집계" bypass
+                report.TargetInstanced = _dm.IsInstancedBoss(mobCode!.Value); // party-scene proof for the roster rescue
             }
         }
 
@@ -697,6 +779,13 @@ public sealed class DpsCalculator
     /// are each other. Both "exactly one"s are the guard: a party member who has not damaged (or not been
     /// named) yet leaves two loose ends, and we wait rather than guess.
     /// </para>
+    /// <para>
+    /// ⚠️ 두 "exactly one"만으로는 부족하다. 미청구 이름이 본인인 것은 확실하지만(executor==0 이면 본인 닉을
+    /// 아무 uid도 들고 있지 않다) <b>무명 하나가 본인인지</b>는 확실하지 않다 — 본인이 아직 딜을 안 넣은
+    /// 창(전투 시작 직후 수백 ms~수 초)에서는 남의 행이 그 자리를 차지한다. 그래서 표시층과 같은 가드
+    /// 셋(소환수/몹 배제 · 최소 딜 비중 · 외부인 게이트)을 아래에 함께 건다. 자세한 이유는 각 가드의 주석과
+    /// <see cref="SelfRecoveryGuards"/>.
+    /// </para>
     /// </summary>
     private void TryRecoverExecutorFromRoster()
     {
@@ -724,9 +813,72 @@ public sealed class DpsCalculator
             return;
         }
 
+        User candidate = nameless[0];
+
+        // ── 아래 세 가드는 표시층(OverlayRowBuilder 의 lost-executor 복구)이 이미 갖고 있던 것을 그대로
+        // 옮겨 온 것이다. 두 층이 같은 질문에 다른 답을 낼 이유가 없고, 특히 이쪽은 표시 전용 복사본이 아니라
+        // SaveNickname(isExecutor: true) 로 신원 저장소에 <b>영구 기록</b>한다 — 틀리면 자기색·버프 오버레이
+        // 게이트·업로드의 본인 성적이 전부 그 uid를 따라가고, 그 행은 PurgeResolvedNonPlayers 에서도 영구
+        // 제외된다. 2차 방어선인 SaveNickname 의 executor 게이트는 uid 상한뿐이라 아무것도 막지 못한다.
+
+        // ① 소환수/몹은 절대 본인이 아니다(identity-roster#4). 지금은 두 호출자 모두 바로 앞에서
+        //    PurgeResolvedNonPlayers 를 돌리므로 겹치는 방어선이지만, 그 순서가 바뀌면 남의 소환수 딜이
+        //    내 성적으로 표시·업로드되고 그다음 전투부터는 own_result_missing 으로 조용히 스킵된다.
+        if (_dm.SummonerId(candidate.Id) != null || _dm.IsMobInstance(candidate.Id))
+        {
+            return;
+        }
+
+        // ② 큰 딜러여야 한다 — 표시층과 같은 문턱(SelfRecoveryGuards.MinDamageShare), 같은 지표(RAW 피해량).
+        double topAmount = 0.0;
+        double candidateAmount = 0.0;
+        foreach (KeyValuePair<int, DpsInformation> kv in _cachedInfo)
+        {
+            if (kv.Value.Amount > topAmount)
+            {
+                topAmount = kv.Value.Amount;
+            }
+
+            if (kv.Key == candidate.Id)
+            {
+                candidateAmount = kv.Value.Amount;
+            }
+        }
+
+        if (topAmount <= 0.0 || candidateAmount < topAmount * SelfRecoveryGuards.MinDamageShare)
+        {
+            return;
+        }
+
+        // ③ 외부인 게이트. 파티에 없는 <b>이름 달린</b> 딜러가 있으면 여기는 공개 씬(필드보스 zerg)이고,
+        //    "미청구 이름 하나 ↔ 무명 하나"는 본인의 증거가 아니다 — 본인은 아직 딜을 안 넣은 구경꾼일 수 있고,
+        //    그때 이 경로는 낯선 사람 uid를 본인으로 확정한다(identity-roster~S2). 로스터가 있다는 것은 이미
+        //    확인했으므로(위 roster.Count) 파티 문맥 미상으로 게이트가 꺼지는 경우는 없다.
+        var party = new List<(int Uid, string? Nickname, int Server)>();
+        foreach (User m in _dm.PartyRoster(RosterRecoveryWindowMs))
+        {
+            party.Add((m.Id, m.Nickname, m.Server));
+        }
+
+        foreach ((string nickname, int server) in roster)
+        {
+            party.Add((0, nickname, server)); // uid 미상 — (닉,서버) 대조에만 쓰인다
+        }
+
+        var damagers = new List<(int Uid, string? Nickname, int Server)>(_cachedContributors.Count);
+        foreach (User u in _cachedContributors)
+        {
+            damagers.Add((u.Id, u.Nickname, u.Server));
+        }
+
+        if (SelfRecoveryGuards.HasNamedOutsider(damagers, party, candidate.Id))
+        {
+            return;
+        }
+
         // jobByte 0 = "unknown": the job is already being inferred from our own job-locked damage skills,
         // which outrank a snapshot byte anyway.
-        _dm.SaveNickname(nameless[0].Id, unclaimed[0].Nickname, isExecutor: true, unclaimed[0].Server, jobByte: 0);
+        _dm.SaveNickname(candidate.Id, unclaimed[0].Nickname, isExecutor: true, unclaimed[0].Server, jobByte: 0);
     }
 
     private List<User> CopyContributors() => [.. _cachedContributors];
@@ -750,7 +902,10 @@ public sealed class DpsCalculator
             if (_dm.SummonerId(u.Id) == null && !_dm.IsMobInstance(u.Id)) continue;
             _cachedContributors.RemoveAt(i);
             _cachedInfo.Remove(u.Id);
-            _cachedSkillDetails.Remove(u.Id);
+            lock (_cacheGate)
+            {
+                _cachedSkillDetails.Remove(u.Id);
+            }
         }
     }
 
@@ -795,9 +950,14 @@ public sealed class DpsCalculator
 
         if (ReferenceEquals(data, _recentData) && data.Packets == null)
         {
-            Dictionary<string, AnalyzedSkill> details =
-                _cachedSkillDetails.GetValueOrDefault(uid) ?? _recentSkillDetails.GetValueOrDefault(uid) ?? new();
-            return details.ToDictionary(kv => kv.Key, kv => kv.Value.Copy());
+            // ⚠️ 이 호출은 UI 스레드에서 온다(행 클릭 → DetailsViewModel 생성자). 파서가 같은 순간 이 사전에
+            // 키를 꽂으므로 락 밖에서 열거하면 예외가 난다 — _cacheGate 주석 참조. 락 안에서는 복사만 한다.
+            lock (_cacheGate)
+            {
+                Dictionary<string, AnalyzedSkill> details =
+                    _cachedSkillDetails.GetValueOrDefault(uid) ?? _recentSkillDetails.GetValueOrDefault(uid) ?? new();
+                return details.ToDictionary(kv => kv.Key, kv => kv.Value.Copy());
+            }
         }
 
         Dictionary<string, AnalyzedSkill> built = BuildSkillDetails(data).GetValueOrDefault(uid) ?? new();
@@ -987,21 +1147,27 @@ public sealed class DpsCalculator
     public long[] GetDpsSeries(int uid, long start, long end)
     {
         if (end <= start) return [];
-        if (!_cachedDpsBuckets.TryGetValue(uid, out Dictionary<long, long>? buckets) || buckets.Count == 0)
-        {
-            return [];
-        }
 
         long startSecond = start / 1000L;
         long endSecond = end / 1000L;
         int length = (int)(endSecond - startSecond) + 1;
         if (length <= 0) return [];
 
+        // ⚠️ UI 스레드(행 클릭 → 상세창 그래프)에서도 들어온다. 파서가 매 초 새 키를 꽂는 사전이라
+        // 락 없이 열거하면 예외가 난다 — _cacheGate 주석 참조.
         var series = new long[length];
-        foreach (KeyValuePair<long, long> bucket in buckets)
+        lock (_cacheGate)
         {
-            int idx = (int)Math.Clamp(bucket.Key - startSecond, 0, length - 1);
-            series[idx] += bucket.Value;
+            if (!_cachedDpsBuckets.TryGetValue(uid, out Dictionary<long, long>? buckets) || buckets.Count == 0)
+            {
+                return [];
+            }
+
+            foreach (KeyValuePair<long, long> bucket in buckets)
+            {
+                int idx = (int)Math.Clamp(bucket.Key - startSecond, 0, length - 1);
+                series[idx] += bucket.Value;
+            }
         }
 
         return series;
@@ -1108,10 +1274,13 @@ public sealed class DpsCalculator
         }
 
         bool frozen = data.BuffRates.Count > 0;
+        // ⚠️ 이 메서드는 UI 스레드에서도 들어온다(GetDpsMetrics ← 오버레이/상세창). 아래 계산은 길고 그 내내
+        // 파서는 _cachedSkillDetails 에 새 액터/스킬 키를 꽂으므로, 산 사전을 그대로 들고 가면 열거 중
+        // 예외가 난다. 락 안에서 <b>구조 스냅샷</b>만 떠서 나간다 — _cacheGate 주석 참조.
         Dictionary<int, Dictionary<string, AnalyzedSkill>> skills =
             skillsOverride is { Count: > 0 } ? skillsOverride
             : data.SkillDetailsSnapshot.Count > 0 ? data.SkillDetailsSnapshot
-            : _cachedSkillDetails.Count > 0 ? _cachedSkillDetails
+            : SnapshotSkillDetails() is { Count: > 0 } cachedSkills ? cachedSkills
             : BuildSkillDetails(data);
 
         // 버킷 기준선의 스탯 절반. 미터가 스탯시트를 갖는 사람은 본인뿐이라 파티원에게도 같은 값을 쓴다 —
@@ -1278,8 +1447,14 @@ public sealed class DpsCalculator
             FreezeTargetHp(saving.Id);
         }
 
+        Dictionary<int, Dictionary<string, AnalyzedSkill>>? liveSkills;
+        lock (_cacheGate) // 규칙: 이 사전은 읽기도 락 안에서 (_cacheGate 주석). BuildSkillDetails 는 락 밖으로 뺀다.
+        {
+            liveSkills = _cachedSkillDetails.Count > 0 ? CloneSkillDetails(_cachedSkillDetails) : null;
+        }
+
         Dictionary<int, Dictionary<string, AnalyzedSkill>> skillDetails =
-            _cachedSkillDetails.Count > 0 ? CloneSkillDetails(_cachedSkillDetails) : BuildSkillDetails(_recentData);
+            liveSkills ?? BuildSkillDetails(_recentData);
         Dictionary<int, List<OperatingData>> buffRates = BuildBuffRates(_recentData);
         List<OperatingData> bossBuffRates = BuildBossBuffRates(_recentData);
         // Built here, BEFORE the SaveBattleLog call below prunes the buff repository (DataManager.PruneBefore):
@@ -1398,5 +1573,65 @@ public sealed class DpsCalculator
         _recentBossBuffRates = [];
         _recentDataSaved = false;
         ResetCache();
+    }
+}
+
+/// <summary>
+/// "이 무명 전투행이 본인인가"를 묻는 <b>두 층이 공유하는</b> 가드. 데이터층(<see cref="DpsCalculator"/>의
+/// 로스터 1:1 복구)과 표시층(<c>OverlayRowBuilder</c>의 lost-executor 복구)은 같은 질문을 서로 다른 입력으로
+/// 푸는데, 종전에는 문턱과 외부인 판정이 <b>표시층에만</b> 있었다 — 그래서 화면에서는 거부된 조합이
+/// 저장소에는 <c>SaveNickname(isExecutor: true)</c>로 영구히 기록됐다(identity-roster~S2). 두 층이 같은 답을
+/// 내도록 판정을 여기 한 곳에 둔다.
+/// <para>App.Core 가 아니라 Data 에 사는 이유: App.Core → Data 단방향 참조라 반대 방향은 순환이 된다.</para>
+/// </summary>
+public static class SelfRecoveryGuards
+{
+    /// <summary>본인 후보가 1등 딜러 대비 최소로 차지해야 하는 <b>RAW 피해량</b> 비중. 스치듯 딜을 넣은
+    /// 펫/NPC/지나가던 엔티티가 "무명 하나"가 되는 순간을 본인으로 확정하지 않기 위한 문턱이다.
+    /// ⚠️ nDPS/rDPS 같은 대체 지표로 재지 마라 — 모델 추정이 섞인 값이라 되돌리기 어려운 신원 판단의
+    /// 근거로 쓸 수 없다.</summary>
+    public const double MinDamageShare = 0.2;
+
+    /// <summary>파티에 없는 <b>이름 달린</b> 딜러가 이 전투에 있는가.
+    /// <para>본인이 재인스턴스되는 곳은 던전이고 거기 있는 플레이어는 파티뿐이다. 이름이 확인된 비파티
+    /// 딜러가 있다는 것은 여기가 공개 씬(필드보스 zerg)이라는 증거이고, 그때 "무명 하나 = 본인"은 성립하지
+    /// 않는다 — 본인은 아직 딜을 안 넣은 구경꾼일 수 있다. 이 가드를 빼면 낯선 사람이 본인으로 칠해진다.</para>
+    /// <para>무명 행은 애초에 판단 근거가 아니므로 세지 않는다. <paramref name="party"/>의 uid 0 항목은
+    /// "이름만 아는 파티원"(RAW 0x9702 로스터)이라 uid 대조에서는 빠지고 (닉,서버) 대조에만 쓰인다.</para></summary>
+    /// <param name="exemptUids">판정에서 빼는 uid — 본인 후보와 이미 인식된 본인.</param>
+    public static bool HasNamedOutsider(
+        IReadOnlyList<(int Uid, string? Nickname, int Server)> damagers,
+        IReadOnlyList<(int Uid, string? Nickname, int Server)> party,
+        params int[] exemptUids)
+    {
+        var partyUids = new HashSet<int>();
+        var partyIdentities = new HashSet<(string, int)>();
+        foreach ((int uid, string? nickname, int server) in party)
+        {
+            if (uid != 0)
+            {
+                partyUids.Add(uid);
+            }
+
+            if (!string.IsNullOrWhiteSpace(nickname))
+            {
+                partyIdentities.Add((nickname!, server));
+            }
+        }
+
+        foreach ((int uid, string? nickname, int server) in damagers)
+        {
+            if (string.IsNullOrWhiteSpace(nickname)
+                || Array.IndexOf(exemptUids, uid) >= 0
+                || partyUids.Contains(uid)
+                || partyIdentities.Contains((nickname!, server)))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 }

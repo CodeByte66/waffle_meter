@@ -31,6 +31,11 @@ public sealed class DataManagerOfficialLookupTests
             Calls++;
             return Result;
         }
+
+        /// <summary>진짜 조회기처럼 "이미 받아 둔 답"만 돌려준다. 네트워크(=Calls)를 늘리지 않는다.</summary>
+        public OfficialCharacterInfo? Cached;
+
+        public OfficialCharacterInfo? LookupCached(string? nickname, int server) => Cached;
     }
 
     [Fact]
@@ -168,19 +173,72 @@ public sealed class DataManagerOfficialLookupTests
         Assert.Equal(0, fake.Calls);
     }
 
+    /// <summary>
+    /// 캐시에 답이 있으면 그 자리에서 쓰고 저장소에도 반영한다 — 여기서는 네트워크를 안 탄다.
+    /// </summary>
     [Fact]
-    public void ResolveBlocking_applies_and_returns_info()
+    public void Resolve_uses_the_cached_answer_without_touching_the_network()
+    {
+        var info = new OfficialCharacterInfo("Hero", 3, JobClass.CHANTER, 4242, NoSkills);
+        var fake = new FakeLookup { Cached = info };
+        var dm = new DataManager { OfficialLookup = fake };
+        dm.SaveNickname(1, "Hero", isExecutor: false, server: 3, jobByte: 0);
+
+        OfficialCharacterInfo? got = dm.ResolveOfficialCharacterInfo(1, "Hero", 3, null);
+
+        Assert.NotNull(got);
+        Assert.Equal(4242, got!.Power);
+        Assert.Equal(4242, dm.User(1)!.Power);
+        Assert.Equal(JobClass.CHANTER, dm.User(1)!.Job);
+        Assert.Equal(0, fake.Calls); // 캐시 적중 — 조회가 안 나갔다
+    }
+
+    /// <summary>
+    /// 🔑 M-10/M-18 의 본체. 캐시에 없으면 <b>기다리지 않고</b> null 을 돌려주고 비동기 요청만 건다.
+    /// <para>이 경로는 UI 스레드에서 돈다 — 종전에는 여기서 동기 HTTP 를 쳐서 연결 8초/읽기 15초 타임아웃만큼
+    /// 오버레이가 얼었고 캡처 소비자 스레드도 같이 멈췄다(실측 최대 5초, 10분 주기).</para>
+    /// <para>이 테스트의 더블은 <c>LookupAsync</c> 가 동기로 콜백을 부르므로 저장소 반영까지 확인되지만,
+    /// <b>반환값은 null</b> 이어야 한다 — "이번 틱은 포기하고 다음 틱이 주워 간다"가 계약이다.</para>
+    /// </summary>
+    [Fact]
+    public void A_cache_miss_schedules_the_lookup_and_does_not_block()
     {
         var fake = new FakeLookup { Result = new OfficialCharacterInfo("Hero", 3, JobClass.CHANTER, 4242, NoSkills) };
         var dm = new DataManager { OfficialLookup = fake };
         dm.SaveNickname(1, "Hero", isExecutor: false, server: 3, jobByte: 0);
 
-        OfficialCharacterInfo? info = dm.ResolveOfficialCharacterInfo(1, "Hero", 3, null);
+        OfficialCharacterInfo? got = dm.ResolveOfficialCharacterInfo(1, "Hero", 3, null);
 
-        Assert.NotNull(info);
-        Assert.Equal(4242, info!.Power);
-        Assert.Equal(4242, dm.User(1)!.Power);
-        Assert.Equal(JobClass.CHANTER, dm.User(1)!.Job);
+        Assert.Null(got);                    // 이번 틱은 값 없이 지나간다
+        Assert.Equal(1, fake.Calls);         // 비동기 요청은 걸렸다
+        Assert.Equal(4242, dm.User(1)!.Power); // 콜백이 저장소에 반영 → 다음 틱이 주워 간다
+    }
+
+    /// <summary>블로킹 경로가 다시 살아나면 빨개진다 — 캐시 미스에서 <c>LookupBlocking</c> 을 치면 안 된다.</summary>
+    [Fact]
+    public void A_cache_miss_never_calls_the_blocking_path()
+    {
+        var fake = new BlockingTripwire();
+        var dm = new DataManager { OfficialLookup = fake };
+
+        dm.ResolveOfficialCharacterInfo(1, "Hero", 3, null);
+
+        Assert.False(fake.BlockingCalled, "리포트 경로가 다시 동기 HTTP 를 친다 — UI 스레드가 얼어붙는다");
+    }
+
+    private sealed class BlockingTripwire : IOfficialCharacterLookup
+    {
+        public bool BlockingCalled;
+
+        public void LookupAsync(string? nickname, int server, JobClass? fallbackJob, Action<OfficialCharacterInfo> callback)
+        {
+        }
+
+        public OfficialCharacterInfo? LookupBlocking(string? nickname, int server, JobClass? fallbackJob)
+        {
+            BlockingCalled = true;
+            return null;
+        }
     }
 
     [Fact]

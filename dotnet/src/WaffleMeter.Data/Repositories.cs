@@ -39,6 +39,22 @@ public sealed class PacketRepository
             _totalAdded++;
         }
 
+        /// <summary>앞쪽(가장 오래된 쪽)에서 <paramref name="cutoff"/>보다 오래된 패킷을 떼어 낸다.
+        /// 반환값은 "이제 비었는가". <c>_totalAdded</c>는 건드리지 않는다 — 시퀀스는 통짜 카운터라
+        /// 여기서 줄이면 <see cref="WindowFrom"/>의 firstSequence 계산이 어긋나 읽는 쪽이 같은 패킷을
+        /// 두 번 누적한다.</summary>
+        public bool DropOlderThan(long cutoff)
+        {
+            while (_size > 0 && ElementAtOffset(0).Timestamp < cutoff)
+            {
+                _buffer[_start] = null;
+                _start = (_start + 1) % _buffer.Length;
+                _size--;
+            }
+
+            return _size == 0;
+        }
+
         public List<ParsedDamagePacket> Snapshot()
         {
             var result = new List<ParsedDamagePacket>(_size);
@@ -86,10 +102,26 @@ public sealed class PacketRepository
         private ParsedDamagePacket ElementAtOffset(int offset) => _buffer[(_start + offset) % _buffer.Length]!;
     }
 
+    /// <summary>진행 중인 전투가 없을 때 링버퍼가 들고 있을 과거의 폭.
+    /// <para>⚠️ 60초(<c>DataManager.PendingStartTtlMs</c>)보다 <b>반드시 커야 한다</b>. 시작 토글이 mobCode
+    /// 미해결로 거부됐다가 스폰이 늦게 도착해 되살아나는 경로(<c>PromoteUnresolvedStart</c>)는 전투 시작을
+    /// <b>원래 토글 시각</b>으로 back-date 하는데, 그 사이 파티 전체의 피해가 여기 남아 있어야 분자가
+    /// 채워진다. 짧게 줄이면 "분모는 길고 분자는 빈 전투"가 저장·업로드된다.</para></summary>
+    private const long IdleRetentionMs = 75_000L;
+
+    /// <summary>진행 중인 전투 창의 시작보다 이만큼 앞은 정리에서 뺀다. <c>DpsCalculator</c>의
+    /// <c>PreemptivePacketWindowMs</c>와 같은 값이어야 오프너가 조회에는 잡히는데 정리에는 지워지는
+    /// 어긋남이 안 생긴다(시전 저장소의 <c>PreemptiveCastWindowMs</c>와 같은 쌍).</summary>
+    private const long OpenerWindowMs = 1_000L;
+
+    /// <summary>몇 건마다 보존 정리를 돌릴지. 패킷마다 전 타깃을 훑으면 파서 경로에 비용이 붙는다.</summary>
+    private const int SweepEvery = 2_048;
+
     private readonly Dictionary<int, RingBuffer> _storage = new();
     private int _currentTarget;
     private long _currentBattleStart;
     private long _currentBattleEnd;
+    private int _sinceSweep;
 
     public void Save(ParsedDamagePacket pdp)
     {
@@ -100,6 +132,58 @@ public sealed class PacketRepository
         }
 
         ring.Add(pdp);
+
+        // 유휴 중에도 잡몹 피해는 계속 들어오고, 그걸 치우는 자리는 여기뿐이다. 예전에는 대기 <b>틱마다</b>
+        // DpsCalculator 가 FlushPacket() 으로 전 타깃 링버퍼를 통째로 비워서 이게 GC 노릇을 했는데, 그 통짜
+        // 비우기가 다음 전투의 <b>오프너</b>(교전 토글보다 먼저 들어간 타격)까지 같이 지웠다 — ActivePacketCutoff
+        // 가 admit 해도 이미 버려져 돌아오지 않는다. 그래서 정리는 시간 기준으로만 한다.
+        // ⚠️ 이 스윕을 없애고 대기 틱 통짜 비우기로 되돌리면 오프너 누락(battle-lifecycle#3)이 재발한다.
+        if (++_sinceSweep >= SweepEvery)
+        {
+            _sinceSweep = 0;
+            PruneOlderThan(pdp.Timestamp - IdleRetentionMs);
+        }
+    }
+
+    /// <summary><paramref name="cutoff"/>보다 오래된 패킷을 버리고, 비워진 타깃은 사전에서도 지운다
+    /// (링 개수 자체가 필드에서 몇 시간 도는 동안 무제한으로 늘어나는 것을 막는다).
+    /// <para>열려 있는 전투 창은 절대 건드리지 않는다 — 진행 중인 전투의 앞부분을 지우면 캐시를 0부터 다시
+    /// 누적하는 읽기 쪽이 이미 잘린 창을 보게 된다. 그래서 cutoff 는 <c>CurrentBattleStart - </c>
+    /// <see cref="OpenerWindowMs"/> 를 넘지 못한다.</para></summary>
+    public void PruneOlderThan(long cutoff)
+    {
+        if (_currentBattleStart > 0L)
+        {
+            long floor = _currentBattleStart - OpenerWindowMs;
+            if (cutoff > floor)
+            {
+                cutoff = floor;
+            }
+        }
+
+        if (cutoff <= 0L)
+        {
+            return;
+        }
+
+        List<int>? emptied = null;
+        foreach (KeyValuePair<int, RingBuffer> kv in _storage)
+        {
+            if (kv.Value.DropOlderThan(cutoff))
+            {
+                (emptied ??= []).Add(kv.Key);
+            }
+        }
+
+        if (emptied == null)
+        {
+            return;
+        }
+
+        foreach (int key in emptied)
+        {
+            _storage.Remove(key);
+        }
     }
 
     public List<ParsedDamagePacket>? Get(int id) => _storage.TryGetValue(id, out RingBuffer? r) ? r.Snapshot() : null;
@@ -201,46 +285,101 @@ public sealed class SummonRepository
     public void Flush() => _storage.Clear();
 }
 
-/// <summary>Kotlin UseBuffRepository: actor/target -> applied buff intervals.</summary>
+/// <summary>Kotlin UseBuffRepository: actor/target -> applied buff intervals.
+/// <para><b>락이 있는 이유.</b> <see cref="SkillCastRepository"/>와 정확히 같다 — 쓰기는 캡처 소비자
+/// 스레드 전용이지만 읽기는 아니다. 미터 행을 클릭하면 <c>new DetailsViewModel(...)</c> 생성자가
+/// <b>UI 스레드에서</b> 곧바로 Refresh 를 돌리고(App.ToggleDetail), 그 경로는 리포트 틱의 블로킹
+/// <c>Dispatcher.Invoke</c> 펜스 <b>밖</b>이라 파서가 그동안 계속 돈다. 목록 append 는 배열을 재할당할 수
+/// 있고 <see cref="PruneBefore"/>/<see cref="Flush"/>는 Dictionary 를 구조적으로 바꾸므로, 그때 읽고 있으면
+/// 열거가 예외로 끝난다("라이브 전투 중 행 클릭 → waffle_meter 오류" 대화상자의 가장 흔한 원인).
+/// 락을 빼고 try/catch 로 덮으면 증상만 숨고 상세창은 그대로 안 열린다.</para></summary>
 public sealed class UseBuffRepository
 {
     private readonly Dictionary<int, List<UseBuff>> _storage = new();
+    private readonly Lock _gate = new();
 
     public void Save(int id, UseBuff useBuff)
     {
-        if (!_storage.TryGetValue(id, out List<UseBuff>? list))
+        lock (_gate)
         {
-            list = [];
-            _storage[id] = list;
-        }
+            if (!_storage.TryGetValue(id, out List<UseBuff>? list))
+            {
+                list = [];
+                _storage[id] = list;
+            }
 
-        list.Add(useBuff);
+            list.Add(useBuff);
+        }
     }
 
     public List<UseBuff> FindOverlapping(int id, long timestamp1, long timestamp2)
     {
-        if (!_storage.TryGetValue(id, out List<UseBuff>? list))
+        lock (_gate)
         {
-            return [];
-        }
+            if (!_storage.TryGetValue(id, out List<UseBuff>? list))
+            {
+                return [];
+            }
 
-        return list.Where(b => b.BuffStart <= timestamp2 && b.BuffEnd >= timestamp1).ToList();
+            return list.Where(b => b.BuffStart <= timestamp2 && b.BuffEnd >= timestamp1).ToList();
+        }
     }
 
-    public void PruneBefore(long timestamp)
+    /// <summary>
+    /// 조기 해제(0x382C)를 반영해 <b>아직 열려 있는</b> 구간의 끝을 <paramref name="at"/>으로 끊는다.
+    /// <para>이 저장소에는 여태 구간을 <b>줄이는</b> 연산이 없었다 — <see cref="Save"/>가 박아 넣은
+    /// <c>BuffEnd = 적용시각 + 선언 duration</c>이 끝까지 불변이었고, <see cref="PruneBefore"/>는 이미 끝난
+    /// 항목을 통째로 지울 뿐 잘라내지 않는다. 그래서 서버가 예상 만료보다 먼저 끊어도 가동률은 선언값대로
+    /// 계속 셌다(0x382C로 끝난 인스턴스의 57.6%가 1초 이상 일찍 끊긴다는 실측).</para>
+    /// <para>조건 셋이 전부 필요하다: <c>Slot != 0</c>(모르는 건 fail-open), <c>BuffStart &lt; at</c>(같은 슬롯에
+    /// 방금 새로 걸린 구간을 0길이로 깎지 않는다), <c>BuffEnd &gt; at</c>(이미 끝난 것을 되살리거나 늘리지 않는다).
+    /// 셋 중 하나라도 빼면 재적용 체인에서 잘못된 구간을 건드린다.</para>
+    /// </summary>
+    public void TruncateOpenSlots(int id, IReadOnlyList<int> slots, long at)
     {
-        foreach (int key in _storage.Keys.ToList())
+        lock (_gate)
         {
-            List<UseBuff> buffs = _storage[key];
-            buffs.RemoveAll(b => b.BuffEnd < timestamp);
-            if (buffs.Count == 0)
+            if (!_storage.TryGetValue(id, out List<UseBuff>? list))
             {
-                _storage.Remove(key);
+                return;
+            }
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                UseBuff b = list[i];
+                if (b.Slot != 0 && b.BuffStart < at && b.BuffEnd > at && slots.Contains(b.Slot))
+                {
+                    // Duration은 일부러 그대로 둔다 — "서버가 선언한 길이"는 그 자체로 기록이고, 가동률 경로는
+                    // BuffStart/BuffEnd만 읽는다(CoveredMs·MergeIntervals·FindOverlapping 전수 확인).
+                    list[i] = b with { BuffEnd = at };
+                }
             }
         }
     }
 
-    public void Flush() => _storage.Clear();
+    public void PruneBefore(long timestamp)
+    {
+        lock (_gate)
+        {
+            foreach (int key in _storage.Keys.ToList())
+            {
+                List<UseBuff> buffs = _storage[key];
+                buffs.RemoveAll(b => b.BuffEnd < timestamp);
+                if (buffs.Count == 0)
+                {
+                    _storage.Remove(key);
+                }
+            }
+        }
+    }
+
+    public void Flush()
+    {
+        lock (_gate)
+        {
+            _storage.Clear();
+        }
+    }
 }
 
 /// <summary>

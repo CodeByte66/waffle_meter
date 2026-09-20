@@ -86,6 +86,8 @@ public sealed class JoinRequestViewModel : INotifyPropertyChanged
     /// in-flight countdown bars stay smooth.</summary>
     public void Reconcile(IReadOnlyList<JoinRequestUser> snapshot)
     {
+        bool arrived = false; // 이번 Reconcile 에서 **처음 보는 신청자**가 들어왔는가
+
         // Drop rows no longer present.
         var present = new HashSet<int>(snapshot.Select(s => s.Requester));
         for (int i = Rows.Count - 1; i >= 0; i--)
@@ -104,6 +106,7 @@ public sealed class JoinRequestViewModel : INotifyPropertyChanged
             if (existing < 0)
             {
                 Rows.Insert(i, new JoinRequestRowViewModel(u, _visibleCodes));
+                arrived = true; // 이 id 는 방금 전까지 Rows 에 없었다 = 새 신청자
                 continue;
             }
 
@@ -125,7 +128,20 @@ public sealed class JoinRequestViewModel : INotifyPropertyChanged
 
         RefreshTiers();
         UpdateCount();
-        if (_lastCount == 0 && Rows.Count > 0)
+
+        // 🔑 "새 신청자가 왔다"는 신호는 **행 수의 0→N 에지가 아니라 실제 삽입**으로 낸다.
+        //
+        // 종전에는 `_lastCount == 0 && Rows.Count > 0` 이었는데, `_lastCount` 는 패널이 떠 있는지가 아니라
+        // **행 수**를 추적한다. 그래서 두 경로가 조용히 죽었다:
+        //  ① ✕ 로 닫으면 Clear() 가 _lastCount 를 0 으로 되돌리지만, 패널이 접힌 상태에서도 계속 도는
+        //     Changed→Reconcile 이 (해당 신청자의 공식 조회가 끝나면서) 곧바로 1 로 되돌려 놓는다.
+        //     그 뒤 **전혀 다른 사람**이 신청해도 행 수가 1→1 이라 에지가 안 생겨 패널이 안 열렸다.
+        //     파킹 중이라 티커의 _lastCount 복구 경로도 안 돈다.
+        //  ② 헤더 버튼으로 접으면 Clear() 조차 없어 _lastCount 가 그대로 남는다 — 같은 이유로 영구히 안 열린다.
+        //
+        // 삽입 기준은 보강 재적용에도 안전하다: 공식 조회가 **같은** 신청자를 다시 Add 해도 `existing >= 0`
+        // 이라 arrived 가 안 켜진다(그게 원래 _lastCount 리셋이 막으려던 것이고, 이제 구조로 막힌다).
+        if (arrived)
         {
             RequestPresent?.Invoke();
         }
