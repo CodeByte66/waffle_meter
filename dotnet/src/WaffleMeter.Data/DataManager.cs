@@ -58,7 +58,7 @@ public sealed class DataManager : ICaptureGameData
 
     private readonly Dictionary<int, Mob> _mobs = new();
     // Instanced-content (원정/초월/성역) boss mobCode -> category. Loaded from content-types.json; empty until then.
-    // Scopes the opt-in "던전 강제 집계" toggle so its bare-actor display bypass fires ONLY on these bosses.
+    // 로스터 구제의 '여기는 파티 씬이다' 증거로 쓰인다 — 인스턴스에는 외부인이 없다.
     private readonly Dictionary<int, string> _contentTypes = new();
     private readonly HashSet<int> _buffBlacklist = new();
 
@@ -166,6 +166,17 @@ public sealed class DataManager : ICaptureGameData
     private const long RosterFreezeTtlMs = 30L * 60 * 1000;
 
     private readonly List<(string Nickname, int Server, int Slot)> _partyRoster = new();
+    /// <summary>로스터 상태 — <b>슬롯</b>이 키다. 0x9702 스냅샷은 부분으로 오는 것이 정상이라
+    /// 합치면서 쌓고, key 가 아니라 슬롯을 키로 잡아야 정원을 구조적으로 못 넘는다(상세는 SavePartyRoster).</summary>
+    private readonly Dictionary<int, (string Nickname, int Server, int Slot, int Key)> _partyRosterBySlot = new();
+    /// <summary>(닉네임,서버) → 로스터 key. 제거(0x9622)가 key 하나로만 오기 때문에 미리 모아 둔다.</summary>
+    private readonly Dictionary<(string Nickname, int Server), int> _rosterKeys = new();
+    /// <summary>0x9702 헤더의 <c>_limit_member</c>(방 정원). 성역=10 · 파티=5 로 실측된다.
+    /// <para>🔑 이것이 <c>PartyRosterSize</c> 의 정본이다 — 통계웹 스키마 주석이 그 필드를 처음부터
+    /// "로스터 <b>정원</b>" 로 정의하고 있었다. 파싱된 멤버 수를 보내던 종전 동작이 계약을 벗어난 쪽이었고,
+    /// 그 탓에 성역 30일 1,385건(3.362%)이 공대 판별에서 탈락했다(웹 실측 2026-09-19; 탈락분의 roster 값은
+    /// 9 가 1,340건으로 압도적 — "부분 스냅샷에서 한 명 빠짐" 그대로다).</para></summary>
+    private int _partyRosterCapacity;
     /// <summary>The server's id for the party the held roster belongs to (0 = unknown).</summary>
     private int _partyRosterId;
     /// <summary>When the roster CONTENT was last replaced — unlike <c>_partyRosterAtMs</c>, a held-through
@@ -255,8 +266,8 @@ public sealed class DataManager : ICaptureGameData
     /// when the code isn't a classified 원정/초월/성역 boss.</summary>
     public string? ContentCategory(int mobCode) => _contentTypes.GetValueOrDefault(mobCode);
 
-    /// <summary>True when <paramref name="mobCode"/> is a classified instanced (원정/초월/성역) boss — the scope
-    /// gate for the opt-in "던전 강제 집계" display bypass.</summary>
+    /// <summary>True when <paramref name="mobCode"/> is a classified instanced (원정/초월/성역) boss. Used as
+    /// positive proof that a nameless combat row belongs to the party (an instance admits no outsiders).</summary>
     public bool IsInstancedBoss(int mobCode) => _contentTypes.ContainsKey(mobCode);
 
     /// <summary>The encounters the stats web publishes statistics for. Drives the upload gate and the
@@ -1160,49 +1171,161 @@ public sealed class DataManager : ICaptureGameData
     public void SavePartyRoster(IReadOnlyList<(string Nickname, int Server, int Slot)> members) =>
         SavePartyRoster(members, partyId: 0);
 
+    /// <summary>
+    /// 0x9702 스냅샷을 로스터 상태에 <b>합친다</b>(갈아끼우지 않는다).
+    ///
+    /// <para><b>🔑 왜 합치나.</b> 0x9702 는 <b>부분 로스터</b>를 보내는 것이 정상이다 — 코퍼스 실측(2026-07-09
+    /// 이후 세션): 정원 10 방의 스냅샷 502건 중 완전한 것은 290건(57.8%)뿐이고, 나머지는 7~9명만 실려 온다.
+    /// 같은 슬롯이 사라졌다 <b>되돌아오는</b> 것도 확인했다(슬롯 5·7이 각각 3회). 종전처럼 스냅샷 하나로
+    /// 로스터를 통째 교체하면, 하필 부분 스냅샷 직후 전투가 끝난 경우 <c>PartyRosterSize</c> 가 10이 아니라
+    /// 8~9로 나가고, 서버의 <c>RAID_ROSTER_SIZES = [10]</c> 공대 판별에서 그 전투가 통째로 탈락한다.</para>
+    ///
+    /// <para><b>🔑 왜 슬롯 기준인가.</b> key 기준으로 누적하면 떠난 멤버가 안 지워져 <b>10인 방에 11~13명</b>이
+    /// 된다(실측 초과 23건). 9명보다 13명이 더 나쁘다. 슬롯(1..정원)으로 키를 잡으면 정원을 구조적으로
+    /// 넘을 수 없다. 실측: 슬롯 기준 상태기로 "정원만큼 찬" 비율이 정원5 48.5%→70.9%, 정원10 57.8%→68.5%
+    /// 로 오르고 <b>초과 0건 · 슬롯 오염 0건</b>(상태기가 든 이름이 스냅샷의 그 슬롯 이름과 달랐던 적이 없다).</para>
+    ///
+    /// <para><b>파티 교체만 초기화한다.</b> 서버 파티 id 는 입·퇴장에는 유지되고 재결성에만 바뀐다(코퍼스:
+    /// 멤버 집합이 교체·분리된 스냅샷은 22/22가 다른 id, 동일 집합은 2,251/2,251이 같은 id). 그래서 id 가
+    /// 실제로 바뀐 경우에만 상태를 버린다. id 0 = 못 읽음이고 절대 '바뀜'으로 치지 않는다.</para>
+    ///
+    /// <para>⚠️ 종전의 anti-shrink 가드는 <b>제거했다</b>. 그건 "부분 스냅샷이 완전본을 밀어내는" 것을 막으려던
+    /// 근사치였는데, 합치는 방식에서는 애초에 밀어낼 일이 없다. 가드가 <c>_partyRosterSetAtMs</c> 를 일부러
+    /// 갱신하지 않아 <b>파티는 멀쩡한데 동결만 30분 만료되는</b> 경로(F-05-8)도 같이 사라진다.</para>
+    /// </summary>
     public void SavePartyRoster(IReadOnlyList<(string Nickname, int Server, int Slot)> members, int partyId)
     {
-        // A 0x9702 snapshot can arrive PARTIAL, and a naive Clear+Replace then SHRINKS a complete roster
-        // (observed live: 5→4→3→2 over ~11 s, and still reproducible in the corpus — a full set that returns
-        // 17 s later), which would strand real party members / mis-gate the display. Guard: ignore a snapshot
-        // that is a STRICT SUBSET of the current roster and keep the fuller one. Any snapshot with a NEW member
-        // (the party grew or changed) still replaces.
-        //
-        // But a subset is ALSO what a genuinely new, smaller party looks like when it is formed from people you
-        // were just grouped with — and the guard used to hold the old roster through it, for over ten minutes in
-        // one measured case. The member list cannot tell those apart. The PARTY ID can: the server keeps it
-        // across joins and leaves and changes it when the group is re-formed (corpus: every swapped or disjoint
-        // member set carried a different id, 22 of 22; every identical set carried the same one, 2,251 of
-        // 2,251). So a subset under a DIFFERENT id is a different party and replaces immediately.
-        //
-        // Only the party id speaks here. A second candidate rule — "the same smaller set arrived twice, so
-        // accept it" — was measured to release more stale rosters, but it is a heuristic with nothing behind it
-        // except a threshold, and the id already covers the case this guard was getting wrong. Releasing late
-        // costs a roster that is briefly too large, and only until the next snapshot; releasing wrongly costs a
-        // party member who was never there. Id 0 means "not read" and never counts as a change.
-        //
-        // (A note for whoever measures this next: "the full set shows up again later" does NOT make a release
-        // wrong. In one session the roster goes 5 → 1 → 5 with the full set back 17 seconds later, which looks
-        // like a spurious shrink until you notice each step carries a DIFFERENT party id — the group really did
-        // disband and re-form. In that same session an identical member set never once changed id, 64 times out
-        // of 64. Judge a release by the id, not by what the membership does afterwards.)
-        var incoming = members.Select(m => (m.Nickname, m.Server)).ToHashSet();
-        var current = _partyRoster.Select(m => (m.Nickname, m.Server)).ToHashSet();
         bool differentParty = partyId != 0 && _partyRosterId != 0 && partyId != _partyRosterId;
-        if (!differentParty && _partyRoster.Count > 0 && incoming.Count < current.Count && incoming.IsSubsetOf(current))
+        if (differentParty)
         {
-            // Partial re-broadcast of the same party: hold the fuller roster. Its freshness stamp is refreshed
-            // (the party demonstrably still exists, so the preview should not blank out) but _partyRosterSetAtMs
-            // is NOT — that one dates the CONTENT, and the content is exactly what did not get confirmed here.
-            _partyRosterAtMs = Clock();
+            _partyRosterBySlot.Clear();
+        }
+
+        if (partyId != 0)
+        {
+            _partyRosterId = partyId;
+        }
+
+        // 슬롯을 못 읽은 멤버는 놓을 자리가 없다. 슬롯 충돌이 감지된 스냅샷은 파서가 전 멤버의 슬롯을 0 으로
+        // 만들어 보내는데, 그런 스냅샷은 통째로 무시하는 것이 맞다 — 확실히 틀린 배치보다 직전 상태가 낫다.
+        int placed = 0;
+        foreach ((string nickname, int server, int slot) in members)
+        {
+            if (slot <= 0)
+            {
+                continue;
+            }
+
+            _partyRosterBySlot[slot] = (nickname, server, slot, RosterKeyOf(nickname, server));
+            placed++;
+        }
+
+        if (placed == 0 && !differentParty)
+        {
+            return; // 이 스냅샷이 기여한 것이 없다 — 시계도 건드리지 않는다.
+        }
+
+        RepublishRoster();
+    }
+
+    /// <summary>0x9702 헤더의 방 정원. <see cref="FreshPartySlots"/> 가 이 값을 로스터 크기로 싣는다.</summary>
+    public void SavePartyRosterCapacity(int limitMember)
+    {
+        if (limitMember is > 0 and <= 20)
+        {
+            _partyRosterCapacity = limitMember;
+        }
+    }
+
+    /// <summary>0x971F 멤버 갱신. 실린 슬롯이 권위라 그대로 덮어쓴다.</summary>
+    public void UpdatePartyMember(string nickname, int server, int slot, int key)
+    {
+        if (string.IsNullOrEmpty(nickname) || slot <= 0)
+        {
             return;
         }
 
+        _partyRosterBySlot[slot] = (nickname, server, slot, key);
+        RepublishRoster();
+    }
+
+    /// <summary>0x9622 멤버 제거. 로스터 key 로만 지운다.</summary>
+    public void RemovePartyMemberByKey(int key)
+    {
+        if (key <= 0)
+        {
+            return;
+        }
+
+        int? hit = null;
+        foreach ((int slot, (string _, int _, int _, int memberKey)) in _partyRosterBySlot)
+        {
+            if (memberKey == key)
+            {
+                hit = slot;
+                break;
+            }
+        }
+
+        if (hit is not { } found || !_partyRosterBySlot.Remove(found))
+        {
+            return;
+        }
+
+        RepublishRoster();
+    }
+
+    /// <summary>0x9702 가 같이 실어 온 로스터 key 를 (닉네임, 서버) 로 맞춰 채운다. 제거가 key 로만 오므로
+    /// 이게 없으면 스냅샷으로만 알게 된 멤버는 영영 못 지운다.</summary>
+    public void SavePartyRosterKeys(IReadOnlyList<(string Nickname, int Server, int Key)> keys)
+    {
+        foreach ((string nickname, int server, int key) in keys)
+        {
+            if (key <= 0)
+            {
+                continue;
+            }
+
+            _rosterKeys[(nickname, server)] = key;
+            foreach ((int slot, (string nm, int srv, int st, int existing)) in _partyRosterBySlot)
+            {
+                if (existing == key || !string.Equals(nm, nickname, StringComparison.Ordinal) || srv != server)
+                {
+                    continue;
+                }
+
+                _partyRosterBySlot[slot] = (nm, srv, st, key);
+                break;
+            }
+        }
+    }
+
+    private int RosterKeyOf(string nickname, int server) =>
+        _rosterKeys.TryGetValue((nickname, server), out int k) ? k : 0;
+
+    /// <summary>슬롯 맵을 기존 독자들이 읽는 리스트로 다시 펴고 시계를 찍는다. 순서는 슬롯 오름차순이다.</summary>
+    private void RepublishRoster()
+    {
         _partyRoster.Clear();
-        _partyRoster.AddRange(members);
-        _partyRosterId = partyId;
+        foreach (int slot in _partyRosterBySlot.Keys.OrderBy(s => s))
+        {
+            (string nickname, int server, int st, int _) = _partyRosterBySlot[slot];
+            _partyRoster.Add((nickname, server, st));
+        }
+
         _partyRosterAtMs = Clock();
         _partyRosterSetAtMs = _partyRosterAtMs;
+    }
+
+    /// <summary>로스터 상태를 통째로 버린다(캐릭터 전환·초기화).</summary>
+    private void ClearPartyRosterState()
+    {
+        _partyRoster.Clear();
+        _partyRosterBySlot.Clear();
+        _rosterKeys.Clear();
+        _partyRosterId = 0;
+        _partyRosterCapacity = 0;
+        _partyRosterAtMs = 0;
     }
 
     /// <summary>Known Users for the current party/raid roster — the 0x9702 snapshot matched to uids by
@@ -1360,13 +1483,16 @@ public sealed class DataManager : ICaptureGameData
     public void SaveUserPower(int uid, int power)
     {
         if (!CombatPower.IsPlausible(power)) return;
-        User? user = _userRepository.Get(uid);
-        if (user == null) return;
-        if (user.Power != power)
+
+        // Get → 수정 → Save 를 따로 하면 수정 구간이 락 밖이다. 공식 조회 콜백(ThreadPool)이 같은 객체의
+        // 같은 필드를 동시에 고치므로 Mutate 로 한 번에 끝낸다.
+        _userRepository.Mutate(uid, user =>
         {
-            user.Power = power;
-            _userRepository.Save(uid, user);
-        }
+            if (user.Power != power)
+            {
+                user.Power = power;
+            }
+        });
     }
 
     /// <summary>Returns the User for <paramref name="uid"/>, creating and persisting a bare one (no
@@ -1658,8 +1784,7 @@ public sealed class DataManager : ICaptureGameData
 
             if (identityChanged)
             {
-                _partyRoster.Clear();
-                _partyRosterAtMs = 0;
+                ClearPartyRosterState();
 
                 // 오드 / 슈고 열쇠 ride the 0x610B login dump, which the comment above records as arriving ~4 s
                 // BEFORE this naming packet. So the newest reading at this instant is usually the INCOMING
@@ -1752,6 +1877,16 @@ public sealed class DataManager : ICaptureGameData
         });
     }
 
+    /// <summary>
+    /// 공식 조회 값을 <b>기다리지 않고</b> 돌려준다: 캐시에 있으면 그 값, 없으면 비동기 요청만 걸고 null.
+    /// <para>🔑 이 메서드는 리포트 빌드 경로에서만 불리고, 그 경로는 <b>UI 스레드</b>에서 돈다
+    /// (<c>App.xaml.cs</c> 의 <c>Dispatcher.Invoke</c> 람다 → <c>StatsPayloadBuilder</c>). 종전에는 여기서
+    /// <c>LookupBlocking</c> 을 쳐서 연결 8초 / 읽기 15초 타임아웃만큼 오버레이가 얼었고, 캡처 소비자 스레드도
+    /// <c>Invoke</c> 반환을 기다리며 같이 멈췄다 — 전투력이 안 잡히는 캐릭터에서 10분마다 최대 5초씩.</para>
+    /// <para>이번 틱에 null 을 돌려줘도 손해가 작다: 리포트 틱은 전투 중 500ms 마다 돌고, 첫 틱이 건 요청이
+    /// 몇 초 안에 끝나면 <b>그 다음 틱부터</b> 캐시 적중이라 전투 종료 시점의 업로드 페이로드에는 값이 실린다.
+    /// 반대로 얼어붙는 비용은 전투 중 사용자가 바로 체감한다.</para>
+    /// </summary>
     public OfficialCharacterInfo? ResolveOfficialCharacterInfo(int uid, string? nickname, int server, JobClass? job)
     {
         if (OfficialLookup == null)
@@ -1759,20 +1894,23 @@ public sealed class DataManager : ICaptureGameData
             return null;
         }
 
-        OfficialCharacterInfo? info = OfficialLookup.LookupBlocking(nickname, server, job);
-        if (info == null)
+        if (OfficialLookup.LookupCached(nickname, server) is { } cached)
         {
-            return null;
+            ApplyOfficialCharacterInfo(uid, cached);
+            return cached;
         }
 
-        ApplyOfficialCharacterInfo(uid, info);
-        return info;
+        // 요청만 걸고 이번 틱은 포기한다. 이 경로는 10분 스로틀 + 조회기 자신의 TTL·in-flight 중복제거가
+        // 걸려 있어 매 틱 호출해도 네트워크가 늘지 않는다.
+        RequestOfficialCharacterLookup(uid, nickname, server, job);
+        return null;
     }
 
     private void ApplyOfficialCharacterInfo(int uid, OfficialCharacterInfo info)
     {
-        User? existing = uid > 0 ? _userRepository.Get(uid) : null;
-        if (existing != null)
+        // 🔑 이 메서드는 **ThreadPool**(공식 조회 콜백)에서 돈다. 아래 수정은 캡처 소비자 스레드의
+        // SaveNickname/SaveUserPower 와 같은 객체를 건드리므로 반드시 저장소 락 안에서 일어나야 한다.
+        bool mutated = uid > 0 && _userRepository.Mutate(uid, existing =>
         {
             if (string.IsNullOrWhiteSpace(existing.Nickname))
             {
@@ -1799,8 +1937,10 @@ public sealed class DataManager : ICaptureGameData
             {
                 existing.Power = info.Power;
             }
+        });
 
-            _userRepository.Save(uid, existing);
+        if (mutated)
+        {
             return;
         }
 
@@ -1850,7 +1990,7 @@ public sealed class DataManager : ICaptureGameData
     /// 이 슬롯을 지목하므로, 들고 있어야 정확히 그 인스턴스만 지울 수 있다.</summary>
     public void SaveUseBuff(int uid, int skillCode, long buffStart, long buffEnd, long duration, int actorId, int level, int slot)
     {
-        SaveUseBuff(uid, new UseBuff(skillCode, buffStart, buffEnd, duration, actorId, level));
+        SaveUseBuff(uid, new UseBuff(skillCode, buffStart, buffEnd, duration, actorId, level, slot));
 
         // Live combat-assist overlay: track buffs currently ON the local player (recipient == executor), so
         // the overlay can show what's active + how long is left. Job-skill buffs only — consumable/item buffs
@@ -1868,10 +2008,14 @@ public sealed class DataManager : ICaptureGameData
             {
                 _diagOwnerZeroJobBuff++;
             }
-            else if (uid == owner)
-            {
-                _diagSelfBuffAccepted++;
-            }
+
+            // SelfAccepted is NOT counted here. It used to be, one branch above the store — so a frame that
+            // passed the executor gate but never reached _ownerBuffs (M-13: a UI subscriber threw out of
+            // RecordObservedBuff and unwound the rest of this method) still reported itself as accepted. A
+            // counter that says "on the overlay" about a buff that is not on the overlay removes the only
+            // instrument that could find that loss. It is incremented past the store below instead. (A
+            // fully-Off buff still counts there: the picker dropping it is a decision, not a loss, and the
+            // counter's job is to discriminate executor-gate failures, not picker settings.)
         }
 
         if (!IsJobBuffCode(skillCode) || IsBuffBlacklisted(skillCode))
@@ -1885,7 +2029,6 @@ public sealed class DataManager : ICaptureGameData
 
         if (owner != 0 && uid == owner)
         {
-            RecordObservedBuff(skillCode); // populate the per-job picker catalog
             if (storable)
             {
                 (int baseCode, var entry) = ComputeOwnerBuffEntry(skillCode, buffStart, buffEnd, duration, actorId, level, slot);
@@ -1899,6 +2042,16 @@ public sealed class DataManager : ICaptureGameData
                 LiveBuffsChanged?.Invoke();
             }
 
+            // Counted only now, after the store the counter claims. See the diagnostics block above.
+            _diagSelfBuffAccepted++;
+
+            // The picker catalogue is populated LAST, after the buff is on the overlay. It raises
+            // BuffCatalogChanged, whose subscribers live in the UI layer; putting it first meant one throwing
+            // subscriber skipped the store for the very frame that discovered the code — and since the code is
+            // then already in _observedBuffBases, no later frame raises the event again, so the loss never
+            // repeats and never shows up as anything but a missing icon (M-13). Order is the half of that fix
+            // that lives here; RecordObservedBuff isolates the raise itself.
+            RecordObservedBuff(skillCode);
             return;
         }
 
@@ -1939,14 +2092,30 @@ public sealed class DataManager : ICaptureGameData
     private bool CouldBeSelfEntity(int uid) =>
         uid is > 0 and <= MaxEntityUid && !IsMobInstance(uid) && SummonerId(uid) is null;
 
-    /// <summary>버프 제거 브로드캐스트(0x382C) 반영. 본인 것만, 그리고 <b>슬롯이 일치하는 항목만</b> 지운다.
+    /// <summary>버프 제거 브로드캐스트(0x382C) 반영. <b>슬롯이 일치하는 항목만</b> 다룬다.
     /// <para>지금까지는 제거 신호가 없다고 보고 duration이 다 흐를 때까지 슬롯을 남겨 뒀는데, 실측상 서버가
     /// 예상 만료보다 1초 이상 일찍 끊는 경우가 절반을 넘어(0x382C로 종료된 인스턴스의 57.6%) 오버레이가
     /// 오래 과다 표시되고 있었다. 슬롯 매칭이라 같은 코드가 겹쳐 걸려도 엉뚱한 인스턴스를 지울 수 없다.</para>
-    /// <para>슬롯을 모르는(0) 엔트리는 건드리지 않는다 — 기존 만료 로직이 그대로 처리한다(fail-open).</para></summary>
-    public void RemoveBuffSlots(int entityId, IReadOnlyList<int> slots)
+    /// <para>슬롯을 모르는(0) 엔트리는 건드리지 않는다 — 기존 만료 로직이 그대로 처리한다(fail-open).</para>
+    /// <para>🔑 <b>두 저장소의 범위가 다르다.</b> 집계 저장소(<c>_useBuffRepository</c>)는 <b>전 엔티티</b>를
+    /// 끊고, 오버레이 사전은 <b>본인 것만</b> 지운다. executor 게이트가 종전처럼 메서드 첫 줄에 있으면 파티원과
+    /// 보스의 조기 해제가 집계에 영원히 반영되지 않는다 — 실측상 조기 해제로 인한 과다 표시 232.7시간 중
+    /// <b>본인은 23.2시간(10%)</b> 뿐이고 나머지 90%가 파티원(서포터 rDPS 입력)과 보스(디버프 표)다. 그대로 두면
+    /// 상세창 안에서 「내 버프」 행만 맞고 보스 디버프 행은 틀린 채 남아, 한 화면에 두 정확도가 섞인다.</para>
+    /// <para>⚠️ 반대로 오버레이 삭제까지 전 엔티티로 열면 <b>파티원의 해제가 내 오버레이를 지운다</b> — 원래
+    /// 게이트가 막고 있던 것이 그것이다. 그래서 게이트를 없애는 게 아니라 <b>오버레이 블록 전용으로 내린다.</b></para></summary>
+    public void RemoveBuffSlots(int entityId, IReadOnlyList<int> slots, long arrivedAt)
     {
-        if (entityId <= 0 || slots.Count == 0 || entityId != _userRepository.Executor())
+        if (entityId <= 0 || slots.Count == 0)
+        {
+            return;
+        }
+
+        // 집계 저장소: 전 엔티티. 여기가 상세창 가동률 · nDPS/rDPS · 업로드 OperatingRate 의 단일 원천이다.
+        _useBuffRepository.TruncateOpenSlots(entityId, slots, arrivedAt);
+
+        // 오버레이 사전: 본인 것만. 위 주석의 ⚠️ 참고.
+        if (entityId != _userRepository.Executor())
         {
             return;
         }
@@ -2054,18 +2223,19 @@ public sealed class DataManager : ICaptureGameData
             }
         }
 
+        if (!IsBuffHidden(cooldownCode) || IsBuffVoice(cooldownCode)) // picker에서 완전히 끈 항목은 담지 않는다
+        {
+            lock (_ownerBuffGate)
+            {
+                _ownerBuffs[cooldownCode] = (arrivedAt + RevivalHealCooldownMs, uid, RevivalHealCooldownMs, false, 0, 0);
+            }
+
+            LiveBuffsChanged?.Invoke();
+        }
+
+        // 관측 기록은 스토어 뒤에 — SaveUseBuff와 같은 이유다(M-13). 이 호출이 UI 구독자에게 이벤트를 쏘므로
+        // 앞에 두면 구독자 한 명의 예외가 이 슬롯 등록을 통째로 건너뛴다. 순서를 되돌리면 그 손실이 되살아난다.
         RecordObservedBuff(cooldownCode);
-        if (IsBuffHidden(cooldownCode) && !IsBuffVoice(cooldownCode))
-        {
-            return; // picker에서 완전히 끈 항목
-        }
-
-        lock (_ownerBuffGate)
-        {
-            _ownerBuffs[cooldownCode] = (arrivedAt + RevivalHealCooldownMs, uid, RevivalHealCooldownMs, false, 0, 0);
-        }
-
-        LiveBuffsChanged?.Invoke();
     }
 
     /// <summary>회복 프록 코드(예: 15790007)를 그 직업의 회생의 계약 버프 base(15790000)로. <see cref="BuffBaseCode"/>는
@@ -2112,9 +2282,32 @@ public sealed class DataManager : ICaptureGameData
             added = _observedBuffBases.Add(baseCode);
         }
 
-        if (added)
+        if (!added)
+        {
+            return;
+        }
+
+        // BuffCatalogChanged is raised on the capture consumer thread, and at least one subscriber (the
+        // settings window's buff picker) mutates a data-bound collection straight from it — WPF answers that
+        // with NotSupportedException. Unisolated, that exception unwound the CALLER, which is how a buff code
+        // seen for the first time on this install vanished from the overlay, the voice path and the packet log
+        // for exactly one frame (M-13): the code was already in _observedBuffBases, so no later frame raised
+        // the event again and nothing ever retried. A failed notification must cost the notification only.
+        //
+        // The observation itself is NOT rolled back: it happened, it is what the persisted buffUi.observed set
+        // is for, and re-raising on every subsequent frame would just throw again inside a battle loop. The
+        // picker re-reads the catalogue when it is opened, so a missed refresh self-heals.
+        //
+        // This is deliberately independent of marshalling the subscriber onto the dispatcher (the other half of
+        // M-13, in the UI layer): the data layer must not lose data because a subscriber misbehaves, whoever
+        // that subscriber turns out to be.
+        try
         {
             BuffCatalogChanged?.Invoke();
+        }
+        catch (Exception)
+        {
+            // swallowed by design — see above
         }
     }
 
@@ -2267,8 +2460,29 @@ public sealed class DataManager : ICaptureGameData
 
     /// <summary>The shared-cooldown group a wire skill code belongs to. With no catalog loaded this is the old
     /// fold, so the buff overlay's gray veil keys exactly as it did before.</summary>
-    private int CooldownGroupId(int skillCode) =>
-        skillCode is >= 11_000_000 and <= 19_999_999 ? _cooldownCatalog.GroupId(skillCode) : BuffBaseCode(skillCode);
+    private int CooldownGroupId(int skillCode)
+    {
+        if (skillCode is < 11_000_000 or > 19_999_999)
+        {
+            return BuffBaseCode(skillCode);
+        }
+
+        int groupId = _cooldownCatalog.GroupId(skillCode);
+
+        // 카탈로그가 돌려준 키가 그 자체로 "남의 그룹에 매달린 스킬"인 경우가 있다. 자기 자신을 가리키는
+        // gctOverride 변종 5개(19080001·19200027·1910210/220/230)는 접힘을 거쳐 19080000·19100000·19200000
+        // 같은 그룹 비대표 base로 착지한다. 그대로 두면 같은 공유 쿨이 어느 코드로 시전했느냐에 따라 두 키로
+        // 갈라져, 권성 [폭주] 짝 칸 하나는 쿨이 돌고 다른 하나는 "준비됨"으로 남는다. 키는 항상 그룹 대표로
+        // 정규화한다 — 되돌리면 그 쌍의 쿨 공유가 다시 시전 코드별로 쪼개진다(M-15의 반대 방향 증상).
+        if (_cooldownCatalog.TryGet(groupId, out CooldownSkillInfo info)
+            && info.GroupId != groupId
+            && _cooldownCatalog.TryGet(info.GroupId, out _))
+        {
+            return info.GroupId;
+        }
+
+        return groupId;
+    }
 
     /// <summary>True when <paramref name="groupId"/>'s skill should be drawn as on cooldown at
     /// <paramref name="nowMs"/> — i.e. the cooldown has not run out AND the value is no longer a cast's guess
@@ -2332,8 +2546,14 @@ public sealed class DataManager : ICaptureGameData
         }
     }
 
-    /// <summary>The local player's skill cooldowns for the overlay, one row per shared-cooldown group, ordered
-    /// by job then by the catalog's stable order so icons never move under the cursor.
+    /// <summary>The local player's skill cooldowns for the overlay, one row per <b>skill</b> the picker can
+    /// offer, ordered by job then by the catalog's stable order so icons never move under the cursor.
+    /// <para>Skills that share a cooldown group therefore get a slot each, and those slots share ONE cooldown:
+    /// casting either of them puts both on cooldown, because that is what the game does. Collapsing them into
+    /// a single row instead would leave the other skill's picker chip toggling a slot that never appears.
+    /// The pre-fill below used to key off <c>BaseCode</c> while the store keys off the group, so the
+    /// non-representative half of each pair was re-laid every tick as "ready, no ring" and 권성 carried seven
+    /// slots that stayed bright through their own cooldown (M-15).</para>
     /// <para>Once the character is recognised, the whole of that job's catalogue is laid out at once — a skill
     /// does not have to be cast before it gets a slot. The alternative (only what the session has seen) makes
     /// the picker look broken: you tick a skill and nothing appears until you press it.</para>
@@ -2347,7 +2567,10 @@ public sealed class DataManager : ICaptureGameData
     {
         int band = User(_userRepository.Executor())?.Job?.SkillBand() ?? 0;
         var result = new List<SkillCooldownView>();
-        var reported = new HashSet<int>();
+
+        // 그룹 키 -> 그 그룹의 현재 쿨 상태. 아래 프리필이 이 표를 봐야 같은 공유 쿨 그룹에 매달린 다른
+        // 스킬 칸도 함께 쿨로 그려진다. 키 공간은 _cooldowns 와 같은 "그룹 대표 base 코드"다(CooldownGroupId).
+        var groupState = new Dictionary<int, (long RemainingMs, long TotalMs, bool IsReady)>();
 
         lock (_ownerBuffGate)
         {
@@ -2359,14 +2582,16 @@ public sealed class DataManager : ICaptureGameData
                 }
 
                 bool cooling = IsOnCooldown(kv.Key, nowMs);
-                reported.Add(kv.Key);
+                (long RemainingMs, long TotalMs, bool IsReady) state =
+                    (cooling ? kv.Value.End - nowMs : 0, kv.Value.TotalMs, !cooling);
+                groupState[kv.Key] = state;
                 result.Add(new SkillCooldownView(
                     kv.Key,
                     kv.Value.DisplayCode,
                     info.Name,
-                    cooling ? kv.Value.End - nowMs : 0,
-                    kv.Value.TotalMs,
-                    !cooling,
+                    state.RemainingMs,
+                    state.TotalMs,
+                    state.IsReady,
                     info.Job,
                     info.Order));
             }
@@ -2376,13 +2601,28 @@ public sealed class DataManager : ICaptureGameData
         {
             foreach (CooldownSkillInfo info in _cooldownCatalog.Skills)
             {
-                if (info.Job == band && !reported.Contains(info.BaseCode))
+                if (info.Job != band || groupState.ContainsKey(info.BaseCode))
                 {
-                    // TotalMs 0 = 아직 이 캐릭터의 실제 쿨 길이를 모른다(첫 시전이 알려 준다). 링을 그릴 일이
-                    // 없으므로 분모가 없어도 무해하고, 클라 테이블 값으로 채우면 쿨감이 빠진 거짓 분모가 된다.
-                    result.Add(new SkillCooldownView(
-                        info.BaseCode, info.BaseCode, info.Name, 0, 0, true, info.Job, info.Order));
+                    continue; // 다른 직업이거나, 그 칸은 위에서 이미 실측 상태로 나갔다
                 }
+
+                // 공유 쿨 그룹의 비대표 스킬: 스토어는 그룹 대표 키 하나에만 쓰이므로 이 칸은 영원히
+                // reported 에 못 들어간다. 그룹 상태를 그대로 복사해 두 칸이 같은 쿨을 돈다 — 이걸 빼면
+                // 권성 7칸이 쿨 도는 내내 "준비됨"으로 밝게 남아, 정보가 없는 게 아니라 거짓말을 한다(M-15).
+                // 행 키(=픽커 키)는 반드시 이 스킬 자신의 BaseCode 여야 한다: 그룹 키로 바꾸면
+                // CooldownVisibility(_all 이 BaseCode 기준)의 칩과 어긋나 "껐는데 안 사라지는" 칸이 생긴다.
+                if (groupState.TryGetValue(info.GroupId, out (long RemainingMs, long TotalMs, bool IsReady) shared))
+                {
+                    result.Add(new SkillCooldownView(
+                        info.BaseCode, info.BaseCode, info.Name,
+                        shared.RemainingMs, shared.TotalMs, shared.IsReady, info.Job, info.Order));
+                    continue;
+                }
+
+                // TotalMs 0 = 아직 이 캐릭터의 실제 쿨 길이를 모른다(첫 시전이 알려 준다). 링을 그릴 일이
+                // 없으므로 분모가 없어도 무해하고, 클라 테이블 값으로 채우면 쿨감이 빠진 거짓 분모가 된다.
+                result.Add(new SkillCooldownView(
+                    info.BaseCode, info.BaseCode, info.Name, 0, 0, true, info.Job, info.Order));
             }
         }
 
@@ -3131,7 +3371,7 @@ public sealed class DataManager : ICaptureGameData
         // up. 30 minutes matches the window the other readers and the payload builder's roster-power fallback
         // already use, and is comfortably past the observed re-broadcast gap (p99 ≈ 9 minutes; 0x9702 arrives
         // in bursts rather than on a cadence, so a tight window would drop a live party's roster mid-run).
-        bool rosterFresh = _partyRoster.Count > 0 && Clock() - _partyRosterSetAtMs <= RosterFreezeTtlMs;
+        (Dictionary<int, int> rosterSlots, int rosterSize) = FreshPartySlots(data.Contributors);
 
         var snapshot = new DpsReport
         {
@@ -3142,14 +3382,18 @@ public sealed class DataManager : ICaptureGameData
             Target = data.Target is { } t ? new MobInfo(t.Id, t.Mob, t.RemainHp, t.MaxHp) : null,
             Packets = null,
             ExecutorId = ExecutorId(),     // freeze the 본인 uid so a history replay self-colors the own row (CopyUser froze IsExecutor — usually false)
+            // 기록 재생에서도 로스터 구제의 '파티 씬' 증거가 살아 있어야 구제된 파티원 행이 안 사라진다.
+            // ⚠️ 이 한 줄만으로는 부족했다 — `RefreshRecentReportFromCache`의 초기화 목록이 종료 틱에 이 값을
+            // 떨어뜨리고 있어서 여기서 복사해 봐야 false 였다. 그쪽을 먼저 고쳤기에 이제 의미가 있다.
+            TargetInstanced = data.TargetInstanced,
             BuffRates = buffRates,         // frozen so the detail (history replay) matches the web
             BossBuffRates = bossBuffRates,
             SkillDetailsSnapshot = skillDetails, // frozen so the replayed detail's skill table + summary aren't empty
             // frozen 0x9702 sub-party slots (1-5/6-10), keyed to the actual battle uids, and how many people
             // that roster held — both only when the roster is still this battle's (see rosterFresh above).
             // 0 is the documented "unknown" roster size, which is what a pre-rosterSize saved battle carries.
-            PartySlots = rosterFresh ? CurrentPartySlots(data.Contributors) : new Dictionary<int, int>(),
-            PartyRosterSize = rosterFresh ? _partyRoster.Count : 0,
+            PartySlots = rosterSlots,
+            PartyRosterSize = rosterSize,
             DpsSeries = data.DpsSeries,          // frozen per-second damage series so the replayed DPS graph isn't empty
             BuffIntervals = data.BuffIntervals,  // frozen buff timeline (built pre-prune by the caller) for the graph's icon lane
             SkillCasts = data.SkillCasts,        // frozen cast timeline (built pre-prune by the caller) for the 스킬 타임라인 탭
@@ -3198,6 +3442,14 @@ public sealed class DataManager : ICaptureGameData
 
     public DpsLog? BattleLog(int idx) => _battleLogRepository.Get(idx);
 
+    /// <summary>
+    /// 전투 기록을 <paramref name="directory"/> 에 영속화하고, 이미 남아 있던 기록을 불러온다.
+    /// <para>기동 때 한 번만 부른다. 부르지 않으면 기록은 예전처럼 메모리에만 산다 — 테스트와 진단 도구가
+    /// 그 모양을 그대로 쓴다.</para>
+    /// </summary>
+    public void EnableBattleHistoryPersistence(string directory) =>
+        _battleLogRepository.AttachStore(new BattleHistoryStore(directory));
+
     public void HardReset()
     {
         _resetEpoch++;
@@ -3218,8 +3470,7 @@ public sealed class DataManager : ICaptureGameData
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
         _battleLowHp.Clear();
-        _partyRoster.Clear();
-        _partyRosterAtMs = 0;
+        ClearPartyRosterState();
         ClearAetherStatus();
         ClearShugoKey();
         ClearOwnerBuffs();
@@ -3249,8 +3500,9 @@ public sealed class DataManager : ICaptureGameData
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
         _battleLowHp.Clear();
-        _partyRoster.Clear();     // drop the 0x9702 party snapshot — a stale party (e.g. after leaving the dungeon
-        _partyRosterAtMs = 0;     // and returning to town) must not preview on reset; it re-fills on party formation
+        // drop the 0x9702 party snapshot — a stale party (e.g. after leaving the dungeon and returning
+        // to town) must not preview on reset; it re-fills on party formation
+        ClearPartyRosterState();
         // PRESERVE (do NOT flush): _userRepository (recognized chars + executor), _mobIdRepository (boss
         // instance→code, needed for the next StartBattle in a no-respawn dungeon), _mobHpRepository,
         // _summonRepository, _useBuffRepository, _officialLookupAttempts, and the load-once catalogs
@@ -3261,6 +3513,29 @@ public sealed class DataManager : ICaptureGameData
     /// a saved report (<see cref="SaveBattleLog"/>) so the stats upload can tag each participant's sub-party for
     /// an 8-인 공대 — slots 1-4 = party 1, 5-8 = party 2. Members with slot 0 (header unmatched) or no recognized
     /// uid are skipped; empty for a non-raid / unknown roster (the upload then omits party tags).</summary>
+    /// <summary>
+    /// 지금 로스터가 <b>이 전투의 것</b>일 때만 (uid→슬롯, 정원)을 낸다. 아니면 (빈 사전, 0).
+    /// <para>🔑 게이트를 이 함수 <b>안에</b> 둔 이유: 저장 스냅샷과 라이브 리포트가 둘 다 이걸 쓰는데, 각자
+    /// 게이트를 걸면 서로 다른 시계를 보게 된다 — <c>_partyRosterSetAtMs</c>(콘텐츠 갱신 시각)와
+    /// <c>_partyRosterAtMs</c>(재방송 시각)는 다른 값이다. 그러면 "라이브엔 stale 슬롯이 있는데 저장본엔 없는"
+    /// 새 불일치가 생긴다 — M-22 가 고치려는 것과 정확히 같은 종류의 갈림이다.</para>
+    /// </summary>
+    public (Dictionary<int, int> Slots, int RosterSize) FreshPartySlots(IReadOnlyList<User> contributors)
+    {
+        // 30분. 다른 로스터 독자들과 페이로드 빌더의 전투력 폴백이 이미 쓰는 창이고, 관측된 재방송 간격
+        // (p99 ≈ 9분)보다 충분히 길다 — 0x9702 는 주기가 아니라 버스트로 온다.
+        bool fresh = _partyRoster.Count > 0 && Clock() - _partyRosterSetAtMs <= RosterFreezeTtlMs;
+        // 🔑 정원을 싣는다, 파싱된 멤버 수가 아니다. 0x9702 스냅샷은 부분으로 오는 것이 정상이라 멤버 수는
+        // 수시로 정원에 못 미친다 — 그걸 그대로 보내면 10인 공대가 9 로 나가고 서버의
+        // RAID_ROSTER_SIZES = [10] 에서 통째로 탈락한다(웹 실측 2026-09-19: 성역 30일 1,385건 = 3.362%,
+        // 그 중 roster=9 가 1,340건). 통계웹 스키마 주석도 이 필드를 처음부터 "로스터 정원"으로 정의한다.
+        // 정원을 모를 때만 멤버 수로 폴백한다(옛 캡처 로그·테스트 경로).
+        int size = _partyRosterCapacity > 0 ? _partyRosterCapacity : _partyRoster.Count;
+        return fresh
+            ? (CurrentPartySlots(contributors), size)
+            : (new Dictionary<int, int>(), 0); // 0 = 정원 모름(옛 저장 전투가 싣는 값과 같다)
+    }
+
     private Dictionary<int, int> CurrentPartySlots(IReadOnlyList<User> contributors)
     {
         int executorId = _userRepository.Executor();

@@ -84,28 +84,35 @@ public sealed class DataManagerPartyRosterTests
     [Fact]
     public void A_partial_snapshot_does_not_shrink_a_fuller_roster()
     {
-        // A 0x9702 snapshot can arrive PARTIAL (byte-scan miss / incremental re-broadcast). A naive Clear+Replace
-        // then shrinks a complete roster (observed live 5→4→3→2); the subset guard keeps the fuller one.
+        // 0x9702 스냅샷은 부분으로 오는 것이 정상이다(코퍼스 실측: 정원 10 방 502건 중 완전한 것 290건).
+        // 종전엔 통째 교체 + subset 가드로 막았는데, 지금은 슬롯 기준으로 합치므로 애초에 줄어들 일이 없다.
         long now = 1_000_000;
         var dm = new DataManager { Clock = () => now };
         dm.SavePartyRoster(new List<(string, int, int)> { ("A", 1, 1), ("B", 1, 2), ("C", 1, 3), ("D", 1, 4), ("E", 1, 5) });
-        dm.SavePartyRoster(new List<(string, int, int)> { ("A", 1, 1), ("B", 1, 2) }); // strict subset — ignored
+        dm.SavePartyRoster(new List<(string, int, int)> { ("A", 1, 1), ("B", 1, 2) }); // 부분 재방송 — 합쳐진다
 
         Assert.Equal(5, dm.PartyMemberIdentities(300_000).Count);
     }
 
+    /// <summary>
+    /// 🔑 스냅샷은 <b>합쳐진다</b>(갈아끼우지 않는다). 0x9702 는 부분 로스터를 보내는 것이 정상이라
+    /// (실측: 정원 10 방 스냅샷 502건 중 완전한 것 290건), 새 멤버가 하나 보인다고 나머지를 버리면
+    /// 10인 공대가 2명으로 쪼그라드는 경우가 생긴다.
+    /// <para>진짜 파티 교체는 <b>파티 id</b> 가 말해 준다 — 그건 아래
+    /// <see cref="A_smaller_party_under_a_new_party_id_replaces_the_roster"/> 가 고정한다.</para>
+    /// </summary>
     [Fact]
-    public void A_snapshot_with_a_new_member_replaces_the_roster()
+    public void A_snapshot_with_a_new_member_merges_rather_than_replacing()
     {
         long now = 1_000_000;
         var dm = new DataManager { Clock = () => now };
         dm.SavePartyRoster(new List<(string, int, int)> { ("A", 1, 1), ("B", 1, 2) });
-        dm.SavePartyRoster(new List<(string, int, int)> { ("A", 1, 1), ("X", 1, 3) }); // a NEW member -> replaces
+        dm.SavePartyRoster(new List<(string, int, int)> { ("A", 1, 1), ("X", 1, 3) }); // 부분 재방송 + 새 멤버
 
         IReadOnlyList<(string Nickname, int Server)> ids = dm.PartyMemberIdentities(300_000);
-        Assert.Equal(2, ids.Count);
+        Assert.Equal(3, ids.Count);
         Assert.Contains(ids, m => m.Nickname == "X");
-        Assert.DoesNotContain(ids, m => m.Nickname == "B");
+        Assert.Contains(ids, m => m.Nickname == "B"); // 안 실렸다고 해서 나간 것이 아니다
     }
 
     [Fact]
