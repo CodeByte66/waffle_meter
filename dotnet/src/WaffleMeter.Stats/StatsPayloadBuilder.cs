@@ -146,7 +146,7 @@ public sealed class StatsPayloadBuilder
 
         // 같은 캐릭터가 두 uid로 들어온 경우를 여기서 접는다(FoldParticipants 참조). 이 아래로는 uid가 아니라
         // '대표 uid' 기준이며, 본인 성적도 접힌 값을 쓴다 — 안 그러면 자기 딜이 한쪽 uid 몫만 올라간다.
-        FoldedParticipants folded = FoldParticipants(log, SortedParticipantUsers(log, contributors));
+        FoldedParticipants folded = FoldParticipants(log, SortedParticipantUsers(log, contributors, own.Id));
         List<User> participantUsers = folded.Representatives;
         int ownRepresentativeId = folded.RepresentativeOf.GetValueOrDefault(own.Id, own.Id);
         DpsInformation ownFoldedInfo = folded.Information.GetValueOrDefault(ownRepresentativeId) ?? ownInfo;
@@ -295,10 +295,40 @@ public sealed class StatsPayloadBuilder
     private bool? RaidByEncounter(DpsLog log) =>
         log.Report.Target is { } target ? _data.Encounters.Lookup(target.Mob.Code)?.IsRaid : null;
 
-    private List<User> SortedParticipantUsers(DpsLog log, IEnumerable<User> contributors)
+    /// <summary>
+    /// 이 전투의 참가자 = 피해를 낸 기여자 중 <b>신원이 있는</b> 사람. 대표 접기 전 단계다.
+    ///
+    /// <para>🔑 신원 게이트는 <b>표시층과 같은 규칙</b>이다. <c>OverlayRowBuilder</c> 는 닉네임 없는 전투 행을
+    /// 화면에서 숨긴다(blank-row filter) — 그런데 이 빌더에는 같은 필터가 없어서, <b>사용자가 미터에서 본 적
+    /// 없는 행이 웹으로 올라갔다</b>. 종전에는 전투력 0 이 400 을 받아 전투가 통째로 죽는 바람에 그 모순이
+    /// 드러나지 않았고, <c>power: null</c> 로 바꿔 전투가 살아남기 시작하면서 웹 집계에 처음 보였다
+    /// (통계웹 실측 2026-09-21: 24시간 참가자 67,782명 중 <c>identity_hash</c> 가 없는 행 2건. 평균 대비
+    /// 타격 수 1/27 · dps 1/38 의 미량 피해였다).</para>
+    ///
+    /// <para>신원이 없는 행은 웹이 <b>어차피 쓰지 못한다</b> — 파티 편차는 NULL 전투력을 무시하고, 티어는
+    /// <c>power >= 400000</c>, 리더보드는 <c>power > 0</c> 에서 자동 배제한다. 유일하게 남는 효과가
+    /// <c>battle.partySize</c>(= <c>participantPayloads.Count</c>) 부풀리기이고, 그게 실제로 해를 냈다:
+    /// 5인 원정이 partySize 7 로 올라가 웹의 지원 자격 게이트가 수령자를 <c>ceil(4/2)=2</c> 대신
+    /// <c>ceil(6/2)=3</c> 요구했다(그 전투의 치유성이 근거 없이 한 명 더 요구받았다).</para>
+    ///
+    /// <para>⚠️ <see cref="StatsParticipantPayload.Power"/> 의 "참가자를 배열에서 빼면 안 된다"와 충돌하지
+    /// 않는다. 그 규칙은 <b>신원이 확인된 파티원</b>의 전투력을 못 읽었을 때의 얘기이고(편차를 자격자가 아니라
+    /// 참가자 전원으로 계산하도록 일부러 그렇게 설계됐다), <c>identity_hash</c> 가 null 인 행은 웹이 애초에
+    /// 사람으로 세지 못하므로 그 논리가 닿지 않는다. 최상위 <c>totalDamage</c> 는 업로더 본인 몫이라
+    /// (<c>ownFoldedInfo</c>) 참가자를 빼도 합계 정합성이 깨지지 않는다.</para>
+    ///
+    /// <para>⚠️ <b>업로더는 무조건 남긴다.</b> 본인이 0x3633 을 못 받은 엔티티 id 로 싸우는 경우가 실제로 있고
+    /// (재인스턴스), 그때 본인 행은 <b>무명 대형 딜러</b>다 — 성역 실측(2026-09-20 로그)에서 그 행이 몹 피해의
+    /// 11.47%(244M)였다. 그 복구는 이 빌더보다 <b>앞</b>에서 끝난다(<c>DpsCalculator</c> 의
+    /// 로스터 1:1 본인 복구가 <c>SaveNickname(isExecutor: true)</c> 로 이름을 붙이고,
+    /// <c>PurgeResolvedNonPlayers</c> 가 소환수·몹으로 밝혀진 유령을 걷어낸다). 그래도 id 로 한 번 더 막는다 —
+    /// 순서가 바뀌면 본인 딜이 통째로 사라지는데, 스키마가 그걸 막지 않아 400 도 안 난다.</para>
+    /// </summary>
+    private List<User> SortedParticipantUsers(DpsLog log, IEnumerable<User> contributors, int ownId)
     {
         return contributors
             .Where(u => AmountOf(log, u.Id) > 0.0)
+            .Where(u => u.Id == ownId || StatsIdentity.CharacterIdentityHash(u.Server, u.Nickname) != null)
             .OrderByDescending(u => AmountOf(log, u.Id))
             .ToList();
     }
