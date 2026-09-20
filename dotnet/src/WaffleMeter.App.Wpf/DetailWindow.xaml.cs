@@ -15,6 +15,17 @@ public partial class DetailWindow : Window, IReassertableOverlay
     private const int GwlExStyle = -20;
     private const int WsExNoActivate = 0x08000000;
     private const int WsExToolWindow = 0x00000080;
+    // 🔑 WS_EX_APPWINDOW. WPF 는 ShowInTaskbar 기본값(true) 때문에 HWND 를 만들 때 이걸 세우는데,
+    // 셸 규칙상 APPWINDOW 가 TOOLWINDOW 를 **이긴다**("Forces a top-level window onto the taskbar when the
+    // window is visible"). 그래서 TOOLWINDOW 만 OR 하면 창이 작업표시줄·Alt+Tab 목록에 그대로 남는다 —
+    // 실제로 '상세내역' 이 Alt+Tab 에 뜬다는 제보가 이것이었다(2026-09-19). 반드시 같이 지워야 한다.
+    private const int WsExAppWindow = 0x00040000;
+
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
 
     private readonly TopmostReasserter _reasserter = new();
     private IntPtr _handle;
@@ -25,6 +36,11 @@ public partial class DetailWindow : Window, IReassertableOverlay
 
     [DllImport("user32.dll")]
     private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
     public DetailWindow()
     {
@@ -45,8 +61,21 @@ public partial class DetailWindow : Window, IReassertableOverlay
         // ShowInTaskbar stays at its WPF default (true) — must NOT be false in XAML, or WPF attaches a hidden
         // non-topmost OWNER window that pins this window behind a fullscreen game. WS_EX_TOOLWINDOW (below)
         // keeps it off the taskbar instead.
+        //
+        // ⚠️ 그런데 TOOLWINDOW 를 OR 하는 것만으로는 부족하다 — WPF 가 세워 둔 WS_EX_APPWINDOW 를 **같이
+        // 지워야** 한다. 셸에서는 APPWINDOW 가 TOOLWINDOW 를 이기므로, 안 지우면 창이 Alt+Tab 에 남는다.
+        // 이 창은 NOACTIVATE 라 Alt+Tab 으로 골라도 포커스를 못 받는 반쪽 항목이 된다. 오버레이·패널은
+        // 전부 `& ~APPWINDOW` 를 하고 있었고(OverlayPanelWindow.SyncInputStyle, OverlayWindow) 여기만 빠져 있었다.
         int exStyle = GetWindowLong(_handle, GwlExStyle);
-        SetWindowLong(_handle, GwlExStyle, exStyle | WsExNoActivate | WsExToolWindow);
+        int next = (exStyle | WsExNoActivate | WsExToolWindow) & ~WsExAppWindow;
+        if (next != exStyle)
+        {
+            SetWindowLong(_handle, GwlExStyle, next);
+            // 스타일만 바꾸면 셸이 목록을 다시 평가하지 않는다. 여기선 창이 아직 안 보일 때(OnSourceInitialized)
+            // 고치므로 hide+show 까지는 필요 없지만, FRAMECHANGED 로 비-클라이언트 영역 재계산은 시켜 둔다.
+            SetWindowPos(_handle, IntPtr.Zero, 0, 0, 0, 0,
+                SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged);
+        }
     }
 
     /// <summary>

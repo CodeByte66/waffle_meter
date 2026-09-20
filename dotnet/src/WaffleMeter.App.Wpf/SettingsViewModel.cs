@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Threading;
 using WaffleMeter.App.Core;
 using WaffleMeter.Capture;
 using WaffleMeter.Capture.Live;
@@ -79,6 +80,17 @@ public sealed class ConsentCharacterRow
 
     /// <summary>Visible only when we have a remembered aether balance for this character.</summary>
     public Visibility AetherVisibility { get; init; } = Visibility.Collapsed;
+
+    /// <summary>
+    /// 공개 자동 적용이 실패해 서버는 비공개인데 사용자는 켠 적이 있는 상태. 종전에는 이 상태가 화면에
+    /// 드러나지 않아 <b>"분명 켰는데 꺼져 있는" 체크박스</b>만 보였다(게다가 업로드까지 막혔다 — 그쪽은 이미 고쳤다).
+    /// <para>재시도 버튼은 두지 않는다. 기존 공개 토글이 그대로 재시도 경로이고, 시도하는 순간 매니저가 이 표시를
+    /// 지운다.</para>
+    /// </summary>
+    public bool PublicApplyFailed { get; init; }
+
+    public Visibility PublicApplyFailedVisibility =>
+        PublicApplyFailed ? Visibility.Visible : Visibility.Collapsed;
 }
 
 /// <summary>One row of the custom-alarm list (immutable; the collection is rebuilt on change). The enable
@@ -175,6 +187,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     private readonly SkinManager _skin;
     private readonly OverlayController _controller;
     private readonly HotkeyHandler _hotkeys;
+    private readonly Action _hotkeysIssuesChanged;
     private readonly BuffPresetManager _presets;
     private readonly GameOptimizerService _gameOpt;
     private readonly CooldownPresetManager? _cooldownPresets;
@@ -190,6 +203,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _skin = skin;
         _controller = controller;
         _hotkeys = hotkeys;
+        _hotkeysIssuesChanged = RefreshHotkeyWarnings;
+        hotkeys.IssuesChanged += _hotkeysIssuesChanged;
         _presets = presets;
         _gameOpt = gameOpt;
         _cooldownPresets = cooldownPresets;
@@ -757,8 +772,55 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     /// <see cref="MeterSettings"/> 와 <see cref="SkinManager"/> 가 죽은 뷰모델을 계속 붙들고 있다가
     /// 설정 하나 바뀔 때마다 그동안 열었던 모든 미리보기를 다시 그린다(창을 열수록 느려진다).
     /// </summary>
+    // ── 단축키 경고 ────────────────────────────────────────────────────────────
+    // 두 사유 모두 종전에는 완전히 무음이라 "설정엔 들어가 있는데 안 먹는다" 로만 보였다(3.1.0 제보).
+    // 조치가 서로 다르므로 문구도 갈라 준다 — 은퇴는 **다시 지정**, 등록 실패는 **다른 조합으로 변경**.
+    private static string WarningFor(HotkeyIssue issue) => issue switch
+    {
+        HotkeyIssue.Retired => "이전에 저장된 조합을 더 이상 쓸 수 없어 해제했습니다. 다시 지정해 주세요.",
+        HotkeyIssue.RegisterFailed => "다른 프로그램이 이미 쓰는 조합이라 등록하지 못했습니다. 다른 조합으로 바꿔 주세요.",
+        _ => string.Empty,
+    };
+
+    public string ResetHotkeyWarning => WarningFor(_hotkeys.ResetIssue);
+    public string VisibilityHotkeyWarning => WarningFor(_hotkeys.VisibilityIssue);
+    public string ClickThroughHotkeyWarning => WarningFor(_hotkeys.ClickThroughIssue);
+    public string DummyToggleHotkeyWarning => WarningFor(_hotkeys.DummyToggleIssue);
+    public string DummyResetHotkeyWarning => WarningFor(_hotkeys.DummyResetIssue);
+    public string SplitUiHotkeyWarning => WarningFor(_hotkeys.SplitUiIssue);
+    public string AetherListHotkeyWarning => WarningFor(_hotkeys.AetherListIssue);
+
+    /// <summary>
+    /// 경고 일곱 칸을 다시 읽는다. ⚠️ <see cref="HotkeyHandler.IssuesChanged"/> 는 <b>리스너 스레드</b>에서
+    /// 올 수 있으므로 UI 스레드로 마셜한다. Application 이 없는 컨텍스트(단위 테스트·UiPreview)에서는
+    /// 그 자리에서 바로 올린다.
+    /// </summary>
+    private void RefreshHotkeyWarnings()
+    {
+        Dispatcher? ui = Application.Current?.Dispatcher;
+        if (ui != null && !ui.CheckAccess())
+        {
+            ui.BeginInvoke(RaiseHotkeyWarnings);
+            return;
+        }
+
+        RaiseHotkeyWarnings();
+    }
+
+    private void RaiseHotkeyWarnings()
+    {
+        OnPropertyChanged(nameof(ResetHotkeyWarning));
+        OnPropertyChanged(nameof(VisibilityHotkeyWarning));
+        OnPropertyChanged(nameof(ClickThroughHotkeyWarning));
+        OnPropertyChanged(nameof(DummyToggleHotkeyWarning));
+        OnPropertyChanged(nameof(DummyResetHotkeyWarning));
+        OnPropertyChanged(nameof(SplitUiHotkeyWarning));
+        OnPropertyChanged(nameof(AetherListHotkeyWarning));
+    }
+
     public void Detach()
     {
+        _hotkeys.IssuesChanged -= _hotkeysIssuesChanged;
         _settings.PropertyChanged -= _settingsChanged;
         _skin.Changed -= _skinChanged;
         _layoutPreview?.Detach();
@@ -1529,7 +1591,6 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     public bool MultiMonitorMode { get => _settings.MultiMonitorMode; set { _settings.MultiMonitorMode = value; OnPropertyChanged(); } }
     public bool ShowJoinPanel { get => _settings.ShowJoinPanel; set { _settings.ShowJoinPanel = value; OnPropertyChanged(); } }
     public bool ShowPreCombatRoster { get => _settings.ShowPreCombatRoster; set { _settings.ShowPreCombatRoster = value; OnPropertyChanged(); } }
-    public bool ForceInstanceTracking { get => _settings.ForceInstanceTracking; set { _settings.ForceInstanceTracking = value; OnPropertyChanged(); } }
     // (Light mode is now a skin — "light" in the Skin list — not a separate overlayTheme toggle.)
 
     // ---- alarms (live; persisted immediately, not part of the Cancel snapshot) ----
@@ -1903,7 +1964,6 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             // 켜 둔 사람이 자기 얘기가 아니라고 읽고 지나간다 — 실제로는 그 캐릭터 하나만 막혀 있는 상태다.
             "consent_not_allowed" => "이 캐릭터의 업로드가 꺼져 있어 보내지 않았습니다 (업로드 설정은 캐릭터별입니다)",
             "unsigned_upload" => "서명 없이 업로드돼 이 캐릭터의 소유 증명이 생기지 않았습니다",
-            "force_tracking_mode" => "던전 강제 집계 중에는 보내지 않습니다",
             "not_boss" or "not_uploadable_boss" => "보스 전투가 아닙니다",
             "estimated_boss" => "보스를 확정하지 못했습니다(미상 보스)",
             "not_kill" => "처치하지 못한 전투입니다",
@@ -2112,7 +2172,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             {
                 IdentityHash = c.IdentityHash,
                 Label = label,
-                SubLabel = job + (c.PublicCharacter ? "공개" : "비공개 (익명 집계)"),
+                SubLabel = job + (c.PublicCharacter
+                    ? "공개"
+                    : c.PublicApplyFailed ? "비공개 — 공개 적용 실패" : "비공개 (익명 집계)"),
                 IsPublic = c.PublicCharacter,
                 CanSetPublic = canEditPublic,
                 CanRevoke = true, // 동의 철회는 항상 활성 (오프라인 포함)
@@ -2120,6 +2182,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
                 CurrentBadgeVisibility = c.IsCurrent ? Visibility.Visible : Visibility.Collapsed,
                 AetherText = aetherText,
                 AetherVisibility = aetherText.Length > 0 ? Visibility.Visible : Visibility.Collapsed,
+                PublicApplyFailed = c.PublicApplyFailed,
             });
         }
 
@@ -2414,6 +2477,10 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             return "이 빌드에서는 설정 가져오기를 쓸 수 없습니다.";
         }
 
+        // 픽커는 이 뷰모델이 소유하므로 applier 가 직접 못 부른다. 이 한 줄이 없으면 가져온 hidden/voice/pinned
+        // 선택이 화면에 안 보이다가, 사용자가 칩 하나를 만지는 순간 스테일 캐시가 통째로 덮어쓴다.
+        applier.BuffPickerRefresh ??= () => _buffPicker?.Reload();
+
         SettingsImportResult result = applier.Apply(plan, _services.Version, DateTimeOffset.Now);
 
         // The window's own Cancel restores a 19-value snapshot taken when it opened, so after an import it would
@@ -2433,15 +2500,61 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         NameFxSheen.Rebuild(_settings.NameFxBrightnessPercent);
         OnPropertyChanged(nameof(UndoVisibility));
 
-        string hint = result.RestartHint ? " 일부 항목은 미터를 다시 켜야 적용됩니다." : string.Empty;
-        string backup = result.BackupPath is null
-            ? " ⚠ 이전 설정 백업을 저장하지 못했습니다."
-            : " 적용 전 설정은 백업해 뒀습니다.";
-        BundleStatus = $"설정 {plan.Changes.Count}개를 적용했습니다.{backup}{hint}";
+        BundleStatus = DescribeImport(result, plan);
         return BundleStatus;
     }
 
-    /// <summary>Put back the snapshot taken before the most recent import.</summary>
+    /// <summary>
+    /// 가져오기 결과를 사용자 문장으로. 🔑 <b>M-28 의 무게중심은 "복원 실패"가 아니라 "0건 복원해 놓고 성공
+    /// 문구를 내는 것"이었다</b> — 그래서 완전 성공을 주장할 수 있는 건 <see cref="SettingsImportResult.Complete"/>
+    /// 하나뿐이고, 나머지는 무엇이 덜 됐는지 말해야 한다.
+    /// </summary>
+    private static string DescribeImport(SettingsImportResult result, SettingsBundlePlan plan)
+    {
+        var parts = new List<string>
+        {
+            result.Changed == 0
+                ? "바뀐 설정이 없습니다."
+                : $"설정 {result.Changed}개를 적용했습니다.",
+        };
+
+        if (result.Removed > 0)
+        {
+            // 백업 복원에서만 나온다 — 공유 코드는 '설정한 적 없음'을 싣지 않는다.
+            parts.Add($"그중 {result.Removed}개는 설정 안 함으로 되돌렸습니다.");
+        }
+
+        if (result.Skipped > 0)
+        {
+            parts.Add($"이 빌드가 모르는 항목 {result.Skipped}개는 건너뛰었습니다.");
+        }
+
+        if (result.Unwired.Count > 0)
+        {
+            // "가져왔는데 이번 세션에 안 먹는다" — 조용히 넘기면 사용자는 가져오기가 실패한 줄 모른다.
+            parts.Add($"{string.Join(" · ", result.Unwired)}은(는) 이번 세션에 반영되지 않았습니다.");
+        }
+
+        parts.Add(result.BackupPath is null
+            ? "⚠ 이전 설정 백업을 저장하지 못했습니다."
+            : "적용 전 설정은 백업해 뒀습니다.");
+
+        if (result.RestartHint)
+        {
+            parts.Add("일부 항목은 미터를 다시 켜야 적용됩니다.");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>
+    /// Put back the snapshot taken before the most recent import.
+    /// <para>⚠️ 이것은 <b>한 번만 되는 되돌리기가 아니라 토글</b>이다 — 되돌리는 것도 <see cref="ApplyImport"/>를
+    /// 타고, 그 경로가 적용 직전 상태를 다시 백업하기 때문이다. 그래서 두 번 누르면 원위치다. 동작 자체는
+    /// 쓸모가 있어서(잘못 눌렀을 때 바로 복구된다) 그대로 두고, <b>문구만</b> 그 사실을 말하도록 고쳤다.
+    /// 종전에는 두 번 다 "가져오기 직전 설정으로 되돌렸습니다"라고 해서, 두 번째 누름이 <b>되살리기</b>인데도
+    /// 되돌리기라고 말했다.</para>
+    /// </summary>
     public string UndoLastImport()
     {
         string? code = SettingsBackupStore.ReadNewest(_services.Props.AppDirectory());
@@ -2452,8 +2565,19 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         }
 
         SettingsBundlePlan plan = SettingsBundleBuilder.Plan(_services.Props, bundle);
-        ApplyImport(plan);
-        BundleStatus = "가져오기 직전 설정으로 되돌렸습니다.";
+        if (plan.Changes.Count == 0)
+        {
+            BundleStatus = "되돌릴 변경이 없습니다 — 이미 그 상태입니다.";
+            return BundleStatus;
+        }
+
+        // ApplyImport 가 만든 문장을 **살린다.** 종전에는 그 위에 "되돌렸습니다"를 무조건 덮어써서, 건너뛴 키가
+        // 있든 0건이 적용됐든 똑같이 성공을 말했다 — 그 한 줄이 M-28 의 증상 본체였다.
+        string applied = ApplyImport(plan);
+        string partial = plan.UnknownCount > 0
+            ? $" ⚠ 이 백업에는 이 빌드가 모르는 항목 {plan.UnknownCount}개가 있어 부분 복원입니다."
+            : string.Empty;
+        BundleStatus = $"가장 최근 백업으로 되돌렸습니다. {applied}{partial} 다시 누르면 직전 상태로 돌아갑니다.";
         return BundleStatus;
     }
 

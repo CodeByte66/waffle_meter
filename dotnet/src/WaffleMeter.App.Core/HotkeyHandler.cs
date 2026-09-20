@@ -1,7 +1,9 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using WaffleMeter.Services;
 
 namespace WaffleMeter.App.Core;
+
 
 /// <summary>A modifier + virtual-key combo (Kotlin HotkeyHandler.HotkeyCombo). Persisted as
 /// "<c>modifiers=M,vkCode=V</c>".</summary>
@@ -59,6 +61,29 @@ public sealed record HotkeyCombo(int Modifiers, int VkCode)
             return null;
         }
     }
+}
+
+/// <summary>
+/// 단축키 한 칸이 <b>지금 실제로 동작하지 않는</b> 사유. 둘 다 종전에는 완전히 무음이라,
+/// 사용자 눈에는 "설정엔 들어가 있는데 안 먹는다"로만 보였다(3.1.0 제보, 2026-09-19).
+/// </summary>
+public enum HotkeyIssue
+{
+    None = 0,
+
+    /// <summary>
+    /// 저장돼 있던 값이 <b>지금은 쓸 수 없는 조합</b>이라 해제됐다. 옛 빌드가 수식키 단독
+    /// (예: <c>CTRL + VK_LCONTROL</c>)을 저장해 둔 설치본이 3.1.0 이상으로 올라올 때 발생한다 —
+    /// <see cref="HotkeyCombo.TryParse"/> 가 그런 값을 거부하므로 그 칸은 조용히 미지정이 된다.
+    /// 조치는 <b>다시 지정</b>.
+    /// </summary>
+    Retired,
+
+    /// <summary>
+    /// 조합 자체는 멀쩡한데 OS 등록이 실패했다. 대개 다른 프로그램이 같은 조합을 먼저 잡고 있다
+    /// (<c>ERROR_HOTKEY_ALREADY_REGISTERED</c> = 1409). 조치는 <b>다른 조합으로 변경</b>.
+    /// </summary>
+    RegisterFailed,
 }
 
 /// <summary>
@@ -128,6 +153,43 @@ public sealed class HotkeyHandler : IDisposable
     private volatile bool _running;
     private readonly Dictionary<int, long> _lastHotkeyTick = new(); // per-id leading-edge debounce; listener-thread-only
 
+    /// <summary>칸(id)별 문제 상태. 로드는 생성 스레드, 등록은 리스너 스레드, 읽기는 UI 스레드라 concurrent.</summary>
+    private readonly ConcurrentDictionary<int, HotkeyIssue> _issues = new();
+
+    /// <summary>문제 상태가 바뀌었다. ⚠️ <b>리스너 스레드에서</b> 올 수 있으니 구독자가 마셜해야 한다.</summary>
+    public event Action? IssuesChanged;
+
+    public HotkeyIssue ResetIssue => IssueOf(ResetId);
+    public HotkeyIssue VisibilityIssue => IssueOf(VisibilityId);
+    public HotkeyIssue ClickThroughIssue => IssueOf(ClickThroughId);
+    public HotkeyIssue DummyToggleIssue => IssueOf(DummyToggleId);
+    public HotkeyIssue DummyResetIssue => IssueOf(DummyResetId);
+    public HotkeyIssue SplitUiIssue => IssueOf(SplitUiId);
+    public HotkeyIssue AetherListIssue => IssueOf(AetherListId);
+
+    private HotkeyIssue IssueOf(int id) => _issues.TryGetValue(id, out HotkeyIssue v) ? v : HotkeyIssue.None;
+
+    /// <summary>같은 값이면 이벤트를 내지 않는다 — 설정창이 열릴 때마다 Stop/Start 가 도는데 매번 깜빡이면 안 된다.</summary>
+    private void SetIssue(int id, HotkeyIssue issue)
+    {
+        HotkeyIssue previous = IssueOf(id);
+        if (previous == issue)
+        {
+            return;
+        }
+
+        if (issue == HotkeyIssue.None)
+        {
+            _issues.TryRemove(id, out _);
+        }
+        else
+        {
+            _issues[id] = issue;
+        }
+
+        IssuesChanged?.Invoke();
+    }
+
     public Action? OnReset { get; set; }
     public Action? OnVisibility { get; set; }
     public Action? OnClickThrough { get; set; }
@@ -164,13 +226,13 @@ public sealed class HotkeyHandler : IDisposable
 
     private void ReadAll()
     {
-        _reset = Load(KeyReset, DefaultReset);
-        _visibility = Load(KeyVisibility, DefaultVisibility);
-        _clickThrough = Load(KeyClickThrough, DefaultClickThrough);
-        _dummyToggle = LoadOptional(KeyDummyToggle); // 허수아비 hotkeys ship UNASSIGNED — user opts in via the tab
-        _dummyReset = LoadOptional(KeyDummyReset);
-        _splitUi = LoadOptional(KeySplitUi); // 분리모드도 UNASSIGNED 출고 — 사용자가 단축키 탭에서 고른다
-        _aetherList = LoadOptional(KeyAetherList); // 컨텐츠 관리도 UNASSIGNED 출고
+        _reset = Load(KeyReset, DefaultReset, ResetId);
+        _visibility = Load(KeyVisibility, DefaultVisibility, VisibilityId);
+        _clickThrough = Load(KeyClickThrough, DefaultClickThrough, ClickThroughId);
+        _dummyToggle = LoadOptional(KeyDummyToggle, DummyToggleId); // 허수아비 hotkeys ship UNASSIGNED — user opts in via the tab
+        _dummyReset = LoadOptional(KeyDummyReset, DummyResetId);
+        _splitUi = LoadOptional(KeySplitUi, SplitUiId); // 분리모드도 UNASSIGNED 출고 — 사용자가 단축키 탭에서 고른다
+        _aetherList = LoadOptional(KeyAetherList, AetherListId); // 컨텐츠 관리도 UNASSIGNED 출고
     }
 
     public HotkeyCombo? Reset => _reset;
@@ -182,18 +244,21 @@ public sealed class HotkeyHandler : IDisposable
     public HotkeyCombo? AetherList => _aetherList;
 
     /// <summary>Set (or with <c>null</c>, unassign) the reset hotkey; persists and re-registers live.</summary>
-    public void SetReset(HotkeyCombo? combo) => Update(v => _reset = v, KeyReset, combo);
-    public void SetVisibility(HotkeyCombo? combo) => Update(v => _visibility = v, KeyVisibility, combo);
-    public void SetClickThrough(HotkeyCombo? combo) => Update(v => _clickThrough = v, KeyClickThrough, combo);
-    public void SetDummyToggle(HotkeyCombo? combo) => Update(v => _dummyToggle = v, KeyDummyToggle, combo);
-    public void SetDummyReset(HotkeyCombo? combo) => Update(v => _dummyReset = v, KeyDummyReset, combo);
-    public void SetSplitUi(HotkeyCombo? combo) => Update(v => _splitUi = v, KeySplitUi, combo);
-    public void SetAetherList(HotkeyCombo? combo) => Update(v => _aetherList = v, KeyAetherList, combo);
+    public void SetReset(HotkeyCombo? combo) => Update(v => _reset = v, KeyReset, ResetId, combo);
+    public void SetVisibility(HotkeyCombo? combo) => Update(v => _visibility = v, KeyVisibility, VisibilityId, combo);
+    public void SetClickThrough(HotkeyCombo? combo) => Update(v => _clickThrough = v, KeyClickThrough, ClickThroughId, combo);
+    public void SetDummyToggle(HotkeyCombo? combo) => Update(v => _dummyToggle = v, KeyDummyToggle, DummyToggleId, combo);
+    public void SetDummyReset(HotkeyCombo? combo) => Update(v => _dummyReset = v, KeyDummyReset, DummyResetId, combo);
+    public void SetSplitUi(HotkeyCombo? combo) => Update(v => _splitUi = v, KeySplitUi, SplitUiId, combo);
+    public void SetAetherList(HotkeyCombo? combo) => Update(v => _aetherList = v, KeyAetherList, AetherListId, combo);
 
-    private void Update(Action<HotkeyCombo?> assign, string key, HotkeyCombo? value)
+    private void Update(Action<HotkeyCombo?> assign, string key, int id, HotkeyCombo? value)
     {
         assign(value);
         _props.SetProperty(key, value?.ToString() ?? NoneSentinel);
+        // 사용자가 직접 고른 값이다 — 은퇴 경고는 여기서 사라져야 한다. 등록 실패는
+        // 아래 Start() 가 다시 판정한다(리스너가 돌 때만 의미가 있다).
+        SetIssue(id, HotkeyIssue.None);
         if (_running)
         {
             Stop();
@@ -201,29 +266,44 @@ public sealed class HotkeyHandler : IDisposable
         }
     }
 
-    private HotkeyCombo? Load(string key, HotkeyCombo fallback)
+    /// <summary>
+    /// 저장된 값이 있었는데 <see cref="HotkeyCombo.TryParse"/> 가 거부했는가. 옛 빌드가 써 둔 수식키 단독
+    /// 조합이 여기 걸린다 — 종전에는 <b>조용히</b> 버려져서 사용자는 이유 없이 단축키를 잃었다.
+    /// </summary>
+    private void NoteRetired(int id, string? raw, HotkeyCombo? parsed) =>
+        SetIssue(id, raw != null && raw != NoneSentinel && parsed == null ? HotkeyIssue.Retired : HotkeyIssue.None);
+
+    private HotkeyCombo? Load(string key, HotkeyCombo fallback, int id)
     {
         string? raw = _props.GetProperty(key);
         if (raw == null)
         {
+            SetIssue(id, HotkeyIssue.None);
             return fallback; // never set → default
         }
 
         if (raw == NoneSentinel)
         {
+            SetIssue(id, HotkeyIssue.None);
             return null; // explicitly unassigned → no hotkey (do NOT fall back to the default)
         }
 
-        return HotkeyCombo.TryParse(raw) ?? fallback;
+        HotkeyCombo? parsed = HotkeyCombo.TryParse(raw);
+        // 기본값으로 되돌아가더라도 **사용자가 고른 값은 사라진 것**이라 알려 준다. 안 그러면
+        // "내가 지정한 조합이 아닌 게 걸려 있다"를 설명할 방법이 없다.
+        NoteRetired(id, raw, parsed);
+        return parsed ?? fallback;
     }
 
     /// <summary>Load a hotkey that ships UNASSIGNED: never-set OR the "none" marker OR a corrupt value all yield
     /// null (no global hotkey); only a valid persisted combo registers. Unlike <see cref="Load"/> there is no
     /// default combo to fall back to.</summary>
-    private HotkeyCombo? LoadOptional(string key)
+    private HotkeyCombo? LoadOptional(string key, int id)
     {
         string? raw = _props.GetProperty(key);
-        return raw == null || raw == NoneSentinel ? null : HotkeyCombo.TryParse(raw);
+        HotkeyCombo? parsed = raw == null || raw == NoneSentinel ? null : HotkeyCombo.TryParse(raw);
+        NoteRetired(id, raw, parsed);
+        return parsed;
     }
 
     public void Start()
@@ -245,40 +325,16 @@ public sealed class HotkeyHandler : IDisposable
         // another app. Either way we DON'T tear the thread down: the message loop stays alive so a later
         // SetX (which does Stop()/Start() only while _running) can re-register — even from the all-unassigned
         // state. The loop just idles (PeekMessage + sleep) when nothing is registered.
-        if (_reset is { } r)
-        {
-            RegisterHotKey(IntPtr.Zero, ResetId, (uint)r.Modifiers, (uint)r.VkCode);
-        }
-
-        if (_visibility is { } v)
-        {
-            RegisterHotKey(IntPtr.Zero, VisibilityId, (uint)v.Modifiers, (uint)v.VkCode);
-        }
-
-        if (_clickThrough is { } c)
-        {
-            RegisterHotKey(IntPtr.Zero, ClickThroughId, (uint)c.Modifiers, (uint)c.VkCode);
-        }
-
-        if (_dummyToggle is { } dt)
-        {
-            RegisterHotKey(IntPtr.Zero, DummyToggleId, (uint)dt.Modifiers, (uint)dt.VkCode);
-        }
-
-        if (_dummyReset is { } dr)
-        {
-            RegisterHotKey(IntPtr.Zero, DummyResetId, (uint)dr.Modifiers, (uint)dr.VkCode);
-        }
-
-        if (_splitUi is { } su)
-        {
-            RegisterHotKey(IntPtr.Zero, SplitUiId, (uint)su.Modifiers, (uint)su.VkCode);
-        }
-
-        if (_aetherList is { } al)
-        {
-            RegisterHotKey(IntPtr.Zero, AetherListId, (uint)al.Modifiers, (uint)al.VkCode);
-        }
+        //
+        // 🔑 반환값을 본다. 종전에는 7번 모두 버려서, 다른 프로그램이 같은 조합을 먼저 잡고 있으면
+        // **그 칸만 죽고 설정 화면에는 멀쩡히 조합이 표시**됐다 — "설정엔 들어가 있는데 안 먹는다"의 정체다.
+        Register(ResetId, _reset);
+        Register(VisibilityId, _visibility);
+        Register(ClickThroughId, _clickThrough);
+        Register(DummyToggleId, _dummyToggle);
+        Register(DummyResetId, _dummyReset);
+        Register(SplitUiId, _splitUi);
+        Register(AetherListId, _aetherList);
 
         try
         {
@@ -350,6 +406,30 @@ public sealed class HotkeyHandler : IDisposable
     /// least <see cref="HotkeyRepeatSuppressMs"/>; a shorter gap is treated as OS auto-repeat and suppressed.</summary>
     internal static bool ShouldFire(bool hasPrevious, long previousTick, long nowTick) =>
         !hasPrevious || nowTick - previousTick >= HotkeyRepeatSuppressMs;
+
+    /// <summary>
+    /// 한 칸을 등록하고 결과를 기록한다. 미지정이면 등록하지 않고 상태도 비운다.
+    /// <para>⚠️ 등록 실패는 <b>여기서만</b> 판정된다 — <c>RegisterHotKey</c> 는 리스너 스레드에서 불러야
+    /// 그 스레드가 <c>WM_HOTKEY</c> 를 받으므로, 상태도 그 스레드에서 쓰인다(그래서 저장소가 concurrent 다).</para>
+    /// <para>⚠️ <see cref="HotkeyIssue.Retired"/> 는 덮지 않는다. 그건 로드 시점의 사유이고, 해제된 칸은
+    /// 애초에 등록 대상이 아니라 여기 오지 않는다 — 와도 combo 가 null 이라 아래 early-return 에 걸린다.</para>
+    /// </summary>
+    private void Register(int id, HotkeyCombo? combo)
+    {
+        if (combo == null)
+        {
+            // 미지정이거나 은퇴된 칸. 은퇴 사유는 유지하고, 그 외에는 비운다.
+            if (IssueOf(id) != HotkeyIssue.Retired)
+            {
+                SetIssue(id, HotkeyIssue.None);
+            }
+
+            return;
+        }
+
+        bool ok = RegisterHotKey(IntPtr.Zero, id, (uint)combo.Modifiers, (uint)combo.VkCode);
+        SetIssue(id, ok ? HotkeyIssue.None : HotkeyIssue.RegisterFailed);
+    }
 
     public void Stop()
     {

@@ -192,6 +192,20 @@
             <!-- HotkeyCaptureBox is a TextBox subclass, so the implicit TextBox style (Skin.Controls)
                  doesn't auto-apply; inherit it so the hotkey inputs match the other dark controls. -->
             <Style TargetType="{x:Type local:HotkeyCaptureBox}" BasedOn="{StaticResource {x:Type TextBox}}"/>
+            <!-- 단축키 한 칸이 지금 실제로 안 먹는 사유를 그 줄에서 알린다. 종전에는 두 사유(옛 조합 은퇴 /
+                 다른 프로그램과 충돌해 등록 실패) 모두 완전히 무음이라, 사용자에겐 "설정엔 들어가 있는데
+                 안 먹는다"로만 보였다. 문구가 비면 줄 자체가 사라진다(Collapsed). -->
+            <Style x:Key="HotkeyWarning" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="#FF7A7A"/>
+                <Setter Property="FontSize" Value="11"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="Margin" Value="0,3,12,0"/>
+                <Style.Triggers>
+                    <Trigger Property="Text" Value="">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
             <!-- 단축키 미지정(지우기) 버튼. The X is drawn as a vector Path, NOT a glyph: the bound theme
                  font (e.g. NEXON Lv2 Gothic) lacks U+2715/✕, so a text "✕" renders as a tofu/fallback. -->
             <Style x:Key="HotkeyClearButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -1695,8 +1709,6 @@
                     <!-- ===== 전투 집계 ===== -->
                     <StackPanel Visibility="{Binding SelectedNav, Converter={StaticResource NavVis}, ConverterParameter=battle}">
                         <TextBlock Text="집계 범위" Style="{StaticResource SectionHeader}"/>
-                        <TextBlock Text="⚠ '던전 강제 집계'를 켜면 추정 신원으로 집계하므로, 켜져 있는 동안 와터기로 전투 기록을 보내지 않습니다."
-                                   Style="{StaticResource SettingDesc}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                         <Grid Margin="0,0,0,14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
@@ -1706,14 +1718,6 @@
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding ShowPreCombatRoster}"/>
                         </Grid>
 
-                        <Grid Margin="0,0,0,4">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                <TextBlock Text="던전 강제 집계 (본인/파티 미인식 시)" Style="{StaticResource SettingTitle}"/>
-                                <TextBlock Text="던전(원정/초월/성역) 보스 전투 중간에 미터를 켜서 캐릭터 인식이 안 될 때도, 주요 딜러를 '파티원'으로 표시해 집계를 보여줍니다. 추정 신원이라 켜는 동안 웹 통계 전송은 중단됩니다." Style="{StaticResource SettingDesc}"/>
-                            </StackPanel>
-                            <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding ForceInstanceTracking}"/>
-                        </Grid>
                         <Border Style="{StaticResource SectionDivider}"/>
                         <TextBlock Text="허수아비 테스트" Style="{StaticResource SectionHeader}" Margin="0,0,0,10"/>
                         <TextBlock Style="{StaticResource SettingDesc}" Margin="0,0,0,12"
@@ -1816,7 +1820,10 @@
                         <TextBlock Text="단일 키 또는 Ctrl/Alt 조합으로 지정할 수 있습니다. (수식키 없는 단일 키는 권장하지 않습니다 — ⓘ 참고)  각 항목 오른쪽의 지우기 버튼을 누르면 미지정(사용 안 함)으로 둘 수 있습니다." Style="{StaticResource SettingDesc}" Margin="0,0,0,12"/>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="전투 초기화" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="전투 초기화" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding ResetHotkeyWarning}"/>
+                            </StackPanel>
                             <Grid Grid.Column="1">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <local:HotkeyCaptureBox x:Name="ResetHotkeyBox" Grid.Column="0" Combo="{Binding PendingReset, Mode=TwoWay}"/>
@@ -1826,7 +1833,10 @@
                         </Grid>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="표시 / 숨김" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="표시 / 숨김" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding VisibilityHotkeyWarning}"/>
+                            </StackPanel>
                             <Grid Grid.Column="1">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <local:HotkeyCaptureBox x:Name="VisibilityHotkeyBox" Grid.Column="0" Combo="{Binding PendingVisibility, Mode=TwoWay}"/>
@@ -1836,7 +1846,10 @@
                         </Grid>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="클릭 통과 / 잠금" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="클릭 통과 / 잠금" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding ClickThroughHotkeyWarning}"/>
+                            </StackPanel>
                             <Grid Grid.Column="1">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <local:HotkeyCaptureBox x:Name="ClickThroughHotkeyBox" Grid.Column="0" Combo="{Binding PendingClickThrough, Mode=TwoWay}"/>
@@ -1848,7 +1861,10 @@
                              (RegisterHotKey 실패는 조용해서, 충돌하면 "눌러도 아무 일이 없다"만 남는다). -->
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="UI 분리모드 켜기/끄기" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="UI 분리모드 켜기/끄기" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding SplitUiHotkeyWarning}"/>
+                            </StackPanel>
                             <Grid Grid.Column="1">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <local:HotkeyCaptureBox x:Name="SplitUiHotkeyBox" Grid.Column="0" Combo="{Binding PendingSplitUi, Mode=TwoWay}"/>
@@ -1859,7 +1875,10 @@
                         <!-- 컨텐츠 관리. 같은 이유로 기본 미지정 — 트레이 메뉴·오드 배지와 같은 창을 연다. -->
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="컨텐츠 관리 열기/닫기" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="컨텐츠 관리 열기/닫기" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding AetherListHotkeyWarning}"/>
+                            </StackPanel>
                             <Grid Grid.Column="1">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <local:HotkeyCaptureBox x:Name="AetherListHotkeyBox" Grid.Column="0" Combo="{Binding PendingAetherList, Mode=TwoWay}"/>
@@ -1869,7 +1888,10 @@
                         </Grid>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="허수아비 모드 켜기/끄기" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="허수아비 모드 켜기/끄기" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding DummyToggleHotkeyWarning}"/>
+                            </StackPanel>
                             <Grid Grid.Column="1">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <local:HotkeyCaptureBox x:Name="DummyToggleHotkeyBox" Grid.Column="0" Combo="{Binding PendingDummyToggle, Mode=TwoWay}"/>
@@ -1879,7 +1901,10 @@
                         </Grid>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="허수아비 DPS 초기화" Style="{StaticResource SettingTitle}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="허수아비 DPS 초기화" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding DummyResetHotkeyWarning}"/>
+                            </StackPanel>
                             <Grid Grid.Column="1">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <local:HotkeyCaptureBox x:Name="DummyResetHotkeyBox" Grid.Column="0" Combo="{Binding PendingDummyReset, Mode=TwoWay}"/>
@@ -1976,6 +2001,11 @@
                                                     </Border>
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding SubLabel}" Style="{StaticResource SettingDesc}"/>
+                                                <!-- 공개 자동 적용 실패: 서버는 비공개인데 사용자는 켠 적이 있는 상태.
+                                                     재시도 버튼은 없다 — 옆의 공개 토글이 그대로 재시도 경로다. -->
+                                                <TextBlock Text="⚠ 공개 자동 적용에 실패했어요. 공개를 다시 켜 주세요."
+                                                           Foreground="#FFB454" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                           Visibility="{Binding PublicApplyFailedVisibility}"/>
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,10,0">
                                                 <TextBlock Text="공개" FontSize="10" HorizontalAlignment="Center" Foreground="{DynamicResource Skin.MutedFg}"/>

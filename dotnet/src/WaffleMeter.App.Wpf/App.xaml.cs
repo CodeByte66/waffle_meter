@@ -250,7 +250,16 @@ public partial class App : Application
             u => StatsIdentity.CharacterIdentityHash(u.Server, u.Nickname),
             // 시련은 난이도가 mobCode에 안 실려서 아티팩트의 몹 맵으로는 좌표가 안 나온다. 어픽스로 읽은
             // 값을 넘겨주면 아티팩트의 trial gate가 "이 난이도가 맞을 때만" 좌표를 내준다.
-            services.Data.TrialDifficulty.Current);
+            //
+            // 🔑 **리포트가 들고 온 값**을 쓴다. 이 람다는 호출 시점에 평가되므로 여기서
+            // `services.Data.TrialDifficulty.Current`를 읽으면 기록 재생에서 **지금 들어가 있는 시련**의 난이도로
+            // 지난 전투를 계산한다 — 위 :227 주석이 이미 그러지 말라고 적어 둔 것을 코드만 어기고 있었다.
+            // 증상은 둘 중 하나로 나온다: 추적기가 비어 있으면 trial gate가 전부 null 비교로 닫혀 티어 칩이
+            // 통째로 사라지고, 다른 난이도가 들어 있으면 그 분포로 계산된 등급이 지난 전투 위에 찍힌다. 같은
+            // 화면의 타겟 라벨은 얼린 값(FrozenTrialLabel)을 쓰므로 "시련 16단계"라고 적힌 옆에서 칩만 달라진다.
+            // 라이브에서는 두 값이 같다(DpsCalculator가 리포트를 만들 때 같은 추적기에서 싣는다) — 그래서
+            // 라이브 동작은 바이트 단위로 동일하고, 바뀌는 것은 기록 재생뿐이다.
+            report.TrialDifficulty);
 
         // nDPS/rDPS 도 같은 방식으로 표시 중인 리포트에서 파생시킨다. 저장 전투는 저장 시점에 얼려 둔 값을
         // 그대로 돌려주고(버프 저장소가 이미 비워졌으므로 재계산이 불가능하다), 라이브는 지금 값을 다시 센다.
@@ -360,11 +369,14 @@ public partial class App : Application
         // Global hotkeys (Ctrl+R reset / Ctrl+H visibility / Ctrl+T click-through). Callbacks fire on
         // the listener thread, so marshal window ops to the dispatcher.
         OverlayController controller = _controller;
+        // ⚠️ 콜백은 전부 **BeginInvoke** 다(동기 Invoke 금지). 리스너 스레드가 UI 스레드를 기다리는 순간,
+        // UI 스레드가 Stop() 의 Join 으로 리스너를 기다리면 교착이다. 캐프처 박스가 포커스를 잡을 때마다
+        // Stop/Start 를 타게 되면서 그 창이 좋은 편이라 닫아 둔다. 전부 '토글 한 번' 이라 동기일 이유가 없다.
         _hotkeys = new HotkeyHandler(services.Props)
         {
             OnReset = () => { _viewingHistory = false; _engine?.RequestReset(); }, // clears saved battles + live data, keeps recognized characters (consumer thread)
-            OnVisibility = () => Dispatcher.Invoke(controller.ToggleVisibility),
-            OnClickThrough = () => Dispatcher.Invoke(() =>
+            OnVisibility = () => Dispatcher.BeginInvoke(controller.ToggleVisibility),
+            OnClickThrough = () => Dispatcher.BeginInvoke(() =>
             {
                 window.SetClickThrough(!window.ClickThrough);
                 _buffOverlay?.SetClickThrough(window.ClickThrough); // buff overlay follows the meter at once
@@ -375,21 +387,36 @@ public partial class App : Application
             }),
             // 허수아비 mode toggle marshals to the UI thread (it raises PropertyChanged that WPF bindings read);
             // the reset only flips a volatile flag on the engine, so it's fine straight off the listener thread.
-            OnDummyToggle = () => Dispatcher.Invoke(() => _settings.DummyTestMode = !_settings.DummyTestMode),
+            OnDummyToggle = () => Dispatcher.BeginInvoke(() => _settings.DummyTestMode = !_settings.DummyTestMode),
             OnDummyReset = () => _engine?.RequestDummyReset(),
             // UI 분리모드 토글. 설정값만 뒤집으면 나머지는 PropertyChanged → ApplySplitUiMode 가 처리한다.
             // ⚠️ 여기서 창을 직접 만지지 마라 — 표시 여부의 주인은 OverlayController 의 폴이다.
-            OnSplitUi = () => Dispatcher.Invoke(() => _settings.SplitUiMode = !_settings.SplitUiMode),
+            OnSplitUi = () => Dispatcher.BeginInvoke(() => _settings.SplitUiMode = !_settings.SplitUiMode),
             // 컨텐츠 관리 창 토글. 트레이 메뉴와 **같은 진입점**(RequestAetherList)으로 흘려보낸다 —
             // ⚠️ 여기서 패널을 직접 Park/Present 하지 마라. 표시 상태의 주인은 App 의 _aetherPanelVisible
             //    이고 토글 로직은 AetherListRequested 핸들러 한 곳뿐이라, 직접 만지면 트레이·오드 배지와
             //    상태가 갈린다.
-            OnAetherList = () => Dispatcher.Invoke(window.RequestAetherList),
+            OnAetherList = () => Dispatcher.BeginInvoke(window.RequestAetherList),
         };
         _hotkeys.Start();
 
         // Right-click overlay -> 설정 / 종료.
         HotkeyHandler hotkeys = _hotkeys;
+
+        // 캐프처 박스가 포커스를 가지는 동안은 전역 핫키를 내린다 — 안 그러면 이미 등록된 조합은
+        // OS 가 가로채 WM_HOTKEY 로 보내버려 박스에 닿지 않고, 대신 그 동작이 실행된다(미터가 숨거나
+        // 패널이 열림). 사용자에겐 "이 조합은 입력이 안 된다"로 보인다.
+        HotkeyCaptureBox.SuspendGlobalHotkeys = suspend =>
+        {
+            if (suspend)
+            {
+                hotkeys.Stop();
+            }
+            else
+            {
+                hotkeys.Start();
+            }
+        };
         MeterSettings settings = _settings;
         MeterColorTheme theme = _theme;
         SkinManager skin = _skin;
@@ -409,6 +436,12 @@ public partial class App : Application
             if (_skillVisibility is { } skills)
             {
                 svm.BundleApplier = new SettingsBundleApplier(services, settings, theme, skin, controller, hotkeys, _buffPresets!, skills, _cooldownVisibility, _cooldownPresets);
+
+                // 가져오기가 실효 게이트까지 닿게 하는 훅 둘. applier 는 카탈로그가 분류한 단계를 요구하는데,
+                // 이 둘의 실체는 App 이 들고 있어서 훅 없이는 못 닿는다 — 없으면 applier 가 조용히 성공하는 게
+                // 아니라 `Unwired` 로 보고하지만, 사용자 눈에는 "가져왔는데 안 먹었다"로 보이는 건 같다.
+                // 버프 픽커 훅은 SettingsViewModel 이 픽커를 소유하므로 그쪽 ApplyImport 에서 건다.
+                svm.BundleApplier.RefreshIntervalChanged = () => _engine!.ReportIntervalMs = settings.EffectiveRefreshIntervalMs;
             }
 
             // 전투가 도는 중에 70키를 밀면 전 행 리페인트 + 스킨 사전 교체 + 전역 핫키 재등록이 한꺼번에
@@ -806,6 +839,14 @@ public partial class App : Application
             _corridorInsideMapId = 0;
         });
 
+        // 설정 파일이 손상/잠김/쓰기불가였다면 그 사실을 **먼저** 말한다. 종전에는 파싱 실패가 기동 중 예외로
+        // 터져 창이 안 뜨는데 프로세스는 뮤텍스를 쥔 채 살아 있어 재실행도 무반응이었다(M-27). 이제 기본값으로
+        // 뜨긴 하는데, 안 알리면 사용자에게는 "설정이 통째로 초기화된" 것으로만 보인다.
+        if (SettingsFaultMessage(services.Props) is { } faultMessage)
+        {
+            viewModel.Status = faultMessage;
+        }
+
         viewModel.Status = "캡처 헬퍼 시작 중…";
         // Launch + connect entirely off the UI thread. EnsureServing registers/triggers the elevated helper
         // and WAITS for its pipe to actually appear: schtasks /run reports success when the task is merely
@@ -1074,6 +1115,21 @@ public partial class App : Application
     // The pipe wait only proves the helper PROCESS started — the WinDivert driver opens later, after the
     // client connects. So a booster/AV that allows the process but blocks the .sys surfaces here (not as
     // a launch failure). Re-route driver-load errors through the same actionable booster guidance.
+    /// <summary>
+    /// 설정 저장소가 정상이 아니면 사용자 문장으로, 정상이면 null. 오너 판정(5·36)의 "알리고 재설치 유도"
+    /// 방향을 이 경로에 얹었다 — 격리된 원본 경로를 같이 알려 주는 것이 핵심이다(그 파일이 사용자 설정의
+    /// 유일한 사본이라 절대 지우지 않는다).
+    /// </summary>
+    private static string? SettingsFaultMessage(PropertyHandler props) => props.Fault switch
+    {
+        SettingsStoreFault.Corrupt => props.QuarantinedFilePath is { } path
+            ? $"설정 파일이 손상되어 기본값으로 시작했습니다. 이전 파일은 {path} 에 보관했습니다."
+            : "설정 파일이 손상되어 기본값으로 시작했습니다.",
+        SettingsStoreFault.Unreadable => "설정 파일을 읽지 못했습니다. 설정을 저장하면 기존 파일을 덮어씁니다.",
+        SettingsStoreFault.NotWritable => "설정을 저장할 수 없습니다(권한/디스크). 지금 바꾼 설정은 다음 실행에 사라집니다.",
+        _ => null,
+    };
+
     private static string CaptureErrorMessage(string raw)
     {
         if (raw.Contains("WinDivert", StringComparison.OrdinalIgnoreCase)

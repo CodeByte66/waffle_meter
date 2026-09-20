@@ -220,4 +220,85 @@ public sealed class HotkeyHandlerTests : IDisposable
         // without ever eating the user's intended second press.
         Assert.InRange(HotkeyHandler.HotkeyRepeatSuppressMs, 34L, 100L);
     }
+
+    /// <summary>
+    /// 🔑 옛 빌드가 써 둔 <b>수식키 단독</b> 조합(예: CTRL + VK_LCONTROL)은 3.1.0 이상에서 거부된다.
+    /// 종전에는 그 칸이 <b>조용히</b> 미지정이 돼서, 업데이트한 사용자는 이유도 모른 채 단축키를 잃었다
+    /// ("컨텐츠관리 팝업창이 여전히 안 되는데" — 3.1.0 실사용자 제보, 2026-09-19).
+    /// 이제 그 사유가 설정 화면에 뜬다.
+    /// </summary>
+    [Fact]
+    public void A_retired_combo_is_reported_so_the_settings_screen_can_say_why()
+    {
+        var props = new PropertyHandler(_temp);
+        props.SetProperty("aetherListHotkey", "modifiers=2,vkCode=162"); // CTRL + VK_LCONTROL — 옛 쓰레기
+
+        var handler = new HotkeyHandler(props);
+
+        Assert.Null(handler.AetherList);                                  // 해제된 것은 맞고
+        Assert.Equal(HotkeyIssue.Retired, handler.AetherListIssue);       // 이유가 남는다
+    }
+
+    /// <summary>기본값으로 되돌아가는 칸도 '사용자가 고른 값은 사라졌다'를 알려야 한다 —
+    /// 안 그러면 "내가 지정한 게 아닌 조합이 걸려 있다"를 설명할 방법이 없다.</summary>
+    [Fact]
+    public void A_retired_combo_is_reported_even_when_a_default_takes_over()
+    {
+        var props = new PropertyHandler(_temp);
+        props.SetProperty("hotkey", "modifiers=2,vkCode=162");
+
+        var handler = new HotkeyHandler(props);
+
+        Assert.Equal(new HotkeyCombo(HotkeyHandler.ModControl, 0x52), handler.Reset); // Ctrl+R 로 폴백
+        Assert.Equal(HotkeyIssue.Retired, handler.ResetIssue);                        // 그래도 알린다
+    }
+
+    [Fact]
+    public void A_healthy_combo_reports_no_issue()
+    {
+        var props = new PropertyHandler(_temp);
+        props.SetProperty("aetherListHotkey", "modifiers=2,vkCode=122"); // Ctrl+F11
+
+        var handler = new HotkeyHandler(props);
+
+        Assert.Equal(new HotkeyCombo(HotkeyHandler.ModControl, 0x7A), handler.AetherList);
+        Assert.Equal(HotkeyIssue.None, handler.AetherListIssue);
+    }
+
+    /// <summary>미지정(사용자가 ✕ 로 지운 칸)은 문제가 아니다 — 경고를 띄우면 안 된다.</summary>
+    [Fact]
+    public void An_explicitly_unassigned_hotkey_is_not_an_issue()
+    {
+        var props = new PropertyHandler(_temp);
+        props.SetProperty("aetherListHotkey", "none");
+
+        var handler = new HotkeyHandler(props);
+
+        Assert.Null(handler.AetherList);
+        Assert.Equal(HotkeyIssue.None, handler.AetherListIssue);
+    }
+
+    /// <summary>한 번도 지정한 적 없는 칸도 문제가 아니다.</summary>
+    [Fact]
+    public void A_never_set_hotkey_is_not_an_issue()
+    {
+        var handler = new HotkeyHandler(new PropertyHandler(_temp));
+
+        Assert.Null(handler.AetherList);
+        Assert.Equal(HotkeyIssue.None, handler.AetherListIssue);
+    }
+
+    /// <summary>은퇴 사유는 사용자가 다시 지정하면 사라진다.</summary>
+    [Fact]
+    public void Reassigning_clears_the_retired_warning()
+    {
+        var props = new PropertyHandler(_temp);
+        props.SetProperty("aetherListHotkey", "modifiers=2,vkCode=162");
+        var handler = new HotkeyHandler(props);
+        Assert.Equal(HotkeyIssue.Retired, handler.AetherListIssue);
+
+        handler.SetAetherList(new HotkeyCombo(HotkeyHandler.ModControl, 0x7A)); // 리스너 미기동 → 등록 없음
+
+        Assert.Equal(HotkeyIssue.None, handler.AetherListIssue);
+    }
 }
