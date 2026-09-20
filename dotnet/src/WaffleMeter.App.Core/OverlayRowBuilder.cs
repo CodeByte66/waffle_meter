@@ -1,4 +1,4 @@
-using WaffleMeter.Data;
+﻿using WaffleMeter.Data;
 
 namespace WaffleMeter.App.Core;
 
@@ -27,7 +27,8 @@ public static class OverlayRowBuilder
 
     // Minimum share of the top dealer's metric a bare actor must have to be a self-recovery candidate, so an
     // incidental low-damage bare entity (pet/NPC) is never mistaken for the local player.
-    private const double SelfRecoveryMinShare = 0.2;
+    // 값은 Data 계층과 공유한다 — 데이터층의 로스터 1:1 본인 복구가 같은 문턱을 쓴다(SelfRecoveryGuards).
+    private const double SelfRecoveryMinShare = SelfRecoveryGuards.MinDamageShare;
 
     // Bug 4: minimum share of the top metric a BARE combat row must reach to be a roster-recovery candidate — a
     // real party member whose 0x3645 name-link was missed (capture began mid-fight / packet lost) is a major
@@ -57,11 +58,6 @@ public static class OverlayRowBuilder
         JobClass? selfJob = null,
         int selfPower = 0,
         IReadOnlyList<User>? authoritativeParty = null,
-        // Opt-in "던전 강제 집계": the caller passes true ONLY when the toggle is on AND the current target is a
-        // classified instanced (원정/초월/성역) boss. It surfaces bare MAJOR dealers (identity packets missed on a
-        // mid-dungeon meter start) as generic placeholders so a mid-start user sees the fight instead of an empty
-        // meter. Safe here because instanced content has no outsiders (and the outsider guard still applies).
-        bool forceInstanceTracking = false,
         // RAW 0x9702 roster (DataManager.PartyRosterIdentities) — a SUPERSET of authoritativeParty, which drops
         // every member whose uid has never been seen. Carries no uid / job / power, so it can only feed the
         // unambiguous 1:1 rescue (tier 2) and the display-cap exemption; never the job-unique match (no job) nor
@@ -147,9 +143,15 @@ public static class OverlayRowBuilder
             // a prior entity that reused that id (observed: 본인 shown as a random "틸놈틸"), which the bare-only
             // filter never reclaimed. The stale-name relaxation is gated on a CONFIRMED roster so that, when the
             // party is unknown, we fall back to the safe bare-only rule (never relabel a genuine stranger).
+            // ⚠️ 파티 문맥은 반드시 `party`(= guardParty)로 묻는다. 종전에는 아래 stale-name 판정 한 줄만 원본
+            // `authoritativeParty`(= 지금의 라이브 파티)를 봤다. 0x9702는 세션당 1~2회라 라이브 로스터는 5분
+            // TTL로 비는데 `rosterConfirmed`는 30분 스냅샷 기준으로 여전히 true여서, 얼린 리포트
+            // (BattleFinished / 기록 재생)에서 이름 있는 파티원 전원이 복구 후보가 됐다 — 본인과 같은 직업인
+            // 파티원 행 하나가 본인 닉네임·색·IsExecutor로 칠해지던 원인. 같은 메서드의 다른 판정·게이트
+            // (외부인 가드, 상한 면제, P3 교정)는 전부 guardParty를 쓴다. 되돌리면 재발한다.
             List<Row> candidates = rawCombat
                 .Where(e => (string.IsNullOrWhiteSpace(e.User?.Nickname)
-                             || (rosterConfirmed && !IsPartyMember(e.User, authoritativeParty)))
+                             || (rosterConfirmed && !IsPartyMember(e.User, party)))
                             && e.User?.Job == knownJob
                             && topMetric > 0 && Metric(e.Info) >= topMetric * SelfRecoveryMinShare)
                 .ToList();
@@ -340,10 +342,6 @@ public static class OverlayRowBuilder
             }
         }
 
-        // Opt-in "던전 강제 집계": on a classified instanced boss (caller-gated), surface bare MAJOR dealers as
-        // generic placeholders so a mid-dungeon meter start (identity packets missed at load) shows the fight
-        // instead of an empty meter. Still barred if a named OUTSIDER is present (defence-in-depth — instanced
-        // content shouldn't have one). The recovered self is excluded from the outsider check.
         // P3 — uid 재사용으로 이전 점유자의 이름이 남은 행 교정. 판별자는 "로스터가 그 uid에 다른 이름을
         // 부여했는가" 하나뿐이다: 0x9702 로스터는 uid↔이름의 권위 있는 출처이므로, 저장된 닉네임이 로스터의
         // 이름과 다르면 그 uid를 쓰던 이전 점유자의 잔재다(실측: 신원이 바뀐 uid 37개 중 17개가 두 이름 사이
@@ -375,10 +373,6 @@ public static class OverlayRowBuilder
             }
         }
 
-        bool showBarePlaceholders = forceInstanceTracking
-            && !HasNamedOutsider(rawCombat, recoveredUid ?? -1, selfId, guardParty);
-        int placeholderN = 0;
-
         // COMBAT rows: keep named rows + the recovered 본인 + a roster-recovered party member (named on a copy);
         // drop other bare rows. Gate on nickname ALONE — never Power (arrives async, would transiently hide known
         // party members) nor Server.
@@ -402,12 +396,6 @@ public static class OverlayRowBuilder
             else if (!string.IsNullOrWhiteSpace(e.User?.Nickname))
             {
                 entries.Add(e);
-            }
-            else if (showBarePlaceholders && topMetric > 0 && Metric(e.Info) >= topMetric * BareMajorMinShare)
-            {
-                User disp = (e.User ?? new User(e.Uid)).Copy();
-                disp.Nickname = $"파티원 {++placeholderN}"; // identity missed on mid-start; enriches in place when it arrives
-                entries.Add(e with { User = disp });
             }
         }
 
@@ -548,21 +536,13 @@ public static class OverlayRowBuilder
             return false;
         }
 
-        var partyUids = new HashSet<int>();
-        var partyIdentities = new HashSet<(string, int)>();
-        foreach (User m in authoritativeParty)
-        {
-            partyUids.Add(m.Id);
-            if (!string.IsNullOrWhiteSpace(m.Nickname))
-            {
-                partyIdentities.Add((m.Nickname!, m.Server));
-            }
-        }
-
-        return rawCombat.Any(e =>
-            e.Uid != candidateUid && e.Uid != selfId && e.Uid != alsoExcludeUid
-            && e.User is { } u && !string.IsNullOrWhiteSpace(u.Nickname)
-            && !partyUids.Contains(e.Uid)
-            && !partyIdentities.Contains((u.Nickname!, u.Server)));
+        // 판정 자체는 Data 계층의 SelfRecoveryGuards 에 있다 — 데이터층의 로스터 1:1 본인 복구
+        // (DpsCalculator.TryRecoverExecutorFromRoster) 가 같은 질문을 하는데, 종전에는 이 가드가 표시층에만
+        // 있어서 화면에서는 거부된 조합이 신원 저장소에는 영구 기록됐다(identity-roster~S2). 한 곳에 둬야
+        // 두 층이 같은 답을 낸다.
+        return SelfRecoveryGuards.HasNamedOutsider(
+            rawCombat.Select(e => (e.Uid, e.User?.Nickname, e.User?.Server ?? 0)).ToList(),
+            authoritativeParty.Select(m => (m.Id, m.Nickname, m.Server)).ToList(),
+            candidateUid, selfId, alsoExcludeUid);
     }
 }

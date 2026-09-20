@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using WaffleMeter.Data;
@@ -7,8 +7,8 @@ using Xunit;
 namespace WaffleMeter.Data.Tests;
 
 /// <summary>
-/// Covers the instanced-content (원정/초월/성역) boss classification that scopes the opt-in "던전 강제 집계"
-/// toggle: ReferenceJson.LoadContentTypes parsing + DataManager.IsInstancedBoss / ContentCategory lookup.
+/// Covers the instanced-content (원정/초월/성역) boss classification that gives the roster rescue its
+/// party-scene proof: ReferenceJson.LoadContentTypes parsing + DataManager.IsInstancedBoss / ContentCategory.
 /// </summary>
 public sealed class ContentTypesTests
 {

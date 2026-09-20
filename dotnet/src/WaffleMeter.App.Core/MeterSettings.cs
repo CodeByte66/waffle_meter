@@ -95,7 +95,6 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _nameFxGauge = ReadBool("nameFx.gauge", true);
         _showJoinPanel = ReadBool("showJoinPanel", true);
         _showPreCombatRoster = ReadBool("showPreCombatRoster", true);
-        _forceInstanceTracking = ReadBool("forceInstanceTracking", false);
         _recordReplay = ReadBool("replay.recordMovement", false);
         _multiMonitorMode = ReadBool("multiMonitorMode", false);
         _taskbarMode = ReadBool("taskbarMode", false);
@@ -327,13 +326,6 @@ public sealed class MeterSettings : INotifyPropertyChanged
     /// nothing is captured and nothing is written to disk. Reads/writes the same key the engine gate uses,
     /// so the toggle IS the feature switch.</summary>
     public bool RecordReplay { get => _recordReplay; set => SetBool(ref _recordReplay, "replay.recordMovement", value); }
-
-    private bool _forceInstanceTracking;
-    /// <summary>Opt-in "던전 강제 집계 (본인/파티 미인식 시)": on a classified instanced (원정/초월/성역) boss,
-    /// surface bare MAJOR dealers as generic placeholders so a mid-dungeon meter start shows the fight rather than
-    /// an empty meter (identity packets 0x3633/0x3645/0x9702 are sent at load and missed on a mid-start). While
-    /// ON, stats upload is suppressed (identities are estimated). Off by default.</summary>
-    public bool ForceInstanceTracking { get => _forceInstanceTracking; set => SetBool(ref _forceInstanceTracking, "forceInstanceTracking", value); }
 
     private bool _showPreCombatRoster;
     /// <summary>Show the party roster as idle (0-DPS) rows before combat starts, so party members appear on

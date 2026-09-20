@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using WaffleMeter.App.Core;
 using Xunit;
 
@@ -110,7 +110,7 @@ public sealed class SettingsKeyCatalogTests
         string[] functional =
         {
             "buffUi.show", "buffUi.presets", "buffUi.hidden", "buffUi.voice",
-            "showJoinPanel", "forceInstanceTracking", "showPreCombatRoster",
+            "showJoinPanel", "showPreCombatRoster",
             "dummy.testMode", "closeAction", "isAutoHide", "taskbarMode",
             "lowSpecMode", "refreshIntervalMs", "replay.recordMovement",
         };

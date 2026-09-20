@@ -24,6 +24,13 @@ public partial class ColorPickerControl : UserControl
     private bool _applying;     // suppress re-entrant emit while applying an external Color
     private bool _editingText;  // suppress text refresh while the user types
 
+    // ---- drag deferral (M-30) ----
+    // A track/square drag is in flight. While it is, the picker updates its own preview on every mouse-move
+    // but does NOT push the value out through <see cref="Color"/>.
+    private bool _dragging;
+    private bool _pendingEmit;      // a deferred move is waiting to be published
+    private string? _pendingFormat; // the last move's format hint (alpha < 1 forces rgba)
+
     public ColorPickerControl()
     {
         InitializeComponent();
@@ -69,6 +76,19 @@ public partial class ColorPickerControl : UserControl
 
     private void Emit(string? formatHint = null)
     {
+        if (_dragging)
+        {
+            // 🔑 M-30. 바인딩 대상(테마·버프 색)은 세터에서 곧바로 settings.properties **파일 전체**를 다시
+            // 쓴다(PropertyHandler.SetProperty -> Save). 그래서 종전에는 채도 사각형을 1초 끄는 동안
+            // 마우스무브 수십~수백 번이 그대로 동기 디스크 쓰기 수십~수백 번이 됐다 — UI 스레드에서.
+            // 팝업 안의 미리보기(칩·커서·그라디언트)는 지금처럼 매 프레임 갱신하고, 값은 마우스를 뗄 때
+            // 한 번만 내보낸다. 최종 색은 같고 쓰기는 드래그당 1회다.
+            _pendingEmit = true;
+            _pendingFormat = formatHint;
+            RefreshAll(updateText: false);
+            return;
+        }
+
         (byte r, byte g, byte b) = HsvToRgb(_h, _s, _v);
         string fmt = formatHint ?? (_a < 1.0 ? "rgba" : _hexPreferred ? "hex" : "rgba");
         string outStr = ColorString.Serialize(r, g, b, _a, preferHex: fmt == "hex");
@@ -79,11 +99,46 @@ public partial class ColorPickerControl : UserControl
         RefreshAll(updateText: false);
     }
 
+    // ---- drag start / end ----
+
+    /// <summary>
+    /// Ends a deferred drag and publishes the value once.
+    /// <para>⚠ Wired to <c>LostMouseCapture</c>, not to mouse-up — <c>ReleaseMouseCapture()</c> raises it too,
+    /// so this is the <b>single</b> exit path. Capture can also be taken away from us (Alt-Tab, the popup
+    /// closing, a modal opening); with mouse-up as the only exit, that would strand the drag's last color in
+    /// memory and it would never be saved.</para>
+    /// </summary>
+    private void OnDragEnded(object sender, MouseEventArgs e)
+    {
+        if (!_dragging)
+        {
+            return;
+        }
+
+        _dragging = false;
+        if (!_pendingEmit)
+        {
+            return;
+        }
+
+        _pendingEmit = false;
+        string? fmt = _pendingFormat;
+        _pendingFormat = null;
+        Emit(fmt);
+    }
+
+    /// <summary>
+    /// ⚠ Fail-open: <c>CaptureMouse()</c> returns false when something else already holds capture. Deferring
+    /// in that case would leave <c>_dragging</c> stuck true forever — the picker would silently stop saving,
+    /// with no symptom until restart. Without capture we simply emit per move, exactly as before.
+    /// </summary>
+    private static bool BeginDrag(UIElement surface) => surface.CaptureMouse();
+
     // ---- saturation / value square ----
 
     private void OnSvDown(object sender, MouseButtonEventArgs e)
     {
-        SvSquare.CaptureMouse();
+        _dragging = BeginDrag(SvSquare);
         SetSvFrom(e.GetPosition(SvSquare));
     }
 
@@ -114,7 +169,7 @@ public partial class ColorPickerControl : UserControl
 
     private void OnHueDown(object sender, MouseButtonEventArgs e)
     {
-        HueTrack.CaptureMouse();
+        _dragging = BeginDrag(HueTrack);
         SetHueFrom(e.GetPosition(HueTrack).X);
     }
 
@@ -139,7 +194,7 @@ public partial class ColorPickerControl : UserControl
 
     private void OnAlphaDown(object sender, MouseButtonEventArgs e)
     {
-        AlphaTrack.CaptureMouse();
+        _dragging = BeginDrag(AlphaTrack);
         SetAlphaFrom(e.GetPosition(AlphaTrack).X);
     }
 

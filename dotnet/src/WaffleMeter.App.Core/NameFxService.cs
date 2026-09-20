@@ -75,6 +75,10 @@ public sealed class NameFxService : IDisposable
     private long _nextArtifactMs;
     private bool _usingLocalFile;
 
+    /// <summary>The server published a document shape this build cannot read, so the poll is parked.
+    /// <para>Written on the worker thread, cleared from the UI thread by the manual refresh — hence volatile.</para></summary>
+    private volatile bool _schemaTooNew;
+
     /// <summary>Raised whenever the roster is replaced, including the load from disk in the constructor.
     /// <para>⚠ Raised on the worker thread. The only consumer that matters lives on the UI thread and clears a
     /// non-concurrent dictionary, so whoever subscribes must marshal.</para></summary>
@@ -174,6 +178,9 @@ public sealed class NameFxService : IDisposable
         }
 
         _lastManualMs = now;
+        // 상위 스키마로 접어둔 폴링을 한 번 풀어준다 — 서버가 롤백했을 수 있고, 그 확인 비용은 요청 1회다.
+        // 여전히 상위면 아래에서 곧바로 다시 접힌다.
+        _schemaTooNew = false;
         Interlocked.Exchange(ref _nextArtifactMs, 0);
         _wake.Set();
         return true;
@@ -197,7 +204,7 @@ public sealed class NameFxService : IDisposable
         {
             _wake.Reset();
 
-            if (_clock() >= Interlocked.Read(ref _nextArtifactMs))
+            if (!_schemaTooNew && _clock() >= Interlocked.Read(ref _nextArtifactMs))
             {
                 TryRefresh(); // re-arms the schedule itself
             }
@@ -224,7 +231,17 @@ public sealed class NameFxService : IDisposable
             if (manifest.SchemaVersion > NameFxRoster.MaxSchemaVersion)
             {
                 // A newer document shape: keep serving the cached one rather than guessing at its meaning.
-                Fail($"unsupported_schema_{manifest.SchemaVersion}");
+                //
+                // 🔑 판정 38. 이건 <b>일시적 실패가 아니다</b>. 서버가 문서 모양을 올린 것이고 그 번호는
+                // 내려오지 않는다. 종전에는 Fail() 로 떨어뜨렸는데, Fail 의 백오프는 정상 주기에서 멈추므로
+                // 결과가 "한 시간마다 영원히 같은 매니페스트를 받아 같은 이유로 버린다"였다 — 고칠 방법은
+                // 미터 업데이트뿐이고 그건 어차피 프로세스 재시작을 뜻한다. 그래서 폴링 자체를 접는다.
+                // 캐시된 로스터는 계속 그린다(장식이 사라지는 것보다 옛 목록이 낫다).
+                // 탈출구는 설정의 수동 갱신 버튼 하나 — 그것만 이 중단을 풀어준다.
+                _schemaTooNew = true;
+                _failures++;
+                _lastError = $"unsupported_schema_{manifest.SchemaVersion}";
+                Interlocked.Exchange(ref _nextArtifactMs, long.MaxValue);
                 return;
             }
 

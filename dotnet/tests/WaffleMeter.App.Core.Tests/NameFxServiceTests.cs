@@ -78,6 +78,52 @@ public sealed class NameFxServiceTests : IDisposable
         Assert.Null(props.GetProperty("namefx.artifactId"));
     }
 
+    /// <summary>
+    /// 🔑 판정 38. 상위 스키마는 되돌아오지 않는 상태다 — 재시도해도 같은 매니페스트를 같은 이유로 버린다.
+    /// 종전에는 <c>Fail()</c> 경로라 백오프가 정상 주기(1시간)에서 멈췄고, 결과가 "영원히 한 시간마다
+    /// 한 번씩 헛요청"이었다.
+    /// </summary>
+    [Fact]
+    public void A_document_this_build_cannot_read_parks_the_poll_instead_of_retrying_forever()
+    {
+        byte[] gzip = GzipRoster("""{"schemaVersion":2,"entries":[]}""");
+        var api = FakeApi(gzip, Sha256Hex(gzip), "cafe0123", schemaVersion: 2);
+        var props = new PropertyHandler(_dir);
+        long now = 1_000_000;
+
+        using var service = new NameFxService(api, props, KnownEffect, KnownGauge, clock: () => now, startWorker: false);
+        service.TryRefresh();
+
+        Assert.Equal(1, api.ManifestCalls);
+        // 다음 확인 시각이 정상 주기 안에 있으면, 워커는 한 시간 뒤 같은 짓을 또 한다.
+        Assert.True(
+            service.NextArtifactCheckAtMs - now > (long)TimeSpan.FromDays(365).TotalMilliseconds,
+            $"폴링이 접히지 않았다: {service.NextArtifactCheckAtMs - now}ms 뒤 재시도 예정");
+    }
+
+    /// <summary>탈출구는 수동 갱신 하나 — 서버가 롤백하면 버튼 한 번으로 다시 붙는다.</summary>
+    [Fact]
+    public void The_manual_refresh_is_the_one_way_out_of_a_parked_poll()
+    {
+        byte[] gzip = GzipRoster("""{"schemaVersion":1,"entries":[{"h":"AAAA","e":"syrup","k":"supporter"}]}""");
+        var api = FakeApi(gzip, Sha256Hex(gzip), "cafe0123", schemaVersion: 2);
+        var props = new PropertyHandler(_dir);
+        long now = 1_000_000;
+
+        using var service = new NameFxService(api, props, KnownEffect, KnownGauge, clock: () => now, startWorker: false);
+        service.TryRefresh();
+        Assert.Equal(0, service.Roster.Count);
+
+        now += 61_000; // 쿨다운 밖
+        api.SchemaVersion = 1; // 서버 롤백
+        Assert.True(service.RequestManualRefresh());
+        Assert.True(service.NextArtifactCheckAtMs <= now, "수동 갱신이 접힌 폴링을 풀지 못했다");
+
+        service.TryRefresh();
+        Assert.Equal(1, service.Roster.Count);
+        Assert.Null(service.Status().LastError);
+    }
+
     [Fact]
     public void An_unchanged_artifact_costs_no_download()
     {
@@ -408,8 +454,17 @@ public sealed class NameFxServiceTests : IDisposable
 
     private sealed class FakeNameFxApi(byte[] gzip, string sha, string artifactId, int schemaVersion, Action? onDownload) : INameFxApi
     {
-        public NameFxManifestResponse GetNameFxManifest() =>
-            new(true, artifactId, schemaVersion, $"/api/v1/supporters/artifact/{artifactId}.json", gzip.Length, sha);
+        /// <summary>Settable so a test can act out a server rollback (schema up, then back down).</summary>
+        public int SchemaVersion { get; set; } = schemaVersion;
+
+        /// <summary>Manifest requests served. The parked-poll contract is about this number not growing.</summary>
+        public int ManifestCalls { get; private set; }
+
+        public NameFxManifestResponse GetNameFxManifest()
+        {
+            ManifestCalls++;
+            return new(true, artifactId, SchemaVersion, $"/api/v1/supporters/artifact/{artifactId}.json", gzip.Length, sha);
+        }
 
         public StatsBinaryResponse GetNameFxArtifactGzip(string path)
         {

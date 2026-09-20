@@ -1,4 +1,4 @@
-using WaffleMeter.App.Core;
+﻿using WaffleMeter.App.Core;
 using WaffleMeter.Data;
 using Xunit;
 
@@ -387,67 +387,6 @@ public sealed class OverlayRowBuilderTests
 
         Assert.Single(rows);                                          // only the named 다즈비
         Assert.DoesNotContain(rows, r => r.Uid == 4162 || r.Uid == 7777);
-    }
-
-    [Fact]
-    public void Force_instance_tracking_surfaces_bare_major_dealers_as_placeholders()
-    {
-        // Mid-dungeon start on a classified instanced boss: identity packets missed → all combatants bare. With the
-        // opt-in toggle, bare MAJORS show as placeholders instead of an empty meter; a bare TRACE row stays hidden.
-        var report = new DpsReport();
-        report.Contributors.Add(new User(100)); report.Information[100] = new DpsInformation(6000, 600, 30, 10);
-        report.Contributors.Add(new User(200)); report.Information[200] = new DpsInformation(5000, 500, 25, 8);
-        report.Contributors.Add(new User(300)); report.Information[300] = new DpsInformation(100, 10, 1, 0); // trace
-
-        IReadOnlyList<OverlayRowBuilder.Row> off = OverlayRowBuilder.Build(report, [], 0, true, false, out _);
-        Assert.Empty(off); // toggle OFF → bare rows hidden (unchanged default)
-
-        IReadOnlyList<OverlayRowBuilder.Row> on = OverlayRowBuilder.Build(
-            report, [], 0, true, false, out bool hasCombat, forceInstanceTracking: true);
-        Assert.Equal(2, on.Count);                                  // two majors shown; the trace stays hidden
-        Assert.All(on, r => Assert.StartsWith("파티원", r.User!.Nickname));
-        Assert.DoesNotContain(on, r => r.Uid == 300);
-        Assert.True(hasCombat);
-    }
-
-    [Fact]
-    public void Force_instance_tracking_is_inert_in_a_normally_progressed_dungeon()
-    {
-        // A dungeon played normally (meter running from the start → every dealer recognized): with the toggle
-        // ON there are NO bare rows, so the placeholder branch never fires — the displayed rows are byte-for-byte
-        // identical to the toggle OFF, and no "파티원" placeholder is ever injected.
-        var report = new DpsReport();
-        report.Contributors.Add(new User(1, "가", 2003)); report.Information[1] = new DpsInformation(6000, 600, 30, 10);
-        report.Contributors.Add(new User(2, "나", 2003)); report.Information[2] = new DpsInformation(5000, 500, 25, 8);
-        report.Contributors.Add(new User(3, "다", 2003) { IsExecutor = true }); report.Information[3] = new DpsInformation(4000, 400, 20, 7);
-        var party = new[] { new User(1, "가", 2003), new User(2, "나", 2003), new User(3, "다", 2003) };
-
-        IReadOnlyList<OverlayRowBuilder.Row> off = OverlayRowBuilder.Build(
-            report, [], 3, true, false, out _, authoritativeParty: party);
-        IReadOnlyList<OverlayRowBuilder.Row> on = OverlayRowBuilder.Build(
-            report, [], 3, true, false, out _, authoritativeParty: party, forceInstanceTracking: true);
-
-        Assert.Equal(
-            off.Select(r => (r.Uid, r.User!.Nickname, r.IsSelf)),
-            on.Select(r => (r.Uid, r.User!.Nickname, r.IsSelf)));      // identical rows/names/self-flag
-        Assert.DoesNotContain(on, r => r.User!.Nickname!.StartsWith("파티원", System.StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void Force_instance_tracking_is_barred_by_a_named_outsider()
-    {
-        // Defence-in-depth: if a NAMED non-party outsider is present (shouldn't happen in instanced content), the
-        // placeholder bypass is suppressed so a stranger's presence never turns bare rows into fake "파티원".
-        var report = new DpsReport();
-        report.Contributors.Add(new User(100)); report.Information[100] = new DpsInformation(6000, 600, 30, 10); // bare major
-        report.Contributors.Add(new User(9, "낯선이", 1)); report.Information[9] = new DpsInformation(5000, 500, 25, 8); // named outsider
-        var party = new[] { new User(1, "파티A", 2), new User(2, "파티B", 2) };
-
-        IReadOnlyList<OverlayRowBuilder.Row> rows = OverlayRowBuilder.Build(
-            report, [], 0, true, false, out _, authoritativeParty: party, forceInstanceTracking: true);
-
-        Assert.DoesNotContain(rows, r => r.Uid == 100); // bare major NOT surfaced (outsider present)
-        Assert.Contains(rows, r => r.Uid == 9);         // the named outsider still shows (it is named)
     }
 
     [Fact]

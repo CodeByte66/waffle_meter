@@ -143,7 +143,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     {
         if (server <= 0 || string.IsNullOrWhiteSpace(nickname))
         {
-            return null; // placeholder rows (던전 강제 집계) have no identity to grant against
+            return null; // 프리뷰/무명 행은 붙일 신원이 없다
         }
 
         var key = (server, nickname);
@@ -817,8 +817,6 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
             selfNickname: _selfNickname, selfServer: _selfServer, selfJob: _selfJob, selfPower: _selfPower,
             authoritativeParty: _authoritativeParty,
             metricOverride: metricOverride,
-            // Opt-in "던전 강제 집계": only on a classified instanced (원정/초월/성역) boss (stamped live into the report).
-            forceInstanceTracking: _settings.ForceInstanceTracking && report.TargetInstanced,
             rosterIdentities: _authoritativePartyIdentities,
             memberProfiles: _memberProfiles,
             allowRosterResurface: _allowRosterResurface);

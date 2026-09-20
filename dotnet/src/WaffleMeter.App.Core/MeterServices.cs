@@ -240,6 +240,9 @@ public sealed class MeterServices
 
         OfficialLookup = officialLookup ?? new OfficialCharacterLookup();
         Data = new DataManager { OfficialLookup = OfficialLookup };
+        // 전투 기록을 디스크에 남긴다 — 종전에는 메모리 리스트 하나라, 리플레이 파일은 남는데 그 전투의
+        // 기록 행은 없는 상태가 재시작마다 나왔다. 실패는 스토어가 삼킨다(영속화는 편의지 집계의 전제가 아니다).
+        Data.EnableBattleHistoryPersistence(Path.Combine(props.AppDirectory(), "battle-history"));
 
         // Pipeline (single consumer owns these; the calculator's flush resets framing + ordering of
         // every live stream). The debug logger is the processor sink so a diagnostic session captures
@@ -414,8 +417,10 @@ public sealed class MeterServices
         Data.LoadMobs(ReferenceJson.LoadMobs(Path.Combine(jsonDir, "mobs.json")));
         Data.LoadSkills(ReferenceJson.LoadSkills(Path.Combine(jsonDir, "skills.json")));
 
-        // Instanced-content (원정/초월/성역) boss classification for the opt-in "던전 강제 집계" toggle. Optional:
-        // an older asset bundle without the file simply leaves the toggle inert (no boss is classified).
+        // Instanced-content (원정/초월/성역) boss classification. Its one consumer is the roster rescue's
+        // party-scene proof (<c>OverlayRowBuilder</c>: an instance has no outsiders, so a bare row there is a
+        // party member). Optional: an older asset bundle without the file classifies no boss, which only costs
+        // that rescue tier -- nothing else reads it.
         string contentTypes = Path.Combine(jsonDir, "content-types.json");
         if (File.Exists(contentTypes))
         {
