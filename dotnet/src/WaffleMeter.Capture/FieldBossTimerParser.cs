@@ -7,7 +7,10 @@ namespace WaffleMeter.Capture;
 /// A record for a boss that is currently ALIVE carries a 12-byte position block between the code and the
 /// timestamp, so the scan is resynchronising rather than fixed-stride.</para>
 /// <para><b>The table is map-scoped</b> — the server only sends the bosses of the map the character is in,
-/// which is what makes the "현재 맵 기준" alarm work without any separate map detection. The header's map id
+/// which is what lets the alarm work without any separate map detection. ⚠️ 그래서 알림의 범위는
+/// <b>"현재 맵"이 아니라 "미터를 켜고 방문했던 맵"</b>이다: 한 번 받은 시각표는 앱을 끌 때까지 남으므로 다른
+/// 지역·던전에 있어도 그 보스 알림이 울린다. 파서가 맵 단위로 받는 것과 알림이 맵 단위로 우는 것은 다른
+/// 이야기이고, 종전 문구("현재 맵 기준")는 그 둘을 뭉개고 있었다. The header's map id
 /// picks the region, and only that region's codes are accepted; that is what lets us take codes as small as
 /// 2001 (어비스) without matching noise. Codes are NOT uniformly mob codes: 베르테론/알트가르드/어비스 carry a
 /// per-map slot code (맵id×100+순번) which <see cref="FieldBossCatalog"/> maps back to the mob code, while

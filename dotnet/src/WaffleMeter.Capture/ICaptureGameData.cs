@@ -74,7 +74,9 @@ public interface ICaptureGameData
     /// <summary>버프 제거 브로드캐스트(0x382C). <paramref name="slots"/> = 그 대상에서 사라진 버프 슬롯들.
     /// 슬롯 매칭이라 "이미 만료된 쪽인지 살아 있는 쪽인지" 모호함이 없다 — 코드만 주는 0x921A는 같은 코드가
     /// 겹칠 때 어느 인스턴스를 닫는 신호인지 원리적으로 구분할 수 없어 제거 신호로 쓰지 않는다. 기본 no-op.</summary>
-    void RemoveBuffSlots(int entityId, IReadOnlyList<int> slots) { }
+    /// <summary><paramref name="arrivedAt"/> = 해제 브로드캐스트가 도착한 시각. 집계 저장소의 열린 구간을
+    /// 그 지점에서 끊는 데 쓰므로 필수다 — 이게 없으면 "언제 끝났는지"를 모르는 채 "끝났다"만 알게 된다.</summary>
+    void RemoveBuffSlots(int entityId, IReadOnlyList<int> slots, long arrivedAt) { }
 
     /// <summary>캐릭터 스탯 사전 한 프레임(0x364A 변경분 / 0x3649 전체 스냅샷).
     /// <paramref name="entityId"/> 0 = 전체 스냅샷이라 패킷이 대상을 안 실었다는 뜻이고, 그때는 "지금의 본인"이다.
@@ -233,6 +235,26 @@ public interface ICaptureGameData
     /// <summary>0x9702 로스터가 실어 온 (닉네임, 서버, 직업코드, 전투력). 전투 전 파티 프리뷰의 직업 아이콘·
     /// 전투력을 채우는 display-only 보조 소스. 기본 no-op(캡처 전용/구현 안 한 컨텍스트).</summary>
     void SavePartyRosterJobPower(IReadOnlyList<(string Nickname, int Server, int JobCode, int Power)> members) { }
+
+    /// <summary>0x9702 헤더의 <c>_limit_member</c>(방 정원). 성역=10 · 파티=5 로 실측된다.
+    /// <para>🔑 이것이 <c>PartyRosterSize</c> 의 정본이다 — 통계웹 스키마가 그 필드를 처음부터 "로스터 정원"
+    /// 으로 정의하고 있고, 파싱된 멤버 수를 보내던 종전 동작이 계약을 벗어난 쪽이었다.</para></summary>
+    void SavePartyRosterCapacity(int limitMember) { }
+
+    /// <summary>0x9702 로스터가 실어 온 (닉네임, 서버, 로스터 key). 제거 패킷(0x9622)이 <b>key 하나만</b>
+    /// 싣기 때문에, 그 key 로 사람을 지목하려면 스냅샷에서 먼저 받아 둬야 한다.
+    /// <para>⚠️ 이 key 는 전투 패킷의 엔티티 uid 가 아니다 — 세션이 바뀌어도 같은 값인 캐릭터 고정 id 이고
+    /// 두 공간은 겹치지 않는다(코퍼스 대조 0/8). 신원 결합에 쓰지 마라.</para></summary>
+    void SavePartyRosterKeys(IReadOnlyList<(string Nickname, int Server, int Key)> keys) { }
+
+    /// <summary>0x971F — 멤버 한 명의 로스터 레코드. 0x9702 스냅샷이 <b>부분</b>으로 오는 것이 정상이라
+    /// (코퍼스 45%), 이 증분을 받아야 로스터가 정원만큼 유지된다. 실린 슬롯이 권위다(표본 85건에서 슬롯이
+    /// 달라진 사례 0건). 추가/갱신을 구분하지 않고 그 슬롯에 upsert 한다.</summary>
+    void UpdatePartyMember(string nickname, int server, int slot, int key) { }
+
+    /// <summary>0x9622 — 멤버 제거. 로스터 key 로만 지운다(이름으로 지우면 동명이인·잘린 닉에서 엉뚱한
+    /// 사람이 빠진다).</summary>
+    void RemovePartyMemberByKey(int key) { }
 }
 
 /// <summary>No catalog / empty runtime map; all writes no-op (default capture-only context).</summary>

@@ -117,6 +117,14 @@ public sealed class StreamProcessor
     private const int InstanceStartKey = 0x18 | (0x97 << 8);   // 0x9718
     private const int ExitPartyKey = 0x1D | (0x97 << 8);       // 0x971D
     private const int PartyRosterKey = 0x02 | (0x97 << 8);     // 0x9702 — full party/raid roster snapshot
+    // 0x971F / 0x9622 — 로스터 **증분**. 0x9702 스냅샷은 부분 로스터가 정상이라(코퍼스 실측 45%가 부분),
+    // 스냅샷 하나만 보고 정원을 세면 10인 공대가 수시로 8~9로 읽힌다. 이 둘을 같이 받아야 로스터가
+    // 상태로 유지된다.
+    //   0x971F = 멤버 한 명 레코드(0x9702 멤버와 **같은 11바이트 헤더**). 표본 85건 중 83건이 이미 있는
+    //            멤버의 갱신이고 슬롯이 바뀐 사례는 0건 — 즉 여기 실린 슬롯이 권위다.
+    //   0x9622 = 제거. key 하나만 싣는다(표본 18건 중 13건이 '직전 스냅샷에 있다가 이후 사라짐').
+    private const int PartyMemberUpdateKey = 0x1F | (0x97 << 8);  // 0x971F
+    private const int PartyMemberRemoveKey = 0x22 | (0x96 << 8);  // 0x9622
     // 0x9200 — 파티/공대 멤버 상세 프로필. 0x9702 로스터와 달리 레코드마다 엔티티 uid를 함께 싣는 유일한
     // 브로드캐스트라, 본인 로드 패킷(0x3633)이 오지 않은 재인스턴스에서 본인을 새 uid에 묶는 근거가 된다.
     private const int MemberProfileKey = 0x00 | (0x92 << 8);   // 0x9200
@@ -157,6 +165,10 @@ public sealed class StreamProcessor
     private static readonly HashSet<int> IdentityReplayOpcodes = new()
     {
         OwnNicknameKey, OtherNicknameKey, OwnCombatPowerKey, SummonKey, PartyRosterKey, MemberProfileKey,
+        // 로스터 증분도 같은 이유로 들어온다 — 스냅샷과 같은 커넥션을 타고, 둘 다 멱등적이다
+        // (갱신은 그 슬롯을 덮어쓰고, 제거는 이미 없는 key 면 아무것도 안 한다). 증분만 빠지면
+        // 중복 스트림 환경에서 로스터가 부분 스냅샷에서 멈춰 버린다.
+        PartyMemberUpdateKey, PartyMemberRemoveKey,
         AetherKeyA, AetherKeyB,
         // The 어비스 아티팩트 broadcast joins for the same reason the 0x610x family did: it is an ABSOLUTE state
         // (who holds each artifact right now), so replaying it cannot inflate anything, and it arrives at login
@@ -189,6 +201,8 @@ public sealed class StreamProcessor
         [Key(0x18, 0x97)] = "InstanceStart",
         [Key(0x1D, 0x97)] = "ExitParty",
         [Key(0x02, 0x97)] = "PartyRoster",
+        [Key(0x1F, 0x97)] = "PartyMemberUpdate",
+        [Key(0x22, 0x96)] = "PartyMemberRemove",
         [MemberProfileKey] = "MemberProfile",
         [AetherKeyA] = "AetherStatus",
         [AetherKeyB] = "AetherStatus",
@@ -378,7 +392,7 @@ public sealed class StreamProcessor
                     ParseEntityDeath(packet, lengthInfo, extraFlag, arrivedAt);
                     break;
                 case BuffRemoveKey:
-                    ParseBuffRemove(packet, lengthInfo, extraFlag);
+                    ParseBuffRemove(packet, lengthInfo, extraFlag, arrivedAt);
                     break;
                 case BuffApplyKey:
                 case BuffApply2Key:
@@ -411,6 +425,12 @@ public sealed class StreamProcessor
                 case PartyRosterKey:
                     ParsePartyRoster(packet, lengthInfo, extraFlag);
                     break;
+                case PartyMemberUpdateKey:
+                    ParsePartyMemberUpdate(packet, lengthInfo, extraFlag);
+                    break;
+                case PartyMemberRemoveKey:
+                    ParsePartyMemberRemove(packet, lengthInfo, extraFlag);
+                    break;
                 case MemberProfileKey:
                     ParseMemberProfile(packet, lengthInfo, extraFlag);
                     break;
@@ -440,6 +460,15 @@ public sealed class StreamProcessor
         }
     }
 
+    // LZ4 해제 버퍼 상한. "이보다 큰 번들은 없다"는 프로토콜 상한이 아니라 <b>할당 폭주 차단선</b>이다 —
+    // originLength는 와이어가 주는 u32라, 한 프레임만 손상돼도 그 값이 그대로 힙 할당 크기가 된다.
+    // 실측(저장소 패킷 로그 2세션, 압축 프레임 797건 전수 해제, 실패 0건):
+    //   2026-07-27  427건 — originLength 최대 65,414B(압축 25,610B, 2.55배), p99 8,000B, 중앙값 634B
+    //   2026-08-08  370건 — originLength 최대  3,648B(압축  1,687B, 2.16배), p99 2,219B, 중앙값 625B
+    // 최대치가 64KiB 바로 아래에 몰리는 건 서버가 LZ4 블록을 그 단위로 끊는 것으로 보인다.
+    // 1MiB = 실측 최대의 16배. 넘으면 프레임을 버리고 ParserError로 흔적을 남긴다(종전엔 조용히 죽었다).
+    private const int MaxLz4OriginLength = 1 << 20;
+
     /// <summary>LZ4 프레임을 풀어 안쪽 패킷들을 다시 <see cref="OnPacketReceived"/>로 넣는다.
     /// <paramref name="identityOnly"/>는 <b>반드시</b> 그대로 전파해야 한다 — 압축 분기가 identityOnly 게이트보다
     /// 앞에 있어서(위 :270 부근), 전파하지 않으면 억제된 중복 게임 스트림의 압축 프레임 안쪽이 전부 처리된다.
@@ -455,11 +484,38 @@ public sealed class StreamProcessor
                 offset += 1;
             }
 
+            if (offset + 4 > packet.Length)
+            {
+                _sink.ParserError("decompress", "truncated_origin_length");
+                return;
+            }
+
+            // 여기서 와이어의 u32를 검증 없이 그대로 new byte[...]에 넘겼다. 손상된 프레임의 0xFFFFFFFF 하나로
+            // 4GB 할당을 시도하고 단일 소비자 스레드가 수 초 멈춘다(예외는 catch에 삼켜져 흔적도 없었다).
+            // ParseUInt32Le는 signed int를 돌려주므로 0xFFFFFFFF는 -1로, 0x7FFFFFFF는 2.1GB 할당 시도로 온다 —
+            // 음수/0도 같이 막아야 한다(new byte[-1] = OverflowException, 0은 무의미한 빈 해제).
+            // ⚠️ 이 검사를 되돌리면 그 정지가 그대로 되살아난다.
             int originLength = PacketPrimitives.ParseUInt32Le(packet, offset);
+            if (originLength <= 0 || originLength > MaxLz4OriginLength)
+            {
+                _sink.ParserError("decompress", "bad_origin_length");
+                return;
+            }
+
             offset += 4;
 
             var restored = new byte[originLength];
-            LZ4Codec.Decode(packet.AsSpan(offset, packet.Length - offset), restored.AsSpan(0, originLength));
+            int written = LZ4Codec.Decode(packet.AsSpan(offset, packet.Length - offset), restored.AsSpan(0, originLength));
+
+            // Decode의 반환값(실제 쓴 바이트)을 여태 보지 않았다. 음수 = 해제 실패, originLength 미만 = 부분 해제인데
+            // 그대로 진행하면 뒤쪽의 0 바이트를 inner 루프가 먹는다 — 길이 varint 0을 만나 1바이트씩 헛도는 루프가
+            // 되고, 최악의 경우 반쯤 풀린 쓰레기를 정상 패킷으로 파싱한다. 코퍼스 실측 797프레임은 전부 정확히
+            // originLength만큼 풀리므로(부분 해제 0건), 다르면 그 프레임은 신뢰하지 않고 버린다.
+            if (written != originLength)
+            {
+                _sink.ParserError("decompress", "lz4_short_decode");
+                return;
+            }
 
             int innerOffset = 0;
             while (innerOffset < restored.Length)
@@ -489,9 +545,43 @@ public sealed class StreamProcessor
         }
     }
 
+    // 단일 타격 피해 상한. "이만큼 큰 피해는 불가능하다"는 밸런스 상한이 아니라 <b>센티널/쓰레기 프레임
+    // 차단선</b>이다 — 피해 필드가 0xFFFFFFFF인 프레임(DoT 적용/만료 마커 등)은 varint로 약 21.47억으로
+    // 파싱되고 프레임을 정확히 소진하므로 길이 검사로는 걸리지 않는다. 한 건만 새도 그 전투의 총딜·비중·DPS가
+    // 통째로 망가진다. ⚠️ 그래서 <b>제거가 아니라 상향</b>이다 — 지우면 21억짜리가 그대로 들어온다.
+    // 1천만 → 1억(2026-09-18, 오너 확정). 실측(저장소 패킷 로그 2세션):
+    //   2026-07-27  저장된 피해 2,556건, 최대 단일 타격   401,792
+    //   2026-08-08  저장된 피해 2,649건, 최대 단일 타격 1,104,089
+    //   두 세션 모두 damage_guard 발동 0건. 6주 만에 최대값이 2.7배 올라 종전 1천만은 여유가 9.1배뿐이었다.
+    // 1억 = 현행 실측 최대의 90배이면서 센티널 21.47억보다는 21배 아래. direct/DoT 두 호출부가 갈라지지
+    // 않도록 반드시 이 상수 하나만 쓴다(종전엔 두 곳에 리터럴 10000000이 따로 박혀 있었다).
+    private const int MaxPlausibleDamage = 100_000_000;
+
     /// <summary>Direct damage (opcode 0x3804). Verbatim port of Kotlin parsingDamage (593-712).</summary>
     private void ParsingDamage(byte[] packet, bool extraFlag, long arrivedAt)
     {
+        // 🔑 이 줄을 "주석도 테스트도 없는 죽은 코드"로 보고 지우지 마라 — **힐을 딜로 계상하는 것을 막는
+        // 유일한 방어선**이다. (2026-09-18 코퍼스 실측으로 확정. 그 전까지 근거가 한 줄도 없어 이미 한 번
+        // 제거 후보로 올라왔었다.)
+        //
+        // packet[0] 은 타입 플래그가 아니라 **길이 varint 의 첫 바이트**다(이 메서드가 받는 packet 은 페이로드가
+        // 아니라 프레임 전체다 — OnPacketReceived 를 보라). 0x20 = 선언 길이 32 = 실제 29바이트 프레임이고,
+        // 실측 분포도 0x1E·0x1F·0x20·0x21… 로 연속이다. 그래서 이 규칙의 실질은 "29바이트 직접피해 프레임을
+        // 전부 버려라"이다.
+        //
+        // 그 길이대에 무엇이 있는지 (패킷 로그 2세션, 압축 프레임 LZ4 해제 포함):
+        //   · 대다수(0727 1,133 / 0808 1,072)는 switchVariable == 0 → 아래 tempV switch 의 `_ => -1` 에서
+        //     어차피 return 된다. 가드가 없어도 한 건도 집계되지 않는다. 타격마다 따라붙는 이펙트/적중
+        //     알림 동반 프레임으로 보이고, 특수피해 영역이 없어 [unknown][damage] 위치를 잡을 수 없다.
+        //   · 나머지 소수(switch & 0x0F == 4)가 **회복**이다. 0808 세션에서 actor != target 인 71건:
+        //     17800001 찬란한 가호 55건(128,303) · 17120010 쾌유의 광휘 7건(44,168) ·
+        //     17100240 치유의 빛 2건(6,559) · 코드 0/type 9 7건(4,388). 전부 치유성 회복이고
+        //     actor == target 인 139건은 생명의 비약 같은 자힐이라 아래 actor==target 가드가 따로 잡는다.
+        //     → 이 줄을 지웠다면 힐러 uid 하나에 179,030 의 **유령 딜**이 붙었을 것이다.
+        //
+        // 즉 "피해 프레임의 14.7~20.5% 를 버린다"는 개수는 맞지만 **피해량으로는 +0.0%** 다 — 개수로 영향을
+        // 추정하면 안 되는 사례. 언젠가 힐량 집계를 붙인다면 이 프레임이 그 유일한 소스다(회생의 계약이
+        // SaveRevivalHeal 로 가는 것과 같은 모양으로 라우팅하면 된다).
         if (packet[0] == 0x20)
         {
             return;
@@ -627,7 +717,7 @@ public sealed class StreamProcessor
             return;
         }
 
-        if (pdp.Damage >= 10000000)
+        if (pdp.Damage >= MaxPlausibleDamage)
         {
             _sink.Damage("direct", pdp, false, "damage_guard", null);
             return;
@@ -694,7 +784,8 @@ public sealed class StreamProcessor
 
         // Same sanity cap as the direct-damage path: reject the sentinel/garbage frames (damage field
         // 0xFFFFFFFF → parses to a ~2.1B varint) that the removed flag gate no longer filters out.
-        if (pdp.Damage >= 10000000)
+        // Shares MaxPlausibleDamage with ParsingDamage on purpose — see the constant's note.
+        if (pdp.Damage >= MaxPlausibleDamage)
         {
             _sink.Damage("dot", pdp, false, "damage_guard", null);
             return;
@@ -1029,9 +1120,12 @@ public sealed class StreamProcessor
         }
 
         var members = new List<(string Nickname, int Server, int Slot)>();
+        var keys = new List<(string Nickname, int Server, int Key)>();                    // 제거(0x9622)가 key 로만 지명한다
         var jobPower = new List<(string Nickname, int Server, int JobCode, int Power)>(); // 0x9702가 실어 온 직업·전투력 (프리뷰 채움용)
         var seen = new HashSet<string>();
         int headerless = 0; // [server][len][name] shapes with no record header in front of them
+        int overlapped = 0; // 앞 레코드 **안쪽**에서 검출된 후보 = 구조적으로 팬텀
+        int lastEnd = 0;    // 직전까지 받아들인 레코드의 이름 끝
         for (int n = offset + 2; n + 3 < packet.Length; n++)
         {
             int server = PacketPrimitives.ParseUInt16Le(packet, n);
@@ -1063,6 +1157,15 @@ public sealed class StreamProcessor
             //
             // Rejected BEFORE seen.Add on purpose: the phantom must reach neither the member list nor the
             // dedupe set.
+            // 구조 가드: 레코드는 서로 곹치지 않는다. 앞 레코드의 이름이 끝나기 **전**에 시작하는 후보는
+            // 다른 필드 안에서 우연히 모양이 맞은 것이다. 실측: 정원 5 방이 6명으로 읽힌 사례가
+            // 전부 이 모양이었고(슬롯 중복 [1,2,3,3,4,5]), 한 세션에 107건이었다.
+            if (n - 8 < lastEnd)
+            {
+                overlapped++;
+                continue;
+            }
+
             int slot = MemberSlot(packet, n);
             if (slot == 0)
             {
@@ -1099,7 +1202,9 @@ public sealed class StreamProcessor
                 }
 
                 members.Add((name, server, slot));
+                keys.Add((name, server, (int)PacketPrimitives.ReadUInt32LeAsLong(packet, n - 6)));
                 jobPower.Add((name, server, jobCode, power));
+                lastEnd = nameEnd;
             }
 
             n += 2 + len; // skip past this record (the loop's n++ steps over the final byte)
@@ -1113,6 +1218,11 @@ public sealed class StreamProcessor
         if (headerless > 0)
         {
             _sink.Meta("party_roster_headerless", ("dropped", headerless), ("kept", members.Count));
+        }
+
+        if (overlapped > 0)
+        {
+            _sink.Meta("party_roster_overlapped", ("dropped", overlapped), ("kept", members.Count));
         }
 
         if (members.Count == 0)
@@ -1139,6 +1249,20 @@ public sealed class StreamProcessor
         // previous one ALWAYS carries a different id (15 and 7 cases, zero exceptions), while an identical
         // member set always carries the same one (2,251 cases).
         int partyId = offset + 6 <= packet.Length ? (int)PacketPrimitives.ReadUInt32LeAsLong(packet, offset + 2) : 0;
+
+        // 헤더 뒤쪽: [roomKey u32][descLen u8][desc][_limit_member u8]. desc 는 파티모집 제목이다.
+        // 정원은 방마다 고정이고(실측: 파티 5 · 성역 10) 멤버 수가 오르내려도 변하지 않는다 —
+        // 방 16개·스냅샷 423건 전수에서 한 번도 변한 적이 없었다. 그래서 이것이 로스터 크기의 정본이다.
+        int descLen = offset + 6 < packet.Length ? packet[offset + 6] & 0xFF : 0;
+        int capacityAt = offset + 7 + descLen;
+        if (capacityAt < packet.Length)
+        {
+            _data.SavePartyRosterCapacity(packet[capacityAt] & 0xFF);
+        }
+
+        // ⚠️ key 를 먼저 넘긴다. 로스터가 먼저 들어가면 이번 스냅샷에서 처음 본 멤버가 key 없이
+        // 자리를 잡고, 그 사이에 제거(0x9622)가 오면 지울 사람을 못 찾는다.
+        _data.SavePartyRosterKeys(keys);
         _data.SavePartyRoster(members, partyId);
         _data.SavePartyRosterJobPower(jobPower);
 
@@ -1191,6 +1315,104 @@ public sealed class StreamProcessor
         && packet[serverOffset - 7] is >= 1 and <= 10
             ? packet[serverOffset - 7]
             : 0;
+
+    /// <summary>0x9702 / 0x971F 가 공유하는 멤버 레코드. 코퍼스 실측으로 확정한 고정 헤더다 —
+    /// <c>[mask u8][slot u8][key u32 LE][born srv u16][cur srv u16][nameLen u8]</c> 다음에 UTF-8 이름.
+    /// <para><b>key 는 엔티티 uid 가 아니다.</b> 세션이 바뀌어도 같은 값이 오는 캐릭터 고정 id 이고,
+    /// 전투 패킷의 uid 공간과 겹치지 않는다(코퍼스 대조 0/8). 그래서 신원 결합에는 못 쓰고,
+    /// 제거 패킷(0x9622)이 이 key 하나만 싣기 때문에 <b>로스터 안에서 사람을 지목하는 용도</b>로만 쓴다.</para></summary>
+    private readonly record struct PartyMemberRecord(int Mask, int Slot, int Key, int Server, string Nickname, int End);
+
+    /// <summary>레코드 헤더가 <paramref name="start"/> 에서 시작하면 읽어 낸다. 아니면 null.</summary>
+    private static PartyMemberRecord? ReadMemberRecord(byte[] packet, int start)
+    {
+        if (start < 0 || start + 11 > packet.Length)
+        {
+            return null;
+        }
+
+        int mask = packet[start];
+        int slot = packet[start + 1];
+        // mask 0 은 레코드가 아니다(현행 게이트가 이미 쓰던 조건). 슬롯 상한은 포스 정원(20)까지 열어 둔다 —
+        // 성역은 10 고정이지만 상한을 10 으로 박으면 20인 포스가 통째로 안 읽힌다.
+        if (mask == 0 || slot < 1 || slot > 20)
+        {
+            return null;
+        }
+
+        int key = (int)PacketPrimitives.ReadUInt32LeAsLong(packet, start + 2);
+        if (key < 0)
+        {
+            return null;
+        }
+
+        int server = PacketPrimitives.ParseUInt16Le(packet, start + 8);
+        if (!IsPartyServer(server))
+        {
+            return null;
+        }
+
+        int len = packet[start + 10] & 0xFF;
+        if (len < 1 || len > 30 || start + 11 + len > packet.Length)
+        {
+            return null;
+        }
+
+        string name = Encoding.UTF8.GetString(packet, start + 11, len);
+        if (Encoding.UTF8.GetByteCount(name) != len || !IsValidNickname(name))
+        {
+            return null;
+        }
+
+        return new PartyMemberRecord(mask, slot, key, server, name, start + 11 + len);
+    }
+
+    /// <summary>
+    /// 0x971F — 멤버 한 명의 레코드. 0x9702 스냅샷이 <b>부분</b>으로 오는 것이 정상이라(코퍼스 45%),
+    /// 이 증분을 받지 않으면 로스터가 수시로 정원에 못 미친 채로 전투가 끝난다.
+    /// <para>표본 85건 중 83건이 <b>이미 있는 멤버의 갱신</b>이었고 슬롯이 달라진 사례는 0건이다. 그래서
+    /// 여기 실린 슬롯을 그대로 권위로 받아 upsert 한다(추가인지 갱신인지 구분할 필요가 없다).</para>
+    /// </summary>
+    private void ParsePartyMemberUpdate(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
+    {
+        int offset = lengthInfo.Length + (extraFlag ? 1 : 0);
+        if (offset + 2 > packet.Length || packet[offset] != 0x1F || packet[offset + 1] != 0x97)
+        {
+            return;
+        }
+
+        if (ReadMemberRecord(packet, offset + 2) is not { } m)
+        {
+            _sink.Meta("party_member_update_unparsed", ("len", packet.Length));
+            return;
+        }
+
+        _sink.Meta("party_member_update", ("slot", m.Slot), ("nickname", m.Nickname), ("server", m.Server));
+        _data.UpdatePartyMember(m.Nickname, m.Server, m.Slot, m.Key);
+    }
+
+    /// <summary>
+    /// 0x9622 — 멤버 제거. 본문은 로스터 key 하나로 시작한다(이름이 없다). 표본 18건 중 13건이
+    /// '직전 스냅샷에 있다가 이후 사라짐' 이었다.
+    /// <para>⚠️ key 로만 지운다. 이름으로 지우면 동명이인·잘린 닉네임에서 엉뚱한 사람이 빠진다.</para>
+    /// </summary>
+    private void ParsePartyMemberRemove(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
+    {
+        int offset = lengthInfo.Length + (extraFlag ? 1 : 0);
+        if (offset + 6 > packet.Length || packet[offset] != 0x22 || packet[offset + 1] != 0x96)
+        {
+            return;
+        }
+
+        int key = (int)PacketPrimitives.ReadUInt32LeAsLong(packet, offset + 2);
+        if (key <= 0)
+        {
+            return;
+        }
+
+        _sink.Meta("party_member_remove", ("key", key));
+        _data.RemovePartyMemberByKey(key);
+    }
 
     /// <summary>0x9200 멤버 프로필 스냅샷. 파티/공대 멤버마다 한 레코드씩 싣는데, <b>엔티티 uid를 이름과 같은
     /// 레코드에 담는 유일한 브로드캐스트</b>다(0x9702 로스터에는 uid가 없다). 이름 오프셋 기준 레이아웃 —
@@ -2068,7 +2290,7 @@ public sealed class StreamProcessor
     /// <para>slot은 적용 패킷이 싣는 슬롯 번호와 같은 값이라, 같은 버프 코드가 겹쳐 걸려 있어도 어느
     /// 인스턴스를 닫는 신호인지 모호하지 않다. kind != 0 인 롱폼(스택 일괄 소거 등)을 건너뛰지 않고 함께
     /// 읽어야 조기 해제의 최대 사유를 놓치지 않는다.</para></summary>
-    private void ParseBuffRemove(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
+    private void ParseBuffRemove(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, long arrivedAt)
     {
         try
         {
@@ -2119,7 +2341,7 @@ public sealed class StreamProcessor
             // 프레임을 정확히 소진하지 못했으면 우리가 아는 형태가 아니다 — 부분 적용은 하지 않는다.
             if (offset != packet.Length) return;
 
-            _data.RemoveBuffSlots(entityInfo.Value, slots);
+            _data.RemoveBuffSlots(entityInfo.Value, slots, arrivedAt);
             _sink.Meta("buff_remove", ("entity", entityInfo.Value), ("slots", string.Join("|", slots)));
         }
         catch
