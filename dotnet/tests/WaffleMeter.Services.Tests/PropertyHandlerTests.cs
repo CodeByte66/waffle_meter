@@ -205,4 +205,132 @@ public sealed class PropertyHandlerTests : IDisposable
         ph.SetProperty("a", "1");
         Assert.Empty(Directory.GetFiles(Path.Combine(_tempAppData, AppName), "*.tmp"));
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────────────────────
+    // 손상된 settings.properties 로도 앱은 뜬다 (M-27)
+    //
+    // 예전에는 여기서 FormatException 이 그대로 새어 나갔고, App.OnStartup 은 창·트레이·show 리스너보다
+    // **먼저** PropertyHandler 를 만든다. 결과는 UI 가 0개인 채 살아 있는 프로세스 — 뮤텍스를 쥐고 있어
+    // 재실행도 무반응이고, 작업관리자로 죽이기 전까지 미터를 못 켠다.
+    // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+    private string SettingsFile => Path.Combine(_tempAppData, AppName, "settings.properties");
+
+    private void WriteRawSettings(string text)
+    {
+        Directory.CreateDirectory(Path.Combine(_tempAppData, AppName));
+        File.WriteAllText(SettingsFile, text, Encoding.Latin1);
+    }
+
+    [Fact]
+    public void A_file_truncated_mid_unicode_escape_starts_from_defaults_instead_of_throwing()
+    {
+        // 한글 값은 \\uXXXX 로 저장된다. 그 이스케이프 한가운데서 파일이 잘리면 LoadConvert 가
+        // FormatException 을 던지는데, 예전 catch (IOException) 은 그걸 못 잡았다.
+        WriteRawSettings("rowHeight=44" + "\n" + "fontFamily=\\u12");
+
+        var ph = new PropertyHandler(_tempAppData);
+
+        Assert.Equal(SettingsStoreFault.Corrupt, ph.Fault);
+        Assert.False(string.IsNullOrEmpty(ph.FaultDetail));
+        // 반쪽 파싱 결과(터지기 전까지 읽힌 앞줄)를 남기지 않는다 — 남기면 첫 Save 가 그 반쪽을
+        // '전체 설정' 으로 확정해 버린다.
+        Assert.Null(ph.GetProperty("rowHeight"));
+    }
+
+    [Fact]
+    public void The_corrupt_file_is_moved_aside_rather_than_deleted()
+    {
+        // 사용자의 설정 원본이다. "재설치하세요" 라고 답하더라도 파일은 남아 있어야 복구가 가능하다.
+        WriteRawSettings("fontFamily=\\u12");
+
+        var ph = new PropertyHandler(_tempAppData);
+
+        Assert.NotNull(ph.QuarantinedFilePath);
+        Assert.True(File.Exists(ph.QuarantinedFilePath!));
+        Assert.Contains("fontFamily", File.ReadAllText(ph.QuarantinedFilePath!, Encoding.Latin1));
+        Assert.False(File.Exists(SettingsFile)); // 치웠으니 다음 Save 가 깨끗한 파일을 쓴다
+    }
+
+    [Fact]
+    public void After_a_corrupt_file_the_meter_can_still_save_and_reopen_cleanly()
+    {
+        WriteRawSettings("fontFamily=\\u12");
+
+        var ph = new PropertyHandler(_tempAppData);
+        ph.SetProperty("rowHeight", "50");
+
+        var reopened = new PropertyHandler(_tempAppData);
+        Assert.Equal("50", reopened.GetProperty("rowHeight"));
+        Assert.Equal(SettingsStoreFault.None, reopened.Fault);
+        Assert.Null(reopened.QuarantinedFilePath);
+    }
+
+    [Fact]
+    public void A_second_corruption_does_not_clobber_the_first_quarantined_copy()
+    {
+        // 재실행 루프에서 같은 초에 두 번 걸릴 수 있다. 먼저 치워 둔 사용자 설정을 덮으면 복구할 것이 없어진다.
+        WriteRawSettings("first=1" + "\n" + "bad=\\u9");
+        var first = new PropertyHandler(_tempAppData);
+
+        WriteRawSettings("second=2" + "\n" + "bad=\\u9");
+        var second = new PropertyHandler(_tempAppData);
+
+        Assert.NotNull(first.QuarantinedFilePath);
+        Assert.NotNull(second.QuarantinedFilePath);
+        Assert.NotEqual(first.QuarantinedFilePath, second.QuarantinedFilePath);
+        Assert.Contains("first=1", File.ReadAllText(first.QuarantinedFilePath!, Encoding.Latin1));
+        Assert.Contains("second=2", File.ReadAllText(second.QuarantinedFilePath!, Encoding.Latin1));
+    }
+
+    [Fact]
+    public void A_healthy_file_reports_no_fault_at_all()
+    {
+        var ph = new PropertyHandler(_tempAppData);
+        ph.SetProperty("rowHeight", "44");
+
+        var reopened = new PropertyHandler(_tempAppData);
+        Assert.Equal(SettingsStoreFault.None, reopened.Fault);
+        Assert.Null(reopened.FaultDetail);
+        Assert.Null(reopened.QuarantinedFilePath);
+    }
+
+    [Fact]
+    public void A_file_that_cannot_be_written_is_reported_instead_of_thrown()
+    {
+        // Save 의 in-place 폴백은 catch **밖**에 있었다. 파일이 멀쩡해도 권한 하나로 M-27 과 같은 결말에
+        // 도달한다 — OnStartup 은 창을 띄우기 전에 SetProperty 를 부른다.
+        var ph = new PropertyHandler(_tempAppData);
+        ph.SetProperty("a", "1");
+
+        File.SetAttributes(SettingsFile, FileAttributes.ReadOnly);
+        try
+        {
+            ph.SetProperty("b", "2"); // 던지면 안 된다
+            Assert.Equal(SettingsStoreFault.NotWritable, ph.Fault);
+        }
+        finally
+        {
+            File.SetAttributes(SettingsFile, FileAttributes.Normal);
+        }
+
+        // 쓰기가 다시 가능해지면 사실도 해제된다 — 낡은 경고를 영원히 띄우지 않는다.
+        ph.SetProperty("c", "3");
+        Assert.Equal(SettingsStoreFault.None, ph.Fault);
+        Assert.Equal("3", new PropertyHandler(_tempAppData).GetProperty("c"));
+    }
+
+    [Fact]
+    public void A_korean_value_still_round_trips_after_the_corruption_handling()
+    {
+        // 손상 처리 경로를 넣으면서 EUC-KR 계열 디코딩을 건드리지 않았다는 것을 붙잡는다.
+        var ph = new PropertyHandler(_tempAppData);
+        ph.SetProperty("alarms.ttsVoice", "와붕이");
+        ph.SetProperty("fontFamily", "나눔손글씨 붓");
+
+        var reopened = new PropertyHandler(_tempAppData);
+        Assert.Equal(SettingsStoreFault.None, reopened.Fault);
+        Assert.Equal("와붕이", reopened.GetProperty("alarms.ttsVoice"));
+        Assert.Equal("나눔손글씨 붓", reopened.RawEntries()["fontFamily"]);
+    }
 }

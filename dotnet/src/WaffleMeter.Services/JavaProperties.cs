@@ -27,7 +27,20 @@ public sealed class JavaProperties
 
     public IReadOnlyDictionary<string, string> Entries => _map;
 
-    /// <summary>Reads a properties file (the stream is decoded as ISO-8859-1, like Java).</summary>
+    /// <summary>
+    /// Drops every key. Used when <see cref="Load"/> throws part-way: the prefix that happened to parse is not
+    /// a settings file, it is the first N lines of one, and keeping it would make the next
+    /// <see cref="Store"/> write that half out as if it were the whole truth. Starting from defaults is the
+    /// honest state, and the caller keeps the original bytes elsewhere.
+    /// </summary>
+    public void Clear() => _map.Clear();
+
+    /// <summary>Reads a properties file (the stream is decoded as ISO-8859-1, like Java).
+    /// <para>⚠ Throws <see cref="FormatException"/> on a malformed <c>\\uXXXX</c> escape, exactly like
+    /// OpenJDK. A file truncated mid-escape (<c>fontFamily=\\u12</c>) is the realistic way to get there, and
+    /// the parity with Java is deliberate — the CALLER decides what a broken file means. See
+    /// <c>PropertyHandler.LoadSettings</c>: letting this escape used to leave the app as a window-less
+    /// process that still held the single-instance mutex.</para></summary>
     public void Load(Stream input)
     {
         using var reader = new StreamReader(input, Encoding.Latin1, detectEncodingFromByteOrderMarks: false);

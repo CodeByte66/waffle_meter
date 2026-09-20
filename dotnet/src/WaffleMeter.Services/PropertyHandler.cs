@@ -1,6 +1,30 @@
+using System.Globalization;
 using System.Text;
 
 namespace WaffleMeter.Services;
+
+/// <summary>
+/// Why the settings store is not operating normally. Surfaced rather than swallowed: every one of these used
+/// to be either a silent "설정이 초기화됐다" or — for a parse failure during startup — an app that never drew a
+/// window while still holding the single-instance mutex, so relaunching did nothing either (M-27).
+/// </summary>
+public enum SettingsStoreFault
+{
+    /// <summary>Normal.</summary>
+    None = 0,
+
+    /// <summary><c>settings.properties</c> could not be parsed. It was moved aside (see
+    /// <see cref="PropertyHandler.QuarantinedFilePath"/>) and this session started from defaults.</summary>
+    Corrupt,
+
+    /// <summary>The file is there but could not be read — locked, or the folder is not ours. It is left
+    /// EXACTLY where it is (its contents may be perfectly fine), and this session runs on defaults. Anything
+    /// saved from here will overwrite it once the block clears, which is why this has to be visible.</summary>
+    Unreadable,
+
+    /// <summary>Writes are not reaching disk. Settings appear to work and are gone on the next start.</summary>
+    NotWritable,
+}
 
 /// <summary>
 /// Settings store, ported verbatim from Kotlin <c>config.PropertyHandler</c>: a Java-format
@@ -43,8 +67,21 @@ public sealed class PropertyHandler
             ?? Environment.GetEnvironmentVariable("APPDATA")
             ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         string dir = Path.Combine(appData, AppName);
-        Directory.CreateDirectory(dir);
         _settingFilePath = Path.Combine(dir, SettingFileName);
+
+        // Outside any try until now: a locked-down %APPDATA% (managed PC, PC방 이미지) threw straight out of
+        // the constructor, and App.OnStartup builds this BEFORE the window, the tray icon and the show-listener
+        // — so the process stayed alive with no UI and no way to reach it. Defaults-in-memory is a usable app;
+        // a window-less process holding the mutex is not.
+        try
+        {
+            Directory.CreateDirectory(dir);
+        }
+        catch (Exception ex)
+        {
+            Fault = SettingsStoreFault.NotWritable;
+            FaultDetail = ex.Message;
+        }
 
         if (!File.Exists(_settingFilePath))
         {
@@ -70,23 +107,90 @@ public sealed class PropertyHandler
         LoadSettings();
     }
 
+    /// <summary>
+    /// Why this store is degraded, for the caller to surface. Nothing in here throws; the app must be able to
+    /// start with a broken settings file, and the user must be told rather than left wondering why everything
+    /// reset. (<c>None</c> for the normal case.)
+    /// </summary>
+    public SettingsStoreFault Fault { get; private set; }
+
+    /// <summary>The exception message behind <see cref="Fault"/>, for the log / the support answer.</summary>
+    public string? FaultDetail { get; private set; }
+
+    /// <summary>Where the unparseable file was moved, when <see cref="Fault"/> is
+    /// <see cref="SettingsStoreFault.Corrupt"/>. Never deleted — it is the only copy of the user's settings,
+    /// and "재설치하세요" is a much easier answer when the old file is still on disk.</summary>
+    public string? QuarantinedFilePath { get; private set; }
+
     private void LoadSettings()
     {
-        try
+        if (!File.Exists(_settingFilePath))
         {
-            if (File.Exists(_settingFilePath))
-            {
-                using FileStream fs = File.OpenRead(_settingFilePath);
-                _props.Load(fs);
-            }
-            else
+            try
             {
                 File.Create(_settingFilePath).Dispose();
             }
+            catch (Exception ex)
+            {
+                // Not fatal: every later Save retries, and until then the app runs on defaults.
+                Fault = SettingsStoreFault.NotWritable;
+                FaultDetail = ex.Message;
+            }
+
+            return;
         }
-        catch (IOException)
+
+        try
         {
-            // 설정파일 읽기에 실패했습니다.
+            using FileStream fs = File.OpenRead(_settingFilePath);
+            _props.Load(fs);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // 열지 못한 것뿐이다 — 내용은 멀쩡할 수 있으니 절대 옮기거나 지우지 않는다.
+            _props.Clear();
+            Fault = SettingsStoreFault.Unreadable;
+            FaultDetail = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            // 파싱 실패. 대표 경로는 잘린 \\uXXXX 이스케이프(<c>fontFamily=\\u12</c>)이고,
+            // JavaProperties 가 FormatException 을 던진다 — 예전의 catch (IOException) 은 그걸 못 잡았다.
+            //
+            // 여기서 던지면 안 되는 이유가 M-27 이다: OnStartup 이 창·트레이·show 리스너보다 먼저 이 객체를
+            // 만들고, ShutdownMode 가 지정된 곳이 없어서 닫을 창이 없으면 종료도 안 된다. 결과는 아이콘을
+            // 눌러도 아무 일이 없고, 뮤텍스를 쥔 채 살아 있어서 재실행도 무반응인 상태 — 작업관리자 말고는
+            // 복구 수단이 없다.
+            //
+            // 그래서: 손상 파일은 이름을 바꿔 보존하고, 이번 기동은 기본값으로 연다. 부분 파싱된 앞부분을
+            // 남기지 않는 것도 의도다(그대로 두면 첫 Save 가 그 반쪽을 전체 설정으로 확정해 버린다).
+            _props.Clear();
+            Fault = SettingsStoreFault.Corrupt;
+            FaultDetail = ex.Message;
+            QuarantinedFilePath = Quarantine();
+        }
+    }
+
+    /// <summary>Move the unparseable file aside so the app can write a fresh one. Best effort: if the move
+    /// fails we still start on defaults, and the first Save then replaces the broken file.</summary>
+    private string? Quarantine()
+    {
+        try
+        {
+            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            string target = _settingFilePath + ".corrupt-" + stamp;
+            // A relaunch loop can hit the same second twice; never clobber an earlier casualty.
+            for (int i = 2; File.Exists(target) && i < 100; i++)
+            {
+                target = _settingFilePath + ".corrupt-" + stamp + "-" + i.ToString(CultureInfo.InvariantCulture);
+            }
+
+            File.Move(_settingFilePath, target);
+            return target;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -239,8 +343,28 @@ public sealed class PropertyHandler
                 // best effort
             }
 
-            using FileStream fs = File.Create(_settingFilePath);
-            _props.Store(fs, "settings");
+            try
+            {
+                using FileStream fs = File.Create(_settingFilePath);
+                _props.Store(fs, "settings");
+            }
+            catch (Exception ex)
+            {
+                // This line used to sit outside the catch, so one permission error — no file corruption
+                // needed — reached the same dead end as M-27: OnStartup calls SetProperty before it ever
+                // shows a window. A settings write that cannot happen is bad; a meter that cannot open is worse.
+                Fault = SettingsStoreFault.NotWritable;
+                FaultDetail = ex.Message;
+                return;
+            }
+        }
+
+        // A save that got through clears only the write-side fault. Corrupt/Unreadable describe what happened
+        // to the file we started from and stay true for this session — the user still lost those settings.
+        if (Fault == SettingsStoreFault.NotWritable)
+        {
+            Fault = SettingsStoreFault.None;
+            FaultDetail = null;
         }
     }
 

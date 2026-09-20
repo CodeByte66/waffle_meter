@@ -27,10 +27,19 @@ public sealed class SettingsBundlePlan
     /// instead of pretending the code applied whole.</summary>
     public required int UnknownCount { get; init; }
 
+    /// <summary>Keys this bundle says were never configured and that the file currently HAS — applying puts
+    /// them back to "never configured" by deleting them. Only a backup ever carries these
+    /// (<see cref="SettingsBundle.Absent"/>), so for a shared code this is always 0.</summary>
+    public required int ClearedCount { get; init; }
+
     /// <summary>Keys this build knows but the code omits. Local values stay — a code is not a reset.</summary>
     public required int MissingCount { get; init; }
 
     public bool HasWork => Changes.Count > 0;
+
+    /// <summary>Catalogued keys to delete so a restore really lands on the pre-import state. Ordered, so the
+    /// preview and the write agree on what "되돌리기" is about to do.</summary>
+    public required IReadOnlyList<string> Clear { get; init; }
 }
 
 /// <summary>
@@ -57,9 +66,37 @@ public static class SettingsBundleBuilder
         {
             // A key never written is left out rather than exported as its default. Sending defaults would make
             // the code overwrite the receiver's deliberate choices with "whatever the sender never touched".
+            // <see cref="SettingsBundle.Absent"/> stays empty here for the same reason: a shared code must not
+            // be able to delete keys on the receiving machine.
             if (raw.TryGetValue(k.Key, out string? v))
             {
                 bundle.Data[k.Key] = v;
+            }
+        }
+
+        return bundle;
+    }
+
+    /// <summary>
+    /// The pre-import snapshot. Same as <see cref="Build"/> with one addition that only makes sense for a
+    /// snapshot of THIS machine: every catalogued key the file does not have is recorded in
+    /// <see cref="SettingsBundle.Absent"/>.
+    /// <para><b>Why.</b> A fresh install has never written 컴팩트 모드 · 서버 표시 · 게이지 형태 · 행 높이, so
+    /// the omit-what-was-never-written rule left them out of the backup too — and 「되돌리기」 then reported
+    /// success while restoring nothing (M-28). "없었음" is a value; it just isn't a string.</para>
+    /// <para>Restoring it means DELETING the key, not writing a default: a default written into the file is a
+    /// different state (it survives a future change of that default, and it makes "한 번도 안 건드림" gates
+    /// think the user chose it).</para>
+    /// </summary>
+    public static SettingsBundle BuildBackup(PropertyHandler props, string appVersion, DateTimeOffset now)
+    {
+        SettingsBundle bundle = Build(props, SettingsProfile.Full, appVersion, now);
+        IReadOnlyDictionary<string, string> raw = props.RawEntries();
+        foreach (SettingsKey k in SettingsKeyCatalog.All)
+        {
+            if (!raw.ContainsKey(k.Key))
+            {
+                bundle.Absent.Add(k.Key);
             }
         }
 
@@ -94,8 +131,34 @@ public static class SettingsBundleBuilder
             changes.Add(new SettingsChange(known.Group, known.Label, Display(current), Display(value)));
         }
 
+        // Keys the bundle says were never configured. Deleting one is a real change and has to be previewed as
+        // one — "0건 적용" while the meter visibly changes is how the undo lost the user's trust (M-28).
+        var clear = new List<string>();
+        foreach (string key in bundle.Absent)
+        {
+            SettingsKey? known = SettingsKeyCatalog.Find(key);
+            if (known is null)
+            {
+                unknown++;
+                continue;
+            }
+
+            if (!raw.TryGetValue(key, out string? current))
+            {
+                unchanged++; // already unset — restoring it is a no-op
+                continue;
+            }
+
+            clear.Add(key);
+            changes.Add(new SettingsChange(known.Group, known.Label, Display(current), Unset));
+        }
+
+        // "이 코드가 말하지 않은 키". 백업은 절대 침묵하지 않는다 — 값으로 말하거나 '없었음' 으로 말하므로
+        // Absent 에 있는 키는 누락이 아니다(현재도 없어서 할 일이 0건인 경우까지 포함).
+        var described = new HashSet<string>(bundle.Absent, StringComparer.Ordinal);
         SettingsProfile profile = SettingsBundleCodec.ParseProfile(bundle.Profile);
-        int missing = SettingsKeyCatalog.For(profile).Count(k => !bundle.Data.ContainsKey(k.Key));
+        int missing = SettingsKeyCatalog.For(profile)
+            .Count(k => !bundle.Data.ContainsKey(k.Key) && !described.Contains(k.Key));
 
         return new SettingsBundlePlan
         {
@@ -104,8 +167,14 @@ public static class SettingsBundleBuilder
             UnchangedCount = unchanged,
             UnknownCount = unknown,
             MissingCount = missing,
+            ClearedCount = clear.Count,
+            Clear = clear,
         };
     }
+
+    /// <summary>How the preview names "back to never configured". Distinct from "(없음)", which is an empty
+    /// string that WAS written — the two behave differently on the next restart.</summary>
+    public const string Unset = "(설정 안 함)";
 
     /// <summary>Values are stored strings — long JSON blobs and CSV lists are common. Trim for the preview.</summary>
     private static string Display(string v)

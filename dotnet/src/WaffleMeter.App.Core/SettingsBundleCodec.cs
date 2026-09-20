@@ -27,6 +27,19 @@ public sealed class SettingsBundle
 
     [JsonPropertyName("d")]
     public Dictionary<string, string> Data { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Catalogued keys that were NOT in the properties file when this bundle was built — "이 설정은 손댄 적이
+    /// 없다" recorded as a fact rather than as an omission. Restoring one means <c>RemoveProperty</c>, which is
+    /// the only way back to the default a user who never touched the setting actually had.
+    /// <para><b>Backups only.</b> A shared code must never carry these: it would make "남의 디자인 코드를 받았다"
+    /// delete the receiver's own keys, and a code is not a reset. <see cref="SettingsBundleBuilder.Build"/>
+    /// leaves it empty; only <see cref="SettingsBundleBuilder.BuildBackup"/> fills it.</para>
+    /// <para>Older builds simply ignore this field — they then restore exactly what they restored before
+    /// (nothing for these keys), so no version bump is needed.</para>
+    /// </summary>
+    [JsonPropertyName("x")]
+    public List<string> Absent { get; set; } = new();
 }
 
 /// <summary>Why a code could not be read, in the user's language.</summary>
@@ -134,6 +147,7 @@ public static class SettingsBundleCodec
             }
 
             parsed.Data ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            parsed.Absent ??= new List<string>();
             parsed.Profile = parts[1];
             bundle = parsed;
             error = SettingsCodeError.None;

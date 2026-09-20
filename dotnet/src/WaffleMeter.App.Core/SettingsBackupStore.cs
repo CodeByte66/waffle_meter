@@ -19,7 +19,11 @@ public static class SettingsBackupStore
     public static string Directory(string appDirectory) => Path.Combine(appDirectory, "backups");
 
     /// <summary>Write a full-profile snapshot and return its path, or null if the disk said no. A failed backup
-    /// must be reported, never swallowed — the caller refuses to import without one.</summary>
+    /// must be reported, never swallowed — the caller refuses to import without one.
+    /// <para>Built with <see cref="SettingsBundleBuilder.BuildBackup"/>, NOT the export builder: a snapshot has
+    /// to describe settings the user has never touched, and the export rule deliberately omits those. Using
+    /// <c>Build</c> here is what made 「되돌리기」 restore 0 keys on a fresh install while still reporting
+    /// success (M-28). Swapping it back re-opens that hole.</para></summary>
     public static string? Save(PropertyHandler props, string appVersion, DateTimeOffset now)
     {
         try
@@ -28,7 +32,7 @@ public static class SettingsBackupStore
             System.IO.Directory.CreateDirectory(dir);
             string path = Path.Combine(dir, $"before-import-{now:yyyyMMdd-HHmmss}.wmset");
             File.WriteAllText(path, SettingsBundleCodec.Encode(
-                SettingsBundleBuilder.Build(props, SettingsProfile.Full, appVersion, now)));
+                SettingsBundleBuilder.BuildBackup(props, appVersion, now)));
             Prune(dir);
             return path;
         }
