@@ -180,10 +180,9 @@ public sealed class StatsPayloadBuilder
             return new BuildResult.Skip("own_power_unresolved");
         }
 
-        if (participantPayloads.Any(p => p.Power <= 0))
-        {
-            return new BuildResult.Skip("participant_power_unresolved");
-        }
+        // 참가자 한 명의 전투력을 못 읽었다고 전투를 통째로 버리던 자리. 이제 그 참가자의 Power 만 null 로
+        // 나가고(BuildParticipantPayloads) 서버가 그 사람만 집계에서 뺀다 — 전투 자체와 나머지 참가자 기록은 산다.
+        // 🔑 참가자를 배열에서 빼는 것으로 대신하면 안 되는 이유는 StatsParticipantPayload.Power 주석 참고.
 
         string? ownIdentityHash = StatsIdentity.CharacterIdentityHash(own.Server, ownNickname);
         if (ownIdentityHash == null)
@@ -543,7 +542,9 @@ public sealed class StatsPayloadBuilder
                 PartyNumber: partyNumber,
                 PartySlot: partySlot,
                 Job: user.Job?.ClassName(),
-                Power: user.Power,
+                // 못 읽었으면 0 이 아니라 null 이다 — 0 은 값이고 null 은 "모른다"다. 서버는 NULL 을
+                // 파티 편차에서 무시하고 `power >= 400000` 게이트로 그 참가자만 배제한다.
+                Power: user.Power > 0 ? user.Power : null,
                 Result: BuildResultPayload(info, rates, user.Id == ownId ? CountJudgments(skills.Values) : null),
                 Skills: BuildSkillPayloads(skills, totalDamage),
                 Buffs: (folded.Buffs.GetValueOrDefault(user.Id) ?? new List<OperatingData>())

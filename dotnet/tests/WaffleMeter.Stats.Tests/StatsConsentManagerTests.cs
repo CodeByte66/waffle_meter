@@ -644,4 +644,147 @@ public sealed class StatsConsentManagerTests : IDisposable
         Assert.Equal("accepted", blind.GetInfo().State);
         Assert.True(blind.IsUploadAllowed());
     }
+    // ---- M-20: 전송 실패한 철회는 자동 동기화가 되돌리면 안 된다 (2026-09-18) ----
+    //
+    // 철회는 서버에 못 닿아도 로컬에는 남는다(프라이버시 fail-safe). 그러면 서버에는 accepted 가 남고, 다음
+    // 접속의 자동 동기화가 "서버는 accepted 인데 로컬이 아니다"를 복구 대상으로 읽어 업로드를 재개시킨다 —
+    // 화면에는 아무 표시도 없이. 전제는 로컬 레코드의 Explicit 이 false 라는 것: 아래 테스트들이 그 전제를
+    // 그대로 만들어 둔다(사용자가 이 PC 에서 버튼을 눌러 본 적 있는 레코드는 예전 코드에서도 안전했다).
+
+    /// <summary>매니저 API 로는 만들 수 없는 모양의 레코드(예: <c>explicit</c> 키 자체가 없는 구버전/서버복구
+    /// 레코드)를 그대로 심는다. 키 이름은 <c>StatsConsentManager.KeyCharacters</c> 와 같아야 한다 — private 이라
+    /// 여기서는 리터럴이고, 저쪽을 바꾸면 이 테스트들이 조용히 무의미해진다.</summary>
+    private void SeedCharacterRecord(string identityHash, string recordJson) =>
+        _props.SetProperty("statsConsentCharacters",
+            """{"HASH":RECORD}""".Replace("HASH", identityHash).Replace("RECORD", recordJson));
+
+    private const string ServerRepairedAccept =
+        """{"state":"accepted","uploadEnabled":true,"publicCharacter":false,"consentVersion":"2026-06-04","updatedAt":1,"nickname":"Hero","server":3}""";
+
+    [Fact]
+    public void A_revoke_that_failed_to_send_is_not_undone_by_the_next_auto_sync()
+    {
+        GiveExecutor();
+        string hash = StatsIdentity.CharacterIdentityHash(3, "Hero")!;
+        SeedCharacterRecord(hash, ServerRepairedAccept); // 이 PC 에서 누른 적 없는 동의(explicit 키 없음)
+        Assert.True(Manager(ApiFailing()).IsUploadAllowed());
+
+        // 철회 버튼 -> 전송 실패 -> 로컬만 revoked.
+        Assert.Equal("revoked", Manager(ApiFailing()).Set("revoked", false, false, "test").State);
+
+        // 다음 접속의 자동 동기화: 서버에는 철회가 닿지 않았으므로 accepted 가 그대로 남아 있다.
+        StatsConsentManager synced = Manager(ApiReturning(StatusJson("accepted")));
+        synced.SyncCurrentCharacter("test");
+
+        Assert.Equal("revoked", synced.GetInfo().State);
+        Assert.False(synced.IsUploadAllowed()); // 되살아나면 사용자가 끈 업로드가 조용히 재개된다
+    }
+
+    [Fact]
+    public void A_legacy_revoked_record_without_the_explicit_key_is_still_not_re_upgraded()
+    {
+        // 철회 시점에 이미 저장돼 있던 레코드는 나중에 고친 '철회에 explicit 을 찍는다'의 혜택을 못 받는다.
+        // 그러니 revoked 라는 상태 자체가 가드여야 한다.
+        GiveExecutor();
+        string hash = StatsIdentity.CharacterIdentityHash(3, "Hero")!;
+        SeedCharacterRecord(hash,
+            """{"state":"revoked","uploadEnabled":false,"publicCharacter":false,"consentVersion":"2026-06-04","updatedAt":1,"nickname":"Hero","server":3}""");
+
+        StatsConsentManager manager = Manager(ApiReturning(StatusJson("accepted")));
+        manager.SyncCurrentCharacter("test");
+
+        Assert.Equal("revoked", manager.GetInfo().State);
+        Assert.False(manager.IsUploadAllowed());
+    }
+
+    [Fact]
+    public void RevokeCharacter_survives_a_failed_send_when_that_character_comes_back()
+    {
+        // 목록에서 비-현재 캐릭터를 철회하는 경로(전송 실패). 이쪽은 실패해도 화면에 아무 신호가 없다.
+        string aliceHash = StatsIdentity.CharacterIdentityHash(3, "Alice")!;
+        SeedCharacterRecord(aliceHash,
+            """{"state":"accepted","uploadEnabled":true,"publicCharacter":false,"consentVersion":"2026-06-04","updatedAt":1,"nickname":"Alice","server":3}""");
+        _data.SaveNickname(2, "Bob", isExecutor: true, server: 3, jobByte: 0);
+
+        Manager(ApiFailing()).RevokeCharacter(aliceHash);
+
+        // Alice 로 접속하면 자동 동기화가 돈다 — 서버에는 여전히 accepted 가 남아 있다.
+        _data.SaveNickname(1, "Alice", isExecutor: true, server: 3, jobByte: 0);
+        StatsConsentManager back = Manager(ApiReturning(StatusJson("accepted")));
+        back.SyncCurrentCharacter("test");
+
+        Assert.Equal("revoked", back.GetInfo().State);
+        Assert.False(back.IsUploadAllowed());
+    }
+
+    // ---- M-21: 자동 공개 적용이 실패해도 업로드를 빼앗지 않는다 (2026-09-18) ----
+    //
+    // MarkGranted 의 공개 자동화는 사용자가 누른 적 없는 동작이다. 그 전송이 실패했을 때 예전 코드는
+    // uploadEnabled=false + publicCharacter=<요청값 true> + explicit=true 로 굳혀서, 목록엔 '공개 켜짐'으로
+    // 그리면서 이후 전투를 전부 consent_not_allowed 로 막고 자가복구까지 껐다. 재시도는 없다(grant 당 1회).
+
+    [Fact]
+    public void A_failed_auto_public_apply_keeps_uploads_on_and_reports_itself()
+    {
+        GiveExecutor(); // Hero, grant 없음
+        string hash = StatsIdentity.CharacterIdentityHash(3, "Hero")!;
+
+        // 공개를 요청했지만 grant 가 없어 서버가 거절 -> 의사만 기억되고 업로드는 계속 허용된다.
+        var refuse = new StatsApiClient(() => "install-1", (_, _, body, _) =>
+            body != null && body.Contains("\"public\":true")
+                ? new StatsHttpResponse(400, """{"ok":false,"error":{"code":"public_requires_ownership","message":"no grant"}}""")
+                : new StatsHttpResponse(200, StatusJson("accepted")));
+        Manager(refuse).Set("accepted", uploadEnabled: true, publicCharacter: true, "test");
+        Assert.True(Manager(ApiFailing()).IsUploadAllowed());
+
+        // 첫 업로드가 grant 를 얻어 자동 공개 적용이 도는데, 그 요청이 죽는다(502/타임아웃 계열).
+        Manager(ApiFailing()).MarkGranted(hash, "test");
+
+        StatsConsentManager after = Manager(ApiFailing());
+        Assert.True(after.IsUploadAllowed()); // ① 누른 적 없는 동작의 실패가 동의를 취소할 수는 없다
+
+        StatsConsentManager.CharacterConsentInfo hero = after.ListCharacters().Single(c => c.IdentityHash == hash);
+        Assert.False(hero.PublicCharacter);   // ② 전송이 실패했으니 서버는 여전히 private — 요청값을 굳히면 안 된다
+        Assert.True(hero.PublicApplyFailed);  // ③ 실패 사실은 UI 가 읽을 수 있는 형태로 남는다
+        Assert.True(after.HasPublicApplyFailure(hash));
+    }
+
+    [Fact]
+    public void A_failed_auto_public_apply_leaves_the_self_heal_intact()
+    {
+        // 서버 복구 경로가 만든 레코드(explicit 키 없음)에 공개 보류 의사만 얹혀 있고 업로드는 아직 꺼져 있다.
+        // 자동 공개 적용의 실패가 이 레코드를 '사용자의 명시적 선택'으로 도장 찍으면 RefreshFromServer 의
+        // 자가복구가 꺼져서, 그 캐릭터는 영구히 업로드를 못 한다.
+        GiveExecutor();
+        string hash = StatsIdentity.CharacterIdentityHash(3, "Hero")!;
+        SeedCharacterRecord(hash,
+            """{"state":"accepted","uploadEnabled":false,"publicCharacter":false,"consentVersion":"2026-06-04","updatedAt":1,"nickname":"Hero","server":3,"pendingPublic":true}""");
+
+        Manager(ApiFailing()).MarkGranted(hash, "test");
+        Assert.True(Manager(ApiFailing()).HasPublicApplyFailure(hash));
+
+        StatsConsentManager healed = Manager(ApiReturning(StatusJson("accepted")));
+        healed.SyncCurrentCharacter("test");
+
+        Assert.True(healed.IsUploadAllowed());
+    }
+
+    [Fact]
+    public void A_manual_public_toggle_clears_the_auto_apply_failure_notice()
+    {
+        // 수동 재시도가 유일한 재시도 경로다(MarkGranted 는 grant 당 한 번뿐). 성공하면 실패 표시는 사라진다.
+        GiveExecutor();
+        string hash = StatsIdentity.CharacterIdentityHash(3, "Hero")!;
+        SeedCharacterRecord(hash,
+            """{"state":"accepted","uploadEnabled":true,"publicCharacter":false,"consentVersion":"2026-06-04","updatedAt":1,"nickname":"Hero","server":3,"pendingPublic":true}""");
+        Manager(ApiFailing()).MarkGranted(hash, "test");
+        Assert.True(Manager(ApiFailing()).HasPublicApplyFailure(hash));
+
+        Manager(AcceptApi(true)).SetCharacterPublic(hash, publicCharacter: true, "test");
+
+        StatsConsentManager.CharacterConsentInfo hero =
+            Manager(ApiFailing()).ListCharacters().Single(c => c.IdentityHash == hash);
+        Assert.True(hero.PublicCharacter);
+        Assert.False(hero.PublicApplyFailed);
+    }
 }

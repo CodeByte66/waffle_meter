@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json;
 using WaffleMeter.Data;
 using WaffleMeter.Services;
 
@@ -76,6 +77,9 @@ public sealed class StatsUploadQueue : IDisposable
         _clock = clock ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         _killRecheckDelay = killRecheckDelay ?? (() => Thread.Sleep(4_000));
 
+        // 이전 세션의 카운터를 이어받는다 — 이게 없으면 "얼마나 자주 나는가"를 영영 못 잰다.
+        LoadCounts();
+
         if (dispatch != null)
         {
             _dispatch = dispatch;
@@ -124,15 +128,6 @@ public sealed class StatsUploadQueue : IDisposable
             return;
         }
 
-        // Safeguard for the opt-in "던전 강제 집계": while that toggle is on, participant identities are ESTIMATED
-        // (bare actors shown as placeholders because 0x3633/0x3645/0x9702 were missed on a mid-dungeon start), so
-        // the data must not pollute the web statistics. Suppress the whole session's uploads while it is enabled.
-        if (_props.GetProperty("forceInstanceTracking", "false") == "true")
-        {
-            MarkSkipped("force_tracking_mode");
-            return;
-        }
-
         MobInfo? target = log.Report.Target;
 
         // 허수아비 런은 <b>조용히</b> 무시한다 — 카운터도, 최근 스킵 사유도 건드리지 않는다.
@@ -168,6 +163,18 @@ public sealed class StatsUploadQueue : IDisposable
             // 코드와 이름을 사유에 싣는다 — 이 게이트가 잘못 걸렸을 때(웹이 새 던전을 등록했는데 동봉
             // 카탈로그가 아직 옛것) 드러나는 유일한 경로가 여기고, 코드 없는 고정 문자열은 "안 올라간다"는
             // 제보를 미동의·보스아님·미상보스와 구분해주지 못한다.
+            //
+            // ⚠️ **이 스킵이 쌓인다고 해서 카탈로그가 뒤처진 것은 아니다.** 게임 데이터가 boss=true 로
+            // 표시하지만 통계 웹이 **일부러 인카운터에서 뺀** 몹이 있다 — 길목에 서 있는 기어체크류다.
+            // 확인된 예: **염화의 수호검**(무스펠의 성배). 한 판에 두 번 교전되므로 스킵이 꾸준히 찍힌다.
+            //   어려움 2301055 · 2301067 (와이어 실측: 2301059/2301060 과 같은 인스턴스에서 스폰)
+            //   보통   2301085 · 2301097 (덤프 대칭 추정, 실측 없음)
+            // 무스펠 수호상(2921274) 같은 292xxxx 기믹 대역도 마찬가지로 대상이 아니다.
+            //
+            // 🔑 클라 덤프로는 이 판단을 **확정도 반증도 못 한다** — 그 코드들은 단계/스크립트 스폰이라
+            // `MapData.SpawnInfoList` 에 애초에 안 실린다(무스펠 두 맵에서 빠진 오프셋이 …55/…62/…67 로
+            // 동일). 2026-09-20 에 이걸 모르고 덤프를 한 바퀴 뒤졌다. 다음에 같은 스킵을 보면
+            // **덤프를 뒤지기 전에 "이거 일부러 뺀 건가"를 웹/오너에게 먼저 물어라.**
             MarkSkipped($"unsupported_encounter:{target.Mob.Code}:{target.Mob.Name}");
             return;
         }
@@ -286,6 +293,7 @@ public sealed class StatsUploadQueue : IDisposable
                         // uploading forever while 공개 전환 and 스킨 선택 stayed locked, with no counter anywhere
                         // that would have shown it.
                         _skipCounts.AddOrUpdate("unsigned_upload", 1, (_, n) => n + 1);
+                        SaveCounts();
                     }
 
                     // 던전 티어는 업로드 응답에 얹혀 온다 — 본인 등급을 얻는 데 요청이 0회 더 든다는 뜻이다.
@@ -392,6 +400,8 @@ public sealed class StatsUploadQueue : IDisposable
         // for months with nothing on screen that says so.
         _skipCounts.AddOrUpdate(SkipKey(reason), 1, (_, n) => n + 1);
         UpdateLast(null, reason);
+        SaveCounts(); // 전투당 한 번꼴이라 작은 파일 한 번 쓰는 비용이면 충분하다
+
     }
 
     /// <summary>Group key for the counter. Reasons that carry data (<c>unsupported_encounter:&lt;code&gt;:&lt;name&gt;</c>)
@@ -405,6 +415,97 @@ public sealed class StatsUploadQueue : IDisposable
     /// <summary>Skip reason -> count for this session. Concurrent because battles are offered from the report
     /// thread while the settings screen reads it on the UI thread.</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _skipCounts = new(StringComparer.Ordinal);
+
+    /// <summary>이 카운터가 처음 세기 시작한 시각(ms). 비율을 내려면 분모가 있어야 한다.</summary>
+    private long _countsSince;
+
+    private string CountsPath() => Path.Combine(_props.AppDirectory(), "stats-upload", "skip-counts.json");
+
+    /// <summary>
+    /// 스킵 카운터를 디스크에 남긴다.
+    /// <para>🔑 종전에는 메모리 전용이라 앱을 끄면 0 으로 돌아갔다. 그래서 <b>"내 전투가 왜 안 올라갔지"를 사후에
+    /// 확인할 방법이 없었다</b> — 설정 화면에서 이번 세션 값을 눈으로 읽는 것 말고는 어디에도 안 남았고, 서버
+    /// 쪽은 애초에 도달하지 못한 전투라 볼 수가 없다(양쪽 다 못 재는 상태였다).</para>
+    /// <para>settings.properties 에 넣지 않는 이유: 그 파일은 <c>SetProperty</c> 마다 <b>전량 재작성</b>되고
+    /// EUC-KR 계열 디코딩을 거친다. 이 카운터는 전투당 한 번꼴로 움직이므로 작은 전용 파일이 맞다.</para>
+    /// <para>실패는 삼킨다 — 진단 보조 기능이 업로드를 막으면 안 된다.</para>
+    /// </summary>
+    private void SaveCounts()
+    {
+        try
+        {
+            string path = CountsPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var doc = new
+            {
+                since = Interlocked.Read(ref _countsSince),
+                updatedAt = _clock(),
+                uploaded = Volatile.Read(ref _uploaded),
+                skipped = Volatile.Read(ref _skipped),
+                failed = Volatile.Read(ref _failed),
+                reasons = _skipCounts.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal),
+            };
+
+            // temp + move: 쓰는 도중에 프로세스가 죽어도 반쪽 파일이 남지 않는다.
+            string temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(doc));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch
+        {
+            // 진단이 본업을 막지 않는다.
+        }
+    }
+
+    private void LoadCounts()
+    {
+        Interlocked.Exchange(ref _countsSince, _clock());
+        try
+        {
+            string path = CountsPath();
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+            JsonElement root = doc.RootElement;
+            if (root.TryGetProperty("since", out JsonElement since) && since.TryGetInt64(out long sinceMs) && sinceMs > 0)
+            {
+                Interlocked.Exchange(ref _countsSince, sinceMs);
+            }
+
+            if (root.TryGetProperty("uploaded", out JsonElement up) && up.TryGetInt32(out int upN))
+            {
+                Volatile.Write(ref _uploaded, upN);
+            }
+
+            if (root.TryGetProperty("skipped", out JsonElement sk) && sk.TryGetInt32(out int skN))
+            {
+                Volatile.Write(ref _skipped, skN);
+            }
+
+            if (root.TryGetProperty("failed", out JsonElement fa) && fa.TryGetInt32(out int faN))
+            {
+                Volatile.Write(ref _failed, faN);
+            }
+
+            if (root.TryGetProperty("reasons", out JsonElement reasons) && reasons.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty r in reasons.EnumerateObject())
+                {
+                    if (r.Value.TryGetInt32(out int n) && n > 0)
+                    {
+                        _skipCounts[r.Name] = n;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 손상된 카운터 파일이 기동을 막지 않는다 — 0 부터 다시 센다.
+        }
+    }
 
     private void UpdateLast(string? path, string reason)
     {

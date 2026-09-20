@@ -149,6 +149,19 @@ public sealed class StatsConsentManager
                 return LocalInfo();
             }
 
+            // 철회는 '고쳐 줄' 대상이 아니다 — Explicit 플래그와 무관하게. 철회 이벤트 전송이 실패하면 서버에는
+            // accepted 가 남고 로컬만 revoked 가 된다(Revoke 의 catch = 프라이버시 fail-safe). 그 상태에서 아래
+            // 복구 경로가 "서버는 accepted 인데 로컬이 아니다"만 보고 되살리면 사용자가 끈 업로드가 다음 접속에
+            // 조용히 재개된다. Explicit 게이트만으로는 못 막는다 — 2026-08-23 이전에 쓰인 레코드에는 explicit 키
+            // 자체가 없어 false 로 역직렬화되고, 서버 복구 경로가 만든 레코드도 마찬가지다. 로컬 revoked 를 다시
+            // 켜는 길은 설정에서의 명시적 재동의 하나뿐이다.
+            // ⚠ 이 가드를 지우면 '철회했는데 다음 접속에 업로드가 되살아난다'가 그대로 재발한다.
+            if (remoteAccepted && TryState(local?.State) == State.revoked)
+            {
+                RememberSync("synced_local_revoked", null);
+                return LocalInfo();
+            }
+
             // 🔑 The repair. A character the server already knows as accepted, whose local record on THIS
             // install says otherwise without the user ever having said so, is a stuck install — and the cost of
             // leaving it stuck is invisible and total: IsUploadAllowed() is per-character (see LocalInfo), so
@@ -229,8 +242,18 @@ public sealed class StatsConsentManager
         return null;
     }
 
-    private Info Accept(bool uploadEnabled, bool publicCharacter, string clientVersion, bool explicitChoice = true)
+    /// <param name="automatic">The APP issued this accept, not a button press — today only the 공개 자동화
+    /// re-accept that <see cref="MarkGranted"/> fires when the first upload earns the grant. It changes what a
+    /// failed send is allowed to cost the user; see the catch blocks and <see cref="SaveAutomaticSendFailure"/>.</param>
+    private Info Accept(bool uploadEnabled, bool publicCharacter, string clientVersion, bool? explicitChoice = true,
+        bool automatic = false)
     {
+        // An automatic re-accept is not a decision, so it must leave the Explicit flag exactly as the user left
+        // it (null = untouched, the same thing a server echo passes). Stamping true would tell
+        // RefreshFromServer's repair path "the user chose this on this PC" and switch the self-heal OFF for a
+        // record the app wrote; stamping false would erase a real decision the user did make.
+        explicitChoice = automatic ? null : explicitChoice;
+
         // A character's shared public flag may only be CHANGED (turned ON or OFF) by an install that OWNS
         // the character (holds its grant). A non-owning install (e.g. a PC방/재설치 install with no grant)
         // must NOT touch the flag: it sends the accept with `public` OMITTED so the server PRESERVES whatever
@@ -260,10 +283,15 @@ public sealed class StatsConsentManager
             // Public refused (no grant). Re-affirm consent WITHOUT asserting public (omit → server preserves),
             // never downgrading a shared row, then surface the ownership notice. Replaces the old destructive
             // "re-accept as private" rollback that overwrote public=false and un-published the character.
-            return AcceptPublicUnmanaged(character, uploadEnabled, clientVersion, explicitChoice);
+            return AcceptPublicUnmanaged(character, uploadEnabled, clientVersion, explicitChoice, automatic);
         }
         catch (Exception e)
         {
+            if (automatic)
+            {
+                return SaveAutomaticSendFailure(character.IdentityHash, e);
+            }
+
             SaveLocal(
                 State.accepted,
                 uploadEnabled: false,
@@ -282,7 +310,7 @@ public sealed class StatsConsentManager
     /// only stamp the public_requires_ownership notice when the character is genuinely still private (there is
     /// nothing to warn about if another owning install has already made it public).</summary>
     private Info AcceptPublicUnmanaged(ConsentEventCharacter character, bool uploadEnabled, string clientVersion,
-        bool explicitChoice = true)
+        bool? explicitChoice = true, bool automatic = false)
     {
         ConsentEventCharacter consentOnly = character with { PublicCharacter = null };
         bool serverPublic;
@@ -296,6 +324,11 @@ public sealed class StatsConsentManager
         }
         catch (Exception e)
         {
+            if (automatic)
+            {
+                return SaveAutomaticSendFailure(consentOnly.IdentityHash, e);
+            }
+
             SaveLocal(State.accepted, uploadEnabled: false, publicCharacter: false,
                 syncStatus: "sync_failed", identityHash: consentOnly.IdentityHash, syncError: Summarize(e),
                 explicitChoice: explicitChoice);
@@ -310,12 +343,42 @@ public sealed class StatsConsentManager
         return LocalInfo();
     }
 
+    /// <summary>A consent send the USER never asked for (공개 자동화) failed. Freeze as little as possible.
+    /// <para>What this replaced cost them everything at once: the old catch wrote <c>uploadEnabled=false</c> +
+    /// <c>publicCharacter=(요청값 true)</c> + <c>explicit=true</c>, so ① the 캐릭터 목록 drew 공개 ON while the
+    /// server stayed private, ② <see cref="IsUploadAllowed"/> went false and every later battle died at the
+    /// first gate with <c>consent_not_allowed</c>, and ③ the Explicit stamp told <see cref="RefreshFromServer"/>
+    /// this was the user's own opt-out, switching off the self-heal that would have undone ②.
+    /// <see cref="MarkGranted"/> returns early once granted, so nothing ever retried it — permanent, silent,
+    /// and set off by an action nobody performed.</para>
+    /// <para>So: keep the upload permission the user already granted, keep the last KNOWN public state (a send
+    /// that failed applied nothing — the character is still private), leave Explicit alone so the self-heal
+    /// survives, and record the failed auto-apply so the list can say so and the user can re-apply 공개 by hand.</para>
+    /// <para>⚠ 되돌려서 여기서 uploadEnabled: false 로 굳히면 그 캐릭터의 업로드가 영구히 막히는 결함이 그대로
+    /// 재발한다 — 사용자는 아무 버튼도 누른 적이 없는데.</para>
+    /// </summary>
+    private Info SaveAutomaticSendFailure(string identityHash, Exception e)
+    {
+        Info before = LocalInfo();
+        SaveLocal(
+            State.accepted,
+            uploadEnabled: before.UploadEnabled,
+            publicCharacter: before.PublicCharacter,
+            syncStatus: "sync_failed",
+            identityHash: identityHash,
+            syncError: Summarize(e),
+            explicitChoice: null);
+        MarkPublicApplyFailed(identityHash, true);
+        return LocalInfo();
+    }
+
     private Info Revoke(string clientVersion)
     {
         string? identityHash = CurrentIdentityHash() ?? NonBlank(_props.GetProperty(KeyIdentityHash));
         if (identityHash == null)
         {
-            SaveLocal(State.revoked, uploadEnabled: false, publicCharacter: false, syncStatus: "identity_missing");
+            SaveLocal(State.revoked, uploadEnabled: false, publicCharacter: false, syncStatus: "identity_missing",
+                explicitChoice: true);
             return LocalInfo();
         }
 
@@ -324,17 +387,22 @@ public sealed class StatsConsentManager
             ConsentStatusResponse response = _api.PostConsentEvent(
                 new ConsentEventRequest(State.revoked.ToString(), ConsentVersion, IdentityHash: identityHash),
                 clientVersion);
-            return ApplyRemote(response, requestedUpload: false);
+            return ApplyRemote(response, requestedUpload: false, explicitChoice: true);
         }
         catch (Exception e)
         {
+            // ⚠ explicitChoice: true 는 장식이 아니다. 철회는 사용자가 버튼을 눌러야만 오는 경로이므로, 전송이
+            // 실패해도 '사용자가 눌렀다'는 사실은 로컬에 남아야 한다. 이 인자가 빠져 있던 동안 레코드는
+            // Explicit=false 인 채 revoked 가 됐고, 서버에는 accepted 가 남아 다음 접속의 자동 동기화가 그대로
+            // 되살려 업로드를 재개시켰다 — 되돌아간 사실을 알리는 표시도 없이.
             SaveLocal(
                 State.revoked,
                 uploadEnabled: false,
                 publicCharacter: false,
                 syncStatus: "sync_failed",
                 identityHash: identityHash,
-                syncError: Summarize(e));
+                syncError: Summarize(e),
+                explicitChoice: true);
             return LocalInfo();
         }
     }
@@ -412,7 +480,11 @@ public sealed class StatsConsentManager
         bool UploadEnabled, bool PublicCharacter, long UpdatedAt, bool IsCurrent, bool CanSetPublic,
         // True once this install holds the server-side grant for this character (cached from an upload/accept
         // response). The "공개" toggle needs grant; see W18 (Grant || IsCurrent allows the attempt).
-        bool Grant = false);
+        bool Grant = false,
+        // True when the app's own 공개 자동화 apply failed to reach the server. PublicCharacter is false and
+        // correct (the transition never landed) and uploads are unaffected — the UI should say the automatic
+        // apply failed and let the user re-apply 공개 by hand, because nothing retries it.
+        bool PublicApplyFailed = false);
 
     /// <summary>All locally-remembered characters and their consent (the management list), current character
     /// first then most-recently-updated. <c>CanSetPublic</c> is false for a legacy entry that has no stored
@@ -444,7 +516,8 @@ public sealed class StatsConsentManager
                 bool named = !string.IsNullOrWhiteSpace(nickname) && server > 0;
                 return new CharacterConsentInfo(
                     kv.Key, nickname, server, job, c.State, c.UploadEnabled, c.PublicCharacter,
-                    c.UpdatedAt, isCurrent, CanSetPublic: isCurrent || named, Grant: c.Grant);
+                    c.UpdatedAt, isCurrent, CanSetPublic: isCurrent || named, Grant: c.Grant,
+                    PublicApplyFailed: c.PublicApplyFailed);
             })
             // Hide name-less legacy records (consented in a prior session before names were stored): a list of
             // "이름 없음 (이전 기록)" rows is confusing. The consent record stays (uploads honor the prior decision);
@@ -499,10 +572,28 @@ public sealed class StatsConsentManager
     /// accept path; a non-current character re-issues an accept event from its stored identity (name+server)
     /// and updates only its own remembered entry. No-op if the character isn't accepted or can't be rebuilt.</summary>
     public void SetCharacterPublic(string identityHash, bool publicCharacter, string clientVersion = "dev")
+        => SetCharacterPublicCore(identityHash, publicCharacter, clientVersion, automatic: false);
+
+    /// <param name="automatic">True only for the 공개 자동화 apply that <see cref="MarkGranted"/> fires: nobody
+    /// pressed anything, so a failure here may not cost them their uploads (see
+    /// <see cref="SaveAutomaticSendFailure"/>) and must be reported on the character record instead of silently.</param>
+    private void SetCharacterPublicCore(string identityHash, bool publicCharacter, string clientVersion, bool automatic)
     {
         if (identityHash == CurrentIdentityHash())
         {
-            Accept(LocalInfo().UploadEnabled, publicCharacter, clientVersion);
+            // The automatic path has no UI gate in front of it (the manual toggle only exists on an accepted
+            // row), so it checks the one thing the UI would have: a character that is no longer accepted — a
+            // remote revoke adopted while an upload was still in flight — must not be re-accepted by a late
+            // grant. Fail-safe direction is always 덜 공개.
+            if (automatic && LocalInfo().State != State.accepted.ToString())
+            {
+                SetPendingPublic(identityHash, false);
+                return;
+            }
+
+            // A fresh attempt supersedes the previous one's verdict; re-stamped below if this one fails too.
+            MarkPublicApplyFailed(identityHash, false);
+            Accept(LocalInfo().UploadEnabled, publicCharacter, clientVersion, automatic: automatic);
             return;
         }
 
@@ -524,6 +615,7 @@ public sealed class StatsConsentManager
             return;
         }
 
+        MarkPublicApplyFailed(identityHash, false); // a fresh attempt supersedes the previous verdict
         var character = new ConsentEventCharacter(identityHash, entry.Nickname!, entry.Server, publicCharacter, entry.Job, 0);
         try
         {
@@ -547,6 +639,12 @@ public sealed class StatsConsentManager
         catch
         {
             // leave the entry unchanged on a generic failed sync; the list re-reads the old state
+            if (automatic)
+            {
+                // Nobody asked for this one, so silence is the wrong answer: the record carries the failure so
+                // the list can show 공개 as off (it is — the send never landed) and offer a manual retry.
+                MarkPublicApplyFailed(identityHash, true);
+            }
         }
     }
 
@@ -556,6 +654,7 @@ public sealed class StatsConsentManager
     public void RevokeCharacter(string identityHash, string clientVersion = "dev")
     {
         SetPendingPublic(identityHash, false); // revoking cancels any remembered auto-public intent
+        MarkPublicApplyFailed(identityHash, false); // ...and the '자동 공개 적용 실패' 알림도 함께
         if (identityHash == CurrentIdentityHash())
         {
             Revoke(clientVersion);
@@ -569,12 +668,14 @@ public sealed class StatsConsentManager
                 new ConsentEventRequest(State.revoked.ToString(), ConsentVersion, IdentityHash: identityHash), clientVersion);
             UpsertCharacter(identityHash, State.revoked, false, false,
                 response.ConsentVersion ?? ConsentVersion, ParseRemoteTime(response.UpdatedAt) ?? _clock(),
-                entry?.Nickname, entry?.Server ?? 0, entry?.Job);
+                entry?.Nickname, entry?.Server ?? 0, entry?.Job, explicitChoice: true);
         }
         catch
         {
+            // ⚠ explicitChoice: true — 전송 실패와 무관하게 '사용자가 눌렀다'를 남긴다. 없으면 서버에 남은
+            // accepted 를 RefreshFromServer 가 복구 대상으로 읽어 이 캐릭터의 업로드를 되살린다.
             UpsertCharacter(identityHash, State.revoked, false, false, ConsentVersion, _clock(),
-                entry?.Nickname, entry?.Server ?? 0, entry?.Job);
+                entry?.Nickname, entry?.Server ?? 0, entry?.Job, explicitChoice: true);
         }
     }
 
@@ -760,7 +861,8 @@ public sealed class StatsConsentManager
         // pending flag on success and no-ops if the character isn't in an acceptable state.
         if (entry.PendingPublic)
         {
-            SetCharacterPublic(identityHash, publicCharacter: true, clientVersion);
+            // automatic: true — 여기서 전송이 실패해도 사용자가 켜 둔 업로드를 끄지 않는다(SaveAutomaticSendFailure).
+            SetCharacterPublicCore(identityHash, publicCharacter: true, clientVersion, automatic: true);
         }
     }
 
@@ -781,6 +883,31 @@ public sealed class StatsConsentManager
         entry.UploadEnabled = false;
         entry.PublicCharacter = false;
         entry.UpdatedAt = _clock();
+        map[identityHash] = entry;
+        _props.SetProperty(KeyCharacters, JsonSerializer.Serialize(map));
+    }
+
+    /// <summary>Record (or clear) "the app's own 공개 적용이 실패했다" on a character record, for the management
+    /// list to surface. Local only; never sent. See <see cref="CharConsent.PublicApplyFailed"/>.</summary>
+    private void MarkPublicApplyFailed(string identityHash, bool failed)
+    {
+        if (string.IsNullOrWhiteSpace(identityHash))
+        {
+            return;
+        }
+
+        Dictionary<string, CharConsent> map = LoadCharacters();
+        if (!map.TryGetValue(identityHash, out CharConsent? entry))
+        {
+            return; // no record = nothing to annotate (and never create one just to carry a notice)
+        }
+
+        if (entry.PublicApplyFailed == failed)
+        {
+            return;
+        }
+
+        entry.PublicApplyFailed = failed;
         map[identityHash] = entry;
         _props.SetProperty(KeyCharacters, JsonSerializer.Serialize(map));
     }
@@ -814,6 +941,13 @@ public sealed class StatsConsentManager
         _props.SetProperty(KeyCharacters, JsonSerializer.Serialize(map));
     }
 
+    /// <summary>True when the app's own 공개 자동화 apply for this character failed to reach the server and the
+    /// user has not re-tried since. The 캐릭터 목록 uses it to explain why 공개 is off after they turned it on.</summary>
+    public bool HasPublicApplyFailure(string identityHash) =>
+        !string.IsNullOrWhiteSpace(identityHash)
+        && LoadCharacters().TryGetValue(identityHash, out CharConsent? failedEntry)
+        && failedEntry.PublicApplyFailed;
+
     /// <summary>True when this install holds the server-side grant for <paramref name="identityHash"/> (cached).
     /// Used by the public-transition gate (§2.4) and the management UI.</summary>
     public bool HasGrant(string identityHash) =>
@@ -843,6 +977,13 @@ public sealed class StatsConsentManager
         // server refused it. Remembered here so the first upload that earns the grant auto-applies public instead
         // of making them re-toggle it. Cleared once public is applied, the user turns it off, or revokes.
         [JsonPropertyName("pendingPublic")] public bool PendingPublic { get; set; }
+
+        // 공개 자동화 the app tried and could not deliver (the send failed for a reason other than ownership).
+        // The character is NOT public and uploads are untouched; this exists so the 캐릭터 목록 can say the
+        // automatic apply failed instead of leaving the user staring at an unchecked box they did check.
+        // Cleared by the next attempt or by a revoke. Nothing retries it on its own — MarkGranted fires once
+        // per grant — so the retry is the user's own toggle.
+        [JsonPropertyName("publicApplyFailed")] public bool PublicApplyFailed { get; set; }
 
         /// <summary>
         /// The user actually pressed a button for THIS character on THIS install (동의 / 거부 / 철회 / 토글).

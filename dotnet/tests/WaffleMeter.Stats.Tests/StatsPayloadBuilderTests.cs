@@ -402,12 +402,24 @@ public sealed class StatsPayloadBuilderTests
         Assert.Equal("own_power_unresolved", Assert.IsType<BuildResult.Skip>(result).Reason);
     }
 
+    /// <summary>
+    /// 종전에는 참가자 한 명의 전투력을 못 읽으면 <b>전투를 통째로 버렸다</b>(`participant_power_unresolved`).
+    /// 이제는 그 참가자의 <c>Power</c> 만 null 로 나가고 전투는 산다 — 서버가 NULL 을 파티 편차에서 무시하고
+    /// <c>power &gt;= 400000</c> 게이트로 그 사람만 배제한다(2026-09-18 웹 `7a7b23e`).
+    /// <para>🔑 참가자를 배열에서 <b>빼는</b> 것으로 대신하면 안 된다 — 편차는 자격자가 아니라 참가자 전원으로
+    /// 계산하고, 성역에서는 <c>sub_party_known</c> 이 깨져 R0/R1 자격을 잃는다. 그래서 "행은 남기고 값만 null".</para>
+    /// </summary>
     [Fact]
-    public void Skips_when_a_participant_power_unresolved()
+    public void An_unresolved_participant_power_no_longer_discards_the_battle()
     {
         DataManager dm = TwoPlayerParty(allyPower: 0);
+
         BuildResult result = Builder(dm).Build(SampleLog(dm), "1.7.9", killConfirmed: true);
-        Assert.Equal("participant_power_unresolved", Assert.IsType<BuildResult.Skip>(result).Reason);
+
+        StatsUploadPayload payload = Assert.IsType<BuildResult.Payload>(result).Value;
+        Assert.Equal(2, payload.Participants.Count);                       // 행은 그대로 둘 다 있다
+        Assert.Null(payload.Participants.Single(p => !p.IsUploader).Power); // 못 읽은 쪽만 null
+        Assert.NotNull(payload.Participants.Single(p => p.IsUploader).Power);
     }
 
     [Fact]

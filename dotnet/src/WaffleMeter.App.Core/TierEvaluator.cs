@@ -74,9 +74,17 @@ public static class TierEvaluator
         }
 
         string? dungeonLabel = DungeonLabel(artifact, placement);
-        int partySize = report.Contributors.Count;
-        int partyMode = partySize is 8 or 10 ? 10 : 5;
-        bool trusted = IsSynergyTrusted(report, partySize);
+        // 🔑 partyMode 는 **던전 카테고리의 순함수**다. 서버가 그렇게 발행한다:
+        //   (CASE WHEN category = '성역' THEN 10 ELSE 5 END)
+        // 발행본 실측(artifact 62b07db4aabc29eb, 7,646행)에서 (성역,10) / (원정·초월,5), **예외 0건**.
+        // ⚠️ 종전에는 `Contributors.Count`(= 딜을 넣은 사람 수)로 유도했다. 그러면 버스팟처럼 일부만 딜한
+        // 공대가 5인 분포로 채점되고, 더 나쁘게는 "파티라서 신뢰"로 시너지 검사를 통째로 건너뛴다.
+        // 같은 저장소의 업로드 빌더가 이 유도를 명시적으로 거부하는 이유와 같다(StatsPayloadBuilder.cs:526).
+        // 전제: 서버가 성역에 p=5 행을 싣기 시작하면 이 매핑이 깨진다.
+        bool isRaid = artifact.CategoryIdForDungeon(placement.DungeonOrd)
+                      == artifact.CategoryId(EncounterInfo.RaidCategory);
+        int partyMode = isRaid ? 10 : 5;
+        bool trusted = IsSynergyTrusted(report, isRaid);
 
         foreach (User user in report.Contributors)
         {
@@ -86,7 +94,7 @@ public static class TierEvaluator
             }
 
             string? job = user.Job is JobClass jc ? jc.ClassName() : null;
-            int synergyCount = SynergyCountFor(report, user, partySize, trusted);
+            int synergyCount = SynergyCountFor(report, user, trusted);
 
             TierCohort? cohort = TierLadder.CohortFor(
                 artifact, target.Mob.Code, job, user.Power, durationMs, synergyCount, partyMode, trusted, trial);
@@ -132,22 +140,35 @@ public static class TierEvaluator
 
     /// <summary>
     /// Can this report's synergy be trusted to describe what each player ACTUALLY received?
-    /// <para>For 5-man content the whole party is one synergy group, so yes. For an 8/10-man raid it is only
-    /// true when the roster resolved completely — every participant holds a distinct slot covering 1..N. Without
-    /// that the mask would describe the whole raid, claiming synergies from the other sub-party that the player
-    /// never received, which is exactly why the server excludes those rows from its synergy-bucketed rungs.</para>
+    /// <para>🔑 서버 규칙을 그대로 옮긴 것이다: <c>(category &lt;&gt; '성역' OR sub_party_known)</c>. 즉
+    /// <b>비-성역은 슬롯을 아예 보지 않고 항상 신뢰</b>하고, 성역만 슬롯 정합성을 본다. 미터가 여기서 서버보다
+    /// 조금이라도 빡세면 그 전투는 R0 밖으로 밀려나는데, <b>밴드행은 rung 0 에만 실리므로</b>(빌더가 모든 밴드행을
+    /// <c>0 AS rung</c> 으로 싣는다) 시너지 버킷뿐 아니라 <b>전투력 밴드까지 통째로 잃는다.</b></para>
+    /// <para>성역의 조건은 <c>hasCoherentRaidSlots</c> 와 동일하다 — <b>참가자 전원</b>이 1..10 범위의 서로 다른
+    /// 슬롯을 갖는다. ⚠️ <b>출석 요구는 없다.</b> "로스터 전원이 딜을 넣었을 것"은 예전 규칙이었고 의도적으로
+    /// 버려졌다 — 기믹 분할 전투는 원리적으로 만족할 수 없기 때문이다(케투는 항상 slot 5~8 만, 라후는 항상
+    /// slot 1~5 만 그 보스와 싸운다). 실측으로도 2.9.2 공대 46건에서 29→31 건을 살렸고, 더 보수적인 규칙은
+    /// 29건 그대로여서 아무것도 살리지 못했다.</para>
+    /// <para>🔴 <b>정원은 10 뿐이다.</b> 서버 <c>RAID_ROSTER_SIZES = [10]</c>. 8 을 공대로 취급하면 서버가
+    /// 신뢰하지 않는 전투를 미터가 신뢰하게 된다(= 그 전투가 속한 적 없는 코호트의 백분위를 주장한다).
+    /// 코드 어딘가에 남아 있는 4+4 는 <c>rosterSize</c> 를 안 보내던 시절의 옛 기록 전용 경로다.</para>
     /// </summary>
-    private static bool IsSynergyTrusted(DpsReport report, int partySize)
+    private static bool IsSynergyTrusted(DpsReport report, bool isRaid)
     {
-        if (partySize is not (8 or 10))
+        if (!isRaid)
         {
             return true;
+        }
+
+        if (report.PartyRosterSize != RaidRosterSize)
+        {
+            return false;
         }
 
         var slots = new HashSet<int>();
         foreach (User user in report.Contributors)
         {
-            if (!report.PartySlots.TryGetValue(user.Id, out int slot) || slot < 1 || slot > partySize)
+            if (!report.PartySlots.TryGetValue(user.Id, out int slot) || slot < 1 || slot > RaidRosterSize)
             {
                 return false;
             }
@@ -158,15 +179,20 @@ public static class TierEvaluator
             }
         }
 
-        return slots.Count == partySize;
+        // 종전의 `slots.Count == partySize` 는 위 두 검사가 참이면 항상 참인 죽은 조건이었고, 출석을 요구하는
+        // 것처럼 읽혀 오해를 불렀다. 서버는 출석을 요구하지 않는다.
+        return slots.Count > 0;
     }
+
+    /// <summary>공대 정원. 서버 <c>RAID_ROSTER_SIZES</c> 가 <b>10 하나</b>다 — 8인 공대는 존재하지 않는다.</summary>
+    private const int RaidRosterSize = 10;
 
     /// <summary>Distinct synergy classes in the player's own group, capped at 3 (the server caps the same way,
     /// so a 4-synergy party folds into the 3 bucket rather than creating a rare cell). The mask includes the
     /// player's own class — a 치유성 counts their own 축복 like everyone else's.</summary>
-    private static int SynergyCountFor(DpsReport report, User user, int partySize, bool trusted)
+    private static int SynergyCountFor(DpsReport report, User user, bool trusted)
     {
-        int group = SubGroupOf(report, user, partySize, trusted);
+        int group = SubGroupOf(report, user, trusted);
         int mask = 0;
         foreach (User other in report.Contributors)
         {
@@ -175,7 +201,7 @@ public static class TierEvaluator
                 continue;
             }
 
-            if (group > 0 && SubGroupOf(report, other, partySize, trusted) != group)
+            if (group > 0 && SubGroupOf(report, other, trusted) != group)
             {
                 continue;
             }
@@ -192,15 +218,19 @@ public static class TierEvaluator
         return Math.Min(System.Numerics.BitOperations.PopCount((uint)mask), 3);
     }
 
-    /// <summary>1 or 2 for a trusted raid (slots split in half: 10-man 1~5 / 6~10, 8-man 1~4 / 5~8),
-    /// 0 when the whole party is one group.</summary>
-    private static int SubGroupOf(DpsReport report, User user, int partySize, bool trusted)
+    /// <summary>
+    /// 신뢰된 공대면 1 또는 2(10인 정원을 반으로: 1~5 / 6~10), 아니면 0(파티 전체가 한 그룹).
+    /// <para>⚠️ 경계는 <b>정원</b>의 절반이지 <b>딜을 넣은 사람 수</b>의 절반이 아니다. 종전 코드는 후자여서
+    /// 10인 공대에서 딜러가 8명이면 슬롯 5가 <c>5 &gt; 4</c> 로 <b>반대편 파티</b>의 시너지 마스크로 평가됐다 —
+    /// 가장 구체적인 rung(R0)에서 가장 틀린 코호트를 고르는 셈이다.</para>
+    /// </summary>
+    private static int SubGroupOf(DpsReport report, User user, bool trusted)
     {
-        if (!trusted || partySize is not (8 or 10))
+        if (!trusted)
         {
             return 0;
         }
 
-        return report.PartySlots.TryGetValue(user.Id, out int slot) && slot > partySize / 2 ? 2 : 1;
+        return report.PartySlots.TryGetValue(user.Id, out int slot) && slot > RaidRosterSize / 2 ? 2 : 1;
     }
 }

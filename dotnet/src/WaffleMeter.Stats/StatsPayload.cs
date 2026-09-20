@@ -237,7 +237,19 @@ public sealed record StatsParticipantPayload(
     string? IdentityHash,
     bool IsUploader,
     string? Job,
-    int Power,
+    /// <summary>
+    /// 이 참가자의 전투력, 또는 <b>못 읽었으면 null</b>. 0 이 아니라 null 이다 — 0 은 값이고 null 은 "모른다"다.
+    /// <para>서버는 이 컬럼이 원래부터 nullable 이었고, 티어 엔진의 파티 편차 계산이 NULL 을 <b>설계상 무시</b>하며
+    /// (<c>refresh-tier-engine.sql</c>), <c>power >= 400000</c> 게이트가 NULL 을 자동 배제한다. 즉 null 을 보내면
+    /// <b>그 참가자만</b> 집계에서 빠지고 전투는 산다. 종전에는 한 명이라도 못 읽으면 전투를 통째로 버렸다.</para>
+    /// <para>🔑 <b>참가자를 배열에서 빼는 것으로 대신하면 안 된다.</b> 파티 편차는 자격자가 아니라 참가자 전원으로
+    /// 계산하도록 일부러 설계돼 있어(원정·초월 전투의 29.04%가 그 규칙으로 걸러진다) 한 명을 빼면 편차가 줄어
+    /// 들어와선 안 될 전투가 들어온다. 성역에서는 <c>sub_party_known</c> 이 배열과 정원의 일관성을 보므로
+    /// <c>synergyTrusted=false</c> 가 되어 R0/R1 자격까지 잃는다. 게다가 스키마가 그걸 막지 않아 400 도 안 난다.</para>
+    /// <para>⚠️ <see cref="StatsJson"/> 이 <c>WhenWritingNull</c> 이라 그냥 두면 이 키가 <b>통째로 생략</b>된다.
+    /// 서버 스키마는 nullable 이지 optional 이 아니므로 생략은 거부된다 — 그래서 <c>Never</c> 로 명시 출력한다.</para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Power,
     StatsResultPayload Result,
     IReadOnlyList<StatsSkillPayload> Skills,
     IReadOnlyList<StatsBuffPayload> Buffs,

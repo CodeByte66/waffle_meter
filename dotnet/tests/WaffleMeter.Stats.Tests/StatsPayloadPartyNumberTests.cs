@@ -180,7 +180,8 @@ public sealed class StatsPayloadPartyNumberTests
     public void A_stale_roster_snapshot_does_not_supply_combat_power()
     {
         // Fail-safe direction: past the freshness window the roster is somebody else's party, so the fallback
-        // stays out of it and the battle is skipped exactly as before rather than tagged with a stale number.
+        // stays out of it rather than tagging the participant with a stale number. 그 결과는 이제 "전투 폐기"가
+        // 아니라 "그 참가자만 null" 이다 — 값을 모르는 것과 값이 0 인 것은 다르고, 모른다고 전투를 버리지 않는다.
         long now = 1_000_000;
         var dm = new DataManager { Clock = () => now };
         dm.SaveNickname(1, "Me", isExecutor: true, server: 3, jobByte: 5);
@@ -208,7 +209,8 @@ public sealed class StatsPayloadPartyNumberTests
         var builder = new StatsPayloadBuilder(dm, publicCharacterProvider: () => false, clock: () => 1_700_000_000_000);
         BuildResult result = builder.Build(log, "2.0.0", killConfirmed: true);
 
-        Assert.Equal("participant_power_unresolved", Assert.IsType<BuildResult.Skip>(result).Reason);
+        StatsUploadPayload payload = Assert.IsType<BuildResult.Payload>(result).Value;
+        Assert.Null(payload.Participants.Single(p => !p.IsUploader).Power); // 낡은 스냅샷 값이 새어 들어오지 않는다
     }
 
     [Fact]
