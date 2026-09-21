@@ -102,6 +102,11 @@ public sealed class StreamProcessor
     private const int BuffApply2Key = 0x2B | (0x38 << 8);      // 0x382B
     // Skill cooldown snapshot (0x38 category): a table of {u32 skillCode, varint remainingMs} for the local
     // player's hotbar (remaining 0 = ready). Drives the buff overlay's "grayed while on cooldown" option.
+    // 0x5100 MySkillList_NT — 본인이 **배운** 스킬 전량 스냅샷. 쿨타임 픽커가 직업 밴드의 카탈로그 스킬을
+    // 전량 프리필하느라 안 배운 칸까지 띄우던 것을 좁히는 데 쓴다(실측 저숙련 부캐는 24개 중 15개만 보유).
+    // ⚠️ 언제 오는지는 확정 못 했다 — 실전 던전 세션에서 존 전환 14회 중 2회뿐이다. 그래서 이 스냅샷은
+    //    '축소 근거'가 아니라 **없어도 되는 표시 힌트**로만 쓴다(미상이면 밴드 전량 = fail-open).
+    private const int MySkillListKey = 0x00 | (0x51 << 8);     // 0x5100
     private const int CooldownKey = 0x47 | (0x38 << 8);        // 0x3847
     // Per-cast cooldown START (multi-actor) — grays the overlay the instant a skill is cast, before the
     // periodic 0x3847 snapshot catches up. remaining = the frame's LAST varint (ground-truth verified: 바이젤/
@@ -268,6 +273,7 @@ public sealed class StreamProcessor
         [BuffApplyKey] = "BuffApply",
         [BuffApply2Key] = "BuffApply2",
         [CooldownKey] = "Cooldown",
+        [MySkillListKey] = "MySkillList",
         [CooldownStartKey] = "CooldownStart",
         [BattleToggleKey] = "BattleToggle",
         [StatSheetDeltaKey] = "StatSheet",
@@ -492,6 +498,9 @@ public sealed class StreamProcessor
                     break;
                 case CooldownKey:
                     ParseCooldownPacket(packet, lengthInfo, extraFlag, arrivedAt);
+                    break;
+                case MySkillListKey:
+                    ParseMySkillList(packet, lengthInfo, extraFlag, arrivedAt);
                     break;
                 case CooldownStartKey:
                     ParseCooldownStartPacket(packet, lengthInfo, extraFlag, arrivedAt);
@@ -2618,6 +2627,140 @@ public sealed class StreamProcessor
     /// for the local player's hotbar (remaining 0 = ready). Emits each record to the data layer, which keys it
     /// by base code for the buff overlay's "grayed while on cooldown" option. Raw code is passed through so the
     /// data layer owns the normalization. Bounds-guarded + swallowing like the other 0x38 parsers.</summary>
+    /// <summary>
+    /// 0x5100 MySkillList_NT — 본인이 배운 스킬 전량.
+    /// <code>
+    /// [count varint]
+    /// record × count:
+    ///   [mask u8][skillId u32 LE][level u8][original u8][additional u8 × 5]
+    ///   + (mask &amp; 0x01 ? cooltime varint)     ← ★ varint 다. 고정 u32 아니다.
+    ///   + [3바이트 고정, 실측 4538/4538 전부 0]
+    ///   + (mask &amp; 0x02 ? varint) + (mask &amp; 0x04 ? u8) + (mask &amp; 0x08 ? varint)
+    /// </code>
+    /// <para>🔴 <c>cooltime</c> 을 고정 u32 로 읽으면 <b>86% 의 스냅샷에서는 멀쩡히 통과한다</b> — 잔여 쿨이
+    /// 실린 레코드가 57스냅샷 중 8개뿐이라서다. 그 8개에서만 어긋나고, 값도 그럴듯해서 눈에 안 띈다
+    /// (흡혈의 검 실측: 고정 u32 는 183,250 을 내는데 그 스킬의 카탈로그 쿨은 90,000, 정답은 42,450).</para>
+    /// <para>가드 넷은 전부 "프레임 통째로 포기" = 보유집합 미갱신 = 밴드 전량 표시로 떨어진다(fail-open).
+    /// 다만 <c>bit1 ⟺ cooltime&gt;0</c> 만은 의미를 모르는 불변식이라 폐기가 아니라 계측으로 남긴다.</para>
+    /// </summary>
+    private void ParseMySkillList(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, long arrivedAt)
+    {
+        try
+        {
+            int o = lengthInfo.Length + (extraFlag ? 1 : 0);
+            if (o + 2 > packet.Length || packet[o] != 0x00 || packet[o + 1] != 0x51)
+            {
+                return;
+            }
+
+            o += 2;
+
+            VarIntOutput count = PacketPrimitives.ReadVarInt(packet, o);
+            if (count.Length <= 0 || count.Value <= 0 || count.Value > 512) // 실측 최대 88
+            {
+                return;
+            }
+
+            o += count.Length;
+
+            var learned = new List<LearnedSkill>(count.Value);
+            for (int i = 0; i < count.Value; i++)
+            {
+                if (o + 12 > packet.Length)
+                {
+                    return;
+                }
+
+                byte mask = packet[o];
+                int code = PacketPrimitives.ParseUInt32Le(packet, o + 1);
+                int level = packet[o + 5];
+                int original = packet[o + 6];
+                int additional = packet[o + 7] + packet[o + 8] + packet[o + 9] + packet[o + 10] + packet[o + 11];
+                o += 12;
+
+                long cooltime = 0;
+                if ((mask & 0x01) != 0)
+                {
+                    VarIntOutput ct = PacketPrimitives.ReadVarInt(packet, o);
+                    if (ct.Length <= 0)
+                    {
+                        return;
+                    }
+
+                    cooltime = ct.Value;
+                    o += ct.Length;
+                }
+
+                if (o + 3 > packet.Length)
+                {
+                    return;
+                }
+
+                o += 3; // 실측 4538/4538 전부 00 00 00. 폭은 고정이고 정체는 미상이다.
+
+                if ((mask & 0x02) != 0)
+                {
+                    VarIntOutput v = PacketPrimitives.ReadVarInt(packet, o);
+                    if (v.Length <= 0)
+                    {
+                        return;
+                    }
+
+                    o += v.Length;
+                }
+
+                if ((mask & 0x04) != 0)
+                {
+                    if (o >= packet.Length)
+                    {
+                        return;
+                    }
+
+                    o++;
+                }
+
+                if ((mask & 0x08) != 0)
+                {
+                    VarIntOutput v = PacketPrimitives.ReadVarInt(packet, o);
+                    if (v.Length <= 0)
+                    {
+                        return;
+                    }
+
+                    o += v.Length;
+                }
+
+                // 레코드 자체가 자기검증한다 — 실측 4538/4538 성립. 어긋나면 레이아웃을 잘못 걷고 있다는 뜻이라
+                // 그 프레임을 통째로 버린다(부분 채택은 보유집합을 조용히 오염시킨다).
+                if (level != original + additional)
+                {
+                    return;
+                }
+
+                if (((mask & 0x02) != 0) != (cooltime > 0))
+                {
+                    // 실측 50/50 으로 성립하지만 왜 그런지는 모른다. 모르는 불변식에 fail-closed 를 걸지 않는다.
+                    _sink.ParserError("my_skill_list", "bit1_cooltime_mismatch");
+                }
+
+                learned.Add(new LearnedSkill(code, level, cooltime));
+            }
+
+            // ★ 진짜 안전망. 앞의 가드를 다 통과해도 여기서 안 맞으면 레이아웃이 바뀐 것이다.
+            if (o != packet.Length)
+            {
+                return;
+            }
+
+            _data.ApplyMySkillSnapshot(learned, arrivedAt);
+            _sink.Meta("my-skill-list", ("count", learned.Count));
+        }
+        catch
+        {
+            // 다른 파서와 같은 정책 — 짧은 버퍼를 읽는 핸들러는 소비자를 죽이지 않는다.
+        }
+    }
+
     private void ParseCooldownPacket(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, long arrivedAt)
     {
         try

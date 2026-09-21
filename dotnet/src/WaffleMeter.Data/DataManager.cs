@@ -1805,6 +1805,18 @@ public sealed class DataManager : ICaptureGameData
                 newExec.TrySetJob(oldExec!.Job, oldExec.JobSource);
             }
 
+            // 0x5100(배운 스킬)은 이 신원 패킷보다 **먼저** 온다(실측 51/51, 같은 밀리초). 그래서 여기서
+            // 무조건 비우면 방금 채운 집합이 매번 즉시 소거된다 — 캐릭터가 진짜 바뀌었을 때만 버리고,
+            // 그 밖에는 주인 없는 집합을 지금 신원에 귀속시킨다.
+            if (identityChanged)
+            {
+                ClearLearnedSkills();
+            }
+            else
+            {
+                BindLearnedSkillsToExecutor(uid);
+            }
+
             if (identityChanged)
             {
                 ClearPartyRosterState();
@@ -2691,6 +2703,105 @@ public sealed class DataManager : ICaptureGameData
     /// skill is used. A permanent "unknown" badge on every untouched icon would cost more than it tells.</para>
     /// <para>Rows the wire has reported are always included even if they fall outside the recognised job — a
     /// job byte that arrived wrong should not blank the overlay for skills we have live data for.</para></summary>
+    // ---- 본인이 배운 스킬 (0x5100) ----
+    //
+    // 쿨타임 픽커는 인식된 직업 밴드의 카탈로그 스킬을 **전량** 프리필한다. 캐릭터가 그 스킬을 배웠는지 알
+    // 방법이 없었기 때문인데, 실측 저숙련 부캐는 카탈로그 24개 중 15개만 갖고 있었다 — 나머지 9칸은 체크해도
+    // 영원히 불이 안 들어온다.
+    //
+    // 🔴 **이 집합은 '축소 근거'가 아니라 '표시 힌트'다.** 저장 모수(CooldownVisibility._all)는 카탈로그
+    // 그대로 두고 여기 프리필 단계에서만 거른다. 모수를 보유집합으로 좁히면 캐릭터마다 모수가 달라져
+    // 프리셋 blob 의 의미가 캐릭터 간에 깨지고, 칩 하나만 눌러도 다른 캐릭터의 숨김 설정이 증발한다
+    // (2026-08-21 사고 경로). 그리고 0x5100 이 언제 올지 확정이 안 됐다 — 실전 던전 세션 존 전환 14회 중
+    // 2회뿐이다. 없으면 종전대로 밴드 전량을 그린다(fail-open).
+    private readonly HashSet<int> _learnedBaseCodes = new();
+    private int _learnedOwner;          // 이 집합이 귀속된 executor uid. 0 = 아직 신원 미확정.
+    private readonly object _learnedGate = new();
+
+    /// <summary>
+    /// 0x5100 스냅샷. 항상 <b>통째로 교체</b>한다.
+    /// <para>🔴 신원으로 지우지 않는다. 0x5100 은 0x3633(본인 로드)보다 <b>먼저</b> 온다 — 실측 51/51,
+    /// 같은 밀리초, 같은 LZ4 번들. "0x3633 이 오면 비운다"로 짜면 방금 채운 집합이 같은 번들 안에서 매번
+    /// 즉시 소거되고, fail-open 이라 증상이 "그냥 아무 효과 없음"이라 눈치채기도 어렵다.
+    /// 대신 <see cref="SaveExecutorId"/> 가 신원이 <b>실제로 바뀌었을 때만</b> 비운다.</para>
+    /// </summary>
+    public void ApplyMySkillSnapshot(IReadOnlyList<LearnedSkill> skills, long arrivedAt)
+    {
+        if (skills is null || skills.Count == 0)
+        {
+            return;
+        }
+
+        lock (_learnedGate)
+        {
+            _learnedBaseCodes.Clear();
+            foreach (LearnedSkill s in skills)
+            {
+                _learnedBaseCodes.Add(BaseSkillCode(s.Code));
+            }
+
+            // 스냅샷은 지금 executor 의 것이다. 신원이 아직 안 왔으면(0x3633 이 바로 뒤에 온다) 0 으로 두고
+            // 그 0x3633 이 귀속시킨다.
+            _learnedOwner = _userRepository.Executor();
+        }
+
+        // 잔여 쿨은 그냥 흘려 보낸다 — SaveCooldown 이 그룹 키로 접고 멱등 병합이라 base+특화 중복 계상이
+        // 이미 방어돼 있다. 0 도 의미가 있다("준비됨").
+        foreach (LearnedSkill s in skills)
+        {
+            SaveCooldown(s.Code, s.CooltimeMs, arrivedAt, 0);
+        }
+    }
+
+    /// <summary>특화 변형을 접어 카탈로그와 같은 base 공간으로 옮긴다.</summary>
+    private static int BaseSkillCode(int code) => code >= 1_000_000 ? code / 10_000 * 10_000 : code;
+
+    /// <summary>이 캐릭터가 그 스킬을 배웠다고 <b>확인된</b> 경우에만 false 를 돌린다 — 스냅샷이 없으면
+    /// 전부 true(fail-open).</summary>
+    private bool LearnedOrUnknown(int baseCode)
+    {
+        lock (_learnedGate)
+        {
+            if (_learnedBaseCodes.Count == 0)
+            {
+                return true;
+            }
+
+            // 집합이 지금 executor 의 것이 아니면 못 믿는다.
+            int owner = _userRepository.Executor();
+            if (_learnedOwner != 0 && owner != 0 && _learnedOwner != owner)
+            {
+                return true;
+            }
+
+            return _learnedBaseCodes.Contains(baseCode);
+        }
+    }
+
+    /// <summary>신원이 실제로 바뀌었다 — 보유집합은 지난 캐릭터 것이다.</summary>
+    private void ClearLearnedSkills()
+    {
+        lock (_learnedGate)
+        {
+            _learnedBaseCodes.Clear();
+            _learnedOwner = 0;
+        }
+    }
+
+    /// <summary>보유집합을 지금 executor uid 에 귀속시킨다. 호출부가 "신원이 안 바뀌었다"를 이미 판정했으므로
+    /// 무조건 옮긴다 — 같은 캐릭터가 존 이동으로 새 uid 를 받은 경우가 여기 해당하고, 옛 uid 를 그대로 두면
+    /// 소유자 불일치로 집합이 통째로 무시된다(#9 의 직업 캐리포워드와 같은 이유).</summary>
+    private void BindLearnedSkillsToExecutor(int uid)
+    {
+        lock (_learnedGate)
+        {
+            if (_learnedBaseCodes.Count > 0)
+            {
+                _learnedOwner = uid;
+            }
+        }
+    }
+
     public IReadOnlyList<SkillCooldownView> ActiveCooldowns(long nowMs)
     {
         int band = User(_userRepository.Executor())?.Job?.SkillBand() ?? 0;
@@ -2732,6 +2843,13 @@ public sealed class DataManager : ICaptureGameData
                 if (info.Job != band || groupState.ContainsKey(info.BaseCode))
                 {
                     continue; // 다른 직업이거나, 그 칸은 위에서 이미 실측 상태로 나갔다
+                }
+
+                // 이 캐릭터가 안 배운 스킬은 프리필하지 않는다 — 체크해도 영원히 불이 안 들어오는 칸이다.
+                // 위에서 실측 쿨이 나간 칸은 여기 안 오므로, 스냅샷이 틀렸더라도 실제로 쓴 스킬은 안 사라진다.
+                if (!LearnedOrUnknown(info.BaseCode))
+                {
+                    continue;
                 }
 
                 // 공유 쿨 그룹의 비대표 스킬: 스토어는 그룹 대표 키 하나에만 쓰이므로 이 칸은 영원히

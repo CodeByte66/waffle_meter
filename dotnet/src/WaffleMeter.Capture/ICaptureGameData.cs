@@ -256,6 +256,11 @@ public interface ICaptureGameData
     /// 사람이 빠진다).</summary>
     void RemovePartyMemberByKey(int key) { }
 
+    /// <summary>0x5100 이 실어 온 "본인이 배운 스킬" 전량 스냅샷. 언제나 <b>통째로 교체</b>한다 — 증분
+    /// (0x380F/0x3810/0x3813)을 따라갈 필요가 없다. 이번 표본에서 증분이 만든 코드 변화는 전부 특화 변형
+    /// suffix 라 base 로 접으면 사라진다.</summary>
+    void ApplyMySkillSnapshot(IReadOnlyList<LearnedSkill> skills, long arrivedAt) { }
+
     /// <summary>0x921B / 0x962B — 파티·공대 멤버의 HP 와 <paramref name="live"/> 플래그.
     /// <para>공대에서는 같은 키가 두 opcode 양쪽에 실려 오므로 <b>멱등</b>이어야 한다.
     /// <paramref name="live"/> 가 {0,1} 밖이면 그 필드만 무효로 보고 <paramref name="hp"/> 는 살려라.</para></summary>
@@ -305,3 +310,10 @@ public sealed class NullCaptureGameData : ICaptureGameData
     public void SaveShugoKey(int baseVal, int bonus) { }
     public void SaveFieldBossTimers(IReadOnlyList<(int Code, long TargetMs)> timers) { }
 }
+
+/// <summary>0x5100 의 레코드 하나 — 본인이 배운 스킬.
+/// <param name="Code">스킬 코드(특화 변형 포함 원본).</param>
+/// <param name="Level">현재 레벨. <c>Original + 증가분 5축</c> 과 항상 일치한다(실측 4538/4538).</param>
+/// <param name="CooltimeMs">이 스냅샷이 도착한 순간의 <b>잔여</b> 쿨타임(0 = 준비됨). 총 쿨이 아니다.</param>
+/// </summary>
+public readonly record struct LearnedSkill(int Code, int Level, long CooltimeMs);
