@@ -31,8 +31,8 @@
         </Setter>
         <Setter Property="LayoutTransform">
             <Setter.Value>
-                <ScaleTransform ScaleX="{Binding Settings.MeterScalePercent, Converter={StaticResource Chrome.PercentScale}}"
-                                ScaleY="{Binding Settings.MeterScalePercent, Converter={StaticResource Chrome.PercentScale}}"/>
+                <ScaleTransform ScaleX="{Binding ScalePercent, Converter={StaticResource Chrome.PercentScale}}"
+                                ScaleY="{Binding ScalePercent, Converter={StaticResource Chrome.PercentScale}}"/>
             </Setter.Value>
         </Setter>
         <Style.Triggers>

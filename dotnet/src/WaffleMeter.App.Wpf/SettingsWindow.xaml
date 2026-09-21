@@ -665,15 +665,19 @@
                                     ToolTip="ttf/otf 파일을 선택해 목록에 추가하고 바로 적용합니다"/>
                         </StackPanel>
 
+                        <!-- 미터 크기. 창 폭이 이 배율을 함께 타므로(MeterScalePolicy) 내부 논리 열 예산은
+                             배율에 불변이다 — 종전에는 폭이 변환 바깥이라 배율을 올릴수록 내부가 오히려
+                             좁아져 이름·태그·배지가 잘렸다. 미터 창의 좌/우 가장자리 드래그가 같은 값을
+                             움직이므로 5단 콤보가 아니라 연속 슬라이더여야 한다(107% 를 콤보는 못 그린다). -->
                         <Grid Margin="0,0,0,14">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                <TextBlock Text="미터 크기" Style="{StaticResource SettingTitle}"/>
-                                <TextBlock Text="미터 전체(글자·행·여백)를 균일하게 확대/축소합니다. 폭은 창 가장자리를 끌어 조절합니다." Style="{StaticResource SettingDesc}" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding MeterScaleTitle}" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="미터 전체(글자·행·여백·창 폭)를 함께 확대/축소합니다. 미터 창의 좌우 가장자리를 끌어서도 조절할 수 있습니다." Style="{StaticResource SettingDesc}" TextWrapping="Wrap"/>
                                 <TextBlock Text="{Binding MeterScaleHint}" Style="{StaticResource SettingDesc}" TextWrapping="Wrap"/>
                             </StackPanel>
-                            <ComboBox Grid.Column="1" Width="190" VerticalAlignment="Center" ItemsSource="{Binding MeterScales}"
-                                      ItemTemplate="{StaticResource OptionItemTemplate}" SelectedValuePath="Value" SelectedValue="{Binding MeterScalePercent}"/>
+                            <Slider Grid.Column="1" VerticalAlignment="Center" Minimum="75" Maximum="130"
+                                    Value="{Binding MeterScalePercent}" TickFrequency="1" IsSnapToTickEnabled="True"/>
                         </Grid>
 
                         <Grid Margin="0,0,0,4">

@@ -23,9 +23,15 @@ public static class WindowResizer
     /// <see cref="WindowResizePolicy.HtUnknown"/>이면 어느 핸들에서 시작됐는지 알 수 없다는 뜻이다.</summary>
     public readonly record struct ResizeEnd(int HitCode, double HeightBefore, double HeightAfter);
 
-    public static void Attach(Window window, double margin = 6, Action<ResizeEnd>? onResizeEnd = null)
+    /// <summary>한 번의 크기 조절 제스처가 <b>시작된</b> 시점 — 잡은 핸들과 그 순간의 창 크기.
+    /// <para>미터는 좌/우 가장자리 드래그를 <b>배율</b>로 읽는데, 그 비율의 분모가 이 시작 폭이다. 상수
+    /// 기본폭을 분모로 쓰면 폭을 이미 조절해 둔 사용자가 가장자리를 잡는 순간 배율이 튄다.</para></summary>
+    public readonly record struct ResizeStart(int HitCode, double Width, double Height);
+
+    public static void Attach(Window window, double margin = 6, Action<ResizeEnd>? onResizeEnd = null,
+        Action<ResizeStart>? onResizeStart = null)
     {
-        var hook = new Hook(window, margin, onResizeEnd);
+        var hook = new Hook(window, margin, onResizeEnd, onResizeStart);
 
         // The window may already be shown (Attach is called after Show), in which case SourceInitialized
         // has fired — add the hook now; otherwise wait for it.
@@ -47,7 +53,8 @@ public static class WindowResizer
 
     /// <summary>Per-window state (the grabbed handle + the height the gesture started at), so the five
     /// windows sharing this class can't read each other's drag.</summary>
-    private sealed class Hook(Window window, double margin, Action<ResizeEnd>? onResizeEnd)
+    private sealed class Hook(Window window, double margin, Action<ResizeEnd>? onResizeEnd,
+        Action<ResizeStart>? onResizeStart)
     {
         private int _lastHit = WindowResizePolicy.HtUnknown;
         private bool _sizing;
@@ -65,6 +72,7 @@ public static class WindowResizer
                 case WmSysCommand when ((int)wParam & ScMask) == ScSize:
                     _sizing = true;
                     _heightAtStart = window.ActualHeight;
+                    onResizeStart?.Invoke(new ResizeStart(_lastHit, window.ActualWidth, _heightAtStart));
                     return IntPtr.Zero;
 
                 case WmExitSizeMove when _sizing:

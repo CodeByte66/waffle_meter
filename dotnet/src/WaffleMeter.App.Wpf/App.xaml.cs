@@ -27,6 +27,15 @@ public partial class App : Application
     // 사용자가 이번 실행에서 세로 핸들로 미터 높이를 고정했는가. 일부러 저장하지 않는다 — 앱을 다시 켜면
     // 행 수 자동 맞춤으로 돌아온다(v2.8.0까지의 거동).
     private bool _meterHeightManual;
+
+    /// <summary>좌/우 가장자리 배율 드래그가 진행 중이면 그 제스처가 시작된 (폭, 배율). 아니면 null.
+    /// <para>비율의 분모를 상수 기본폭이 아니라 <b>제스처 시작 폭</b>으로 잡는 이유는 폭을 이미 조절해 둔
+    /// 사용자가 가장자리를 잡는 순간 배율이 튀지 않게 하기 위해서다.</para></summary>
+    private (double Width, int Scale)? _meterScaleDrag;
+
+    /// <summary>창 폭에 마지막으로 반영한 배율. 설정에서 배율이 바뀌었을 때 <b>바뀌기 전</b> 배율을 알아야
+    /// 논리 열 예산을 옳게 뽑을 수 있다(예산 = 현재폭 ÷ 이전배율).</summary>
+    private int _meterAppliedScale = MeterScalePolicy.ScaleDefault;
     private DpsReport? _lastReport;
     private DetailWindow? _detailWindow;
     private DetailsViewModel? _detailViewModel;
@@ -39,6 +48,10 @@ public partial class App : Application
     /// 본체 폭을 한 번 끌었다고 이 창의 자동 높이가 죽으면 안 되기 때문이다.
     /// </summary>
     private bool _splitRowsHeightManual;
+
+    /// <summary>분리 두 창의 폭에 마지막으로 반영한 배율. 본체와 따로 센다 — 분리모드는 나중에 켜질 수
+    /// 있고, 그때까지 창이 없어 배율 변화를 놓치기 때문이다.</summary>
+    private int _splitAppliedScale = MeterScalePolicy.ScaleDefault;
 
     /// <summary>
     /// 분리 보스칸 창의 자동 높이 래치. ⚠️ 행 창·본체와 **각자** 가져야 한다 — 창 하나의 폭을 끌었다고
@@ -286,23 +299,75 @@ public partial class App : Application
         NameFxSheen.Rebuild(_settings.NameFxBrightnessPercent);
 
         MigrateMeterWidthForTierChip(services.Props);
+        // ⚠️ 순서가 중요하다. LoadWindowWidth 는 `w >= window.MinWidth` 로 게이트하므로 MinWidth 를 먼저
+        // 배율에 맞춰 두지 않으면, 75% 로 줄여 좁게 저장해 둔 폭이 XAML 상수 320 에 걸려 조용히 버려진다.
+        window.MinWidth = MeterScalePolicy.MinWindowWidth(_settings.MeterScalePercent);
         LoadWindowWidth(services.Props, "meterWidth", window);
+        _meterAppliedScale = _settings.MeterScalePercent;
         window.Show();
         _overlayWindow = window;
-        AttachScreenClamp(window);
+        AttachMeterScreenClamp(window);
         ClampWhenLoaded(window); // pull a stale/off-screen restored position back onto a live monitor
         // 미터는 높이를 저장하지 않는다(widthOnly) — 대신 드래그가 끝날 때마다 자동 맞춤을 되살릴지 판단한다.
         // WPF는 크기 조절이 시작되면 방향과 무관하게 SizeToContent를 꺼버리므로(WindowResizePolicy 참조),
         // 폭만 조절한 드래그였다면 여기서 다시 켜줘야 인원 수에 따라 높이가 계속 따라온다.
-        AttachResize(window, services.Props, "meterWidth", "meterHeight", widthOnly: true, onResizeEnd: e =>
-        {
-            _meterHeightManual = WindowResizePolicy.NextManual(
-                _meterHeightManual, e.HitCode, e.HeightBefore, e.HeightAfter);
-            if (!_meterHeightManual)
+        AttachResize(window, services.Props, "meterWidth", "meterHeight", widthOnly: true,
+            // 좌/우 가장자리를 끄는 동안에는 폭을 저장하지 않는다 — 그 폭은 아직 배율 미리보기라서
+            // 확정값이 아니다. 제스처가 끝나며 대입하는 폭 한 번만 저장된다.
+            suppressSave: () => _meterScaleDrag is not null,
+            onResizeStart: e =>
             {
-                window.SizeToContent = SizeToContent.Height;
-            }
-        });
+                // 배율 제스처인지 여기서 정해 둔다. 제스처 도중에는 히트코드를 다시 물을 수 없다.
+                _meterScaleDrag = MeterScalePolicy.MeaningOf(e.HitCode) == MeterScalePolicy.Gesture.Scale
+                    ? (e.Width, _settings.MeterScalePercent)
+                    : null;
+            },
+            onSizeChanged: () =>
+            {
+                // 드래그 중 미리보기. ⚠️ 여기서 창 크기를 대입하지 마라 — 배율을 폭에서 읽는데 폭을
+                // 되쓰면 되먹임이 닫힌다. 확대 중 아래 행이 잠깐 잘려 보이는 건 SizeToContent 가
+                // 제스처 동안 꺼져 있어서고, 손을 떼면 맞는다.
+                if (_meterScaleDrag is (double startWidth, int startScale))
+                {
+                    viewModel.LiveScalePercent =
+                        MeterScalePolicy.ScaleFromDrag(startWidth, startScale, window.ActualWidth);
+                }
+            },
+            onResizeEnd: e =>
+            {
+                if (_meterScaleDrag is (double startWidth, int startScale))
+                {
+                    // 논리 열 예산을 보존한 채 배율만 갈아 끼운다 — 이게 이 기능의 불변식이다.
+                    int pct = viewModel.LiveScalePercent ?? startScale;
+                    double budget = MeterScalePolicy.BaseWidth(startWidth, startScale);
+                    _meterScaleDrag = null;
+                    // ⚠️ 순서가 두 군데에서 중요하다.
+                    //  ① _meterAppliedScale 을 **먼저** 올린다. 안 그러면 아래 설정 대입이 PropertyChanged 로
+                    //     ApplyMeterScaleToWidth 를 깨워, 그 경로가 (아직 미리보기인) 현재 폭에서 예산을 잘못
+                    //     뽑아 폭을 한 번 더 대입한다. 최종값은 어차피 덮이지만 틀린 폭이 잠깐 저장된다.
+                    //  ② LiveScalePercent 는 설정을 올린 **뒤** 비운다. 먼저 비우면 ScalePercent 가 옛 설정값을
+                    //     읽어 변환이 한 프레임 되돌아갔다가 다시 튄다.
+                    _meterAppliedScale = MeterScalePolicy.ClampScale(pct);
+                    _settings.MeterScalePercent = pct;
+                    viewModel.LiveScalePercent = null;
+                    window.MinWidth = MeterScalePolicy.MinWindowWidth(_meterAppliedScale);
+                    window.Width = MeterScalePolicy.WindowWidth(budget, _meterAppliedScale);
+                    // 배율 제스처는 좌/우 전용이라 WindowResizePolicy.IsManualAfterDrag 가 구조적으로
+                    // false 다. 그래도 자동 높이는 명시적으로 되살린다 — 배율이 바뀌면 내용 높이가
+                    // 통째로 달라지므로 이전에 고정해 둔 높이는 더 이상 맞지 않는다.
+                    _meterHeightManual = false;
+                    window.SizeToContent = SizeToContent.Height;
+                    SyncOpenSettingsScaleBaseline();
+                    return;
+                }
+
+                _meterHeightManual = WindowResizePolicy.NextManual(
+                    _meterHeightManual, e.HitCode, e.HeightBefore, e.HeightAfter);
+                if (!_meterHeightManual)
+                {
+                    window.SizeToContent = SizeToContent.Height;
+                }
+            });
         // ③ 수동으로 높이를 고정한 뒤에도 파티 인원(행 수)이 바뀌면 자동 맞춤으로 복귀시킨다. 세로 핸들은
         // 그대로 두되, 맞춰둔 높이가 인원 변화로 어차피 안 맞게 되는 순간엔 자동 추종이 낫다는 사용자 요구.
         // Rows는 증분 동기화(값 교체는 Rows[i]=, 인원 변화만 Add/RemoveAt)라 Count 변화가 곧 인원 변화다.
@@ -333,10 +398,22 @@ public partial class App : Application
             // 바뀌었다"는 뜻이고, 설정 코드 가져오기의 유일한 반영 경로인 MeterSettings.Reload() 가 정확히
             // 그것만 발화한다 — 이름만 비교하면 가져온 레이아웃·행 높이·보스칸 높이가 다음 리포트 틱까지
             // (캡처 헬퍼가 안 붙었으면 영원히) 옛 값으로 남는다.
+            // 배율은 설정에서도 바뀐다(슬라이더·설정 코드 가져오기·기본값 복원). 그 경로에서는 폭을
+            // 여기서 맞춰 줘야 논리 열 예산이 보존된다 — 안 하면 배율만 올라가고 내부는 오히려 좁아져
+            // 이름·태그·배지가 잘린다(이 기능이 고치려는 결함 그 자체).
+            if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName is nameof(MeterSettings.MeterScalePercent))
+            {
+                ApplyMeterScaleToWidth(window, viewModel);
+            }
+
             if (string.IsNullOrEmpty(e.PropertyName)
                 || e.PropertyName is nameof(MeterSettings.MeterLayoutId)
                 or nameof(MeterSettings.RowHeight)
-                or nameof(MeterSettings.BossSlotScalePercent))
+                or nameof(MeterSettings.BossSlotScalePercent)
+                // ⚠️ 배율이 빠져 있었다. 하단을 한 번 끌어 높이를 고정한 사용자가 설정에서 배율을 올리면
+                // 창 높이는 그대로고 내용만 커져 아래 행이 잘렸다 — MeterRowsView 의 ScrollViewer 는
+                // VerticalScrollBarVisibility="Disabled" 라 스크롤바조차 안 났다.
+                or nameof(MeterSettings.MeterScalePercent))
             {
                 viewModel.RefreshLayout();
                 // ⚠️ 자동 높이를 여기서 **명시적으로** 다시 켠다. WindowResizePolicy.ShouldReautoFit 은
@@ -457,6 +534,9 @@ public partial class App : Application
             svm.PlayReplayRequested = () => PlayReplayFromPicker(services, window);
             svm.DummyResetRequested = () => _engine?.RequestDummyReset(); // 허수아비 DPS 초기화 button (settings tab)
             svm.CooldownPickerRequested = () => ToggleCooldownPicker(services);
+            // "미터 폭 490px (화면의 25.5%)" — 사용자가 불만을 말한 단위가 곧 화면 점유율이라, 권장값을
+            // 지어내는 대신 지금 사실을 보고한다. 설정창은 미터 창을 모르므로 App 이 꽂아 준다.
+            svm.SetMeterWidthProbe(() => _overlayWindow?.ActualWidth ?? 0);
             var settingsWindow = new SettingsWindow(svm) { Owner = window };
             LoadWindowSize(services.Props, "settingsWidth", "settingsHeight", settingsWindow);
             settingsWindow.SizeChanged += (_, _) =>
@@ -2440,10 +2520,57 @@ public partial class App : Application
             ? _splitBoss
             : (Window?)overlay ?? (Window?)_overlayWindow ?? _splitBoss!;
 
+    /// <summary>
+    /// 설정에서 배율이 바뀌었을 때 창 폭을 같은 비율로 따라가게 한다 — <b>논리 열 예산 보존</b>.
+    /// <para>드래그 경로는 제스처 시작값을 쓰므로 여기 오지 않는다. 여기는 설정 슬라이더·설정 코드
+    /// 가져오기·기본값 복원처럼 폭을 건드리지 않고 배율만 바뀌는 경로다. 이 동기화가 없으면 배율을
+    /// 올릴수록 내부 논리 폭이 <b>줄어</b> 이름·[서버]태그·전투력 배지가 예외도 로그도 없이 잘린다.</para>
+    /// </summary>
+    private void ApplyMeterScaleToWidth(Window window, OverlayViewModel viewModel)
+    {
+        int pct = _settings?.MeterScalePercent ?? MeterScalePolicy.ScaleDefault;
+        if (pct == _meterAppliedScale)
+        {
+            return;
+        }
+
+        double budget = MeterScalePolicy.BaseWidth(
+            window.ActualWidth > 0 ? window.ActualWidth : window.Width, _meterAppliedScale);
+        _meterAppliedScale = pct;
+        window.MinWidth = MeterScalePolicy.MinWindowWidth(pct);
+        window.Width = MeterScalePolicy.WindowWidth(budget, pct);
+        // ScalePercent 는 Settings 를 읽는 파생 프로퍼티라, 설정 쪽 변경은 여기서 알려야 변환이 다시 붙는다.
+        viewModel.RaiseScaleChanged();
+    }
+
+    /// <summary>
+    /// 미터를 끌어 배율을 확정했을 때, 열려 있는 설정창의 "취소" 기준선을 새 값으로 다시 잡는다.
+    /// <para>안 하면 설정창을 열어 둔 채 미터를 끈 사용자가 취소를 눌렀을 때 <b>자기 드래그가 되돌아간다</b>.
+    /// 반대로 스냅샷에 배율을 아예 안 넣으면 슬라이더로 바꾼 값이 취소로 안 돌아온다 — 둘 다 피하는 조합이
+    /// "스냅샷에 넣되 드래그 확정 시 기준선을 갱신"이다.</para>
+    /// </summary>
+    private void SyncOpenSettingsScaleBaseline() =>
+        (_settingsWindow?.DataContext as SettingsViewModel)?.RebaseMeterScale();
+
     /// <summary>Confine a window to its monitor while multi-monitor movement is off (off-screen guard).</summary>
     private void AttachScreenClamp(Window w)
     {
         w.LocationChanged += (_, _) => ScreenClamp.Apply(w, _settings?.MultiMonitorMode ?? false);
+    }
+
+    /// <summary>
+    /// 미터 전용 클램프. 위치가 바뀔 때뿐 아니라 <b>크기가 바뀔 때도</b> 확인하고, 어느 모니터에 가둘지는
+    /// 창 사각형이 아니라 <b>사용자가 놓아 둔 좌상단</b>으로 정한다.
+    /// <para>배율을 끌어 키울 수 있게 되면서 미터가 처음으로 "스스로 자라는 창"이 됐다. 그런 창이 모니터
+    /// 경계를 넘는 순간 <c>Screen.FromHandle</c> 은 <b>더 큰 조각을 가진 이웃</b>을 고르고, 클램프는 미터를
+    /// 그 이웃 쪽으로 밀어 버린다 — 게임 화면 밖으로 사라지는 길이다. <see cref="ScreenClamp.Apply"/> 의
+    /// anchor 파라미터가 정확히 이 경우를 위해 만들어져 있었는데 미터에는 한 번도 안 넘기고 있었다.</para>
+    /// </summary>
+    private void AttachMeterScreenClamp(Window w)
+    {
+        void Clamp() => ScreenClamp.Apply(w, _settings?.MultiMonitorMode ?? false, new Point(w.Left, w.Top));
+        w.LocationChanged += (_, _) => Clamp();
+        w.SizeChanged += (_, _) => Clamp();
     }
 
     /// <summary>One-shot off-screen reconciliation after a window is shown. LoadPosition/LoadPanelPosition
@@ -2595,20 +2722,34 @@ public partial class App : Application
     /// <summary>Attach edge resize + persist the new size on resize. When <paramref name="widthOnly"/>,
     /// only the width is persisted (the meter's height is content-driven and deliberately not saved, so a
     /// restart always comes back auto-fitted). <paramref name="onResizeEnd"/> fires once per finished
-    /// gesture — the meter uses it to switch height auto-fit back on.</summary>
+    /// gesture — the meter uses it to switch height auto-fit back on.
+    /// <para><paramref name="onResizeStart"/> fires once when a gesture begins; the meter uses it to note
+    /// which handle was grabbed, because that is unanswerable mid-gesture. <paramref name="onSizeChanged"/>
+    /// runs on every size change (including the many that arrive inside the modal resize loop), and
+    /// <paramref name="suppressSave"/> lets the caller hold the width out of the settings file while a
+    /// gesture's value is still only a preview — otherwise a drag rewrites the whole euc-kr property file
+    /// once per pixel.</para></summary>
     private void AttachResize(Window window, PropertyHandler props, string wKey, string hKey,
-        bool widthOnly = false, Action<WindowResizer.ResizeEnd>? onResizeEnd = null)
+        bool widthOnly = false, Action<WindowResizer.ResizeEnd>? onResizeEnd = null,
+        Action<WindowResizer.ResizeStart>? onResizeStart = null, Action? onSizeChanged = null,
+        Func<bool>? suppressSave = null)
     {
         // 전방향(상/하/좌/우 + 네 모서리) 리사이즈 — 모든 창 공통. v2.8.1은 미터에서만 세로/대각 핸들을
         // 막았는데, 그래봐야 SizeToContent는 폭 드래그에도 꺼지므로(실측) 자동 높이는 못 지키면서
         // 사용자가 높이를 맞출 수단만 사라졌다.
-        WindowResizer.Attach(window, onResizeEnd: onResizeEnd);
+        WindowResizer.Attach(window, onResizeEnd: onResizeEnd, onResizeStart: onResizeStart);
         // 마지막으로 저장한 값과 다를 때만 기록한다. 미터는 이제 전투 중 행 수 변동마다 높이가 바뀌며 SizeChanged가
         // 자주 발화하는데, 매번 (변화 없는) 폭까지 SetProperty하면 euc-kr 프로퍼티 파일 전체를 동기 재기록해
         // 장시간 느려짐을 유발한다(longrun-slowdown 계열). 실제 값이 바뀔 때만 저장한다.
         string? lastW = null, lastH = null;
         window.SizeChanged += (_, _) =>
         {
+            onSizeChanged?.Invoke();
+            if (suppressSave?.Invoke() == true)
+            {
+                return;
+            }
+
             string wv = window.ActualWidth.ToString("0", CultureInfo.InvariantCulture);
             if (wv != lastW)
             {
@@ -3434,7 +3575,40 @@ public partial class App : Application
             {
                 Dispatcher.BeginInvoke(ApplySplitUiMode);
             }
-            else if (e.PropertyName == nameof(MeterSettings.BossSlotScalePercent))
+            if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(MeterSettings.MeterScalePercent))
+            {
+                // 분리 두 창도 본체와 **같은 배율**을 탄다(MeterChrome 공유). 폭을 같이 옮기지 않으면
+                // 분리모드에서 본체가 방금 고친 결함이 그대로 재현된다 — 배율만 오르고 논리 열 예산은
+                // 오히려 줄어 이름·배지가 잘린다. 자동 높이도 함께 되살린다(내용 높이가 통째로 바뀐다).
+                Dispatcher.BeginInvoke(() =>
+                {
+                    int pct = _settings!.MeterScalePercent;
+                    if (pct == _splitAppliedScale)
+                    {
+                        return;
+                    }
+
+                    int was = _splitAppliedScale;
+                    _splitAppliedScale = pct;
+                    foreach (OverlayPanelWindow? w in new OverlayPanelWindow?[] { _splitBoss, _splitRows })
+                    {
+                        if (w is null)
+                        {
+                            continue;
+                        }
+
+                        double budget = MeterScalePolicy.BaseWidth(w.ActualWidth > 0 ? w.ActualWidth : w.Width, was);
+                        w.MinWidth = MeterScalePolicy.MinWindowWidth(pct);
+                        w.Width = MeterScalePolicy.WindowWidth(budget, pct);
+                        w.SizeToContent = SizeToContent.Height;
+                    }
+
+                    _splitBossHeightManual = false;
+                    _splitRowsHeightManual = false;
+                });
+            }
+
+            if (e.PropertyName == nameof(MeterSettings.BossSlotScalePercent))
             {
                 // 보스칸 높이가 바뀌면 **보스 창만** 다시 높이를 잰다. 분리 보스 창은 SizeToContent="Height"
                 // 라 보스칸 높이가 곧 창 높이인데, 리사이즈 띠를 한 번 클릭만 해도 그 세션 내내 자동 높이가

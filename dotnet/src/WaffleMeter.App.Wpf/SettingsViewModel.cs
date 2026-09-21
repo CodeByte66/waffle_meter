@@ -583,34 +583,57 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>미터 전체 크기 배율(퍼센트 문자열, ComboBox SelectedValue용). 설정은 int로 저장된다.</summary>
-    public string MeterScalePercent
+    /// <summary>미터 전체 크기 배율(퍼센트). 75~130 연속이고, 미터 창의 좌/우 가장자리를 끌어도 같은 값이
+    /// 움직인다. 100% 근처는 디텐트로 붙는다 — 연속 슬라이더에서 "보통"이 안 잡히면 사용자는 영영 99%에
+    /// 머문다.</summary>
+    public int MeterScalePercent
     {
-        get => _settings.MeterScalePercent.ToString(CultureInfo.InvariantCulture);
+        get => _settings.MeterScalePercent;
         set
         {
-            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int p))
+            int p = MeterScalePolicy.Detent(MeterScalePolicy.ClampScale(value));
+            if (p == _settings.MeterScalePercent)
             {
-                _settings.MeterScalePercent = p;
-                OnPropertyChanged();
+                return;
             }
+
+            _settings.MeterScalePercent = p;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MeterScaleTitle));
+            OnPropertyChanged(nameof(MeterScaleHint));
         }
     }
 
-    /// <summary>미터 크기 배율 선택지(퍼센트). 값이 문자열이라 <see cref="MeterScalePercent"/>와 짝이 맞는다.</summary>
-    public IReadOnlyList<SettingOption> MeterScales { get; } = new[]
+    public string MeterScaleTitle => $"미터 크기 — {_settings.MeterScalePercent}%";
+
+    /// <summary>
+    /// 지금 화면과 지금 미터가 실제로 어떤 관계인지 보고한다 — "현재 화면 1920×1080 · 미터 폭 490px (화면의 25.5%)".
+    /// <para>종전에는 <c>{ get; } = BuildScaleHint()</c> 라 <b>생성자에서 한 번</b> 계산됐고, 물리 px 만 보고
+    /// DPI 를 전혀 안 읽어 4K@150%(실효 2560×1440, 이미 넉넉한 환경) 사용자에게도 "권장 115~130%"라고
+    /// <b>틀린 방향</b>으로 안내했다. 권장값을 지어내는 대신 사실만 말한다 — 사용자가 불만을 말한 단위가
+    /// 곧 <b>화면 점유율</b>이기 때문이다.</para>
+    /// </summary>
+    public string MeterScaleHint => BuildScaleHint(_meterWidthProbe?.Invoke() ?? 0);
+
+    /// <summary>현재 미터 창의 폭(DIP)을 읽어 오는 프로브. App 이 꽂아 준다(설정창은 미터를 모른다).</summary>
+    private Func<double>? _meterWidthProbe;
+
+    public void SetMeterWidthProbe(Func<double> probe)
     {
-        new SettingOption("매우 작게 (75%)", "75"),
-        new SettingOption("작게 (85%)", "85"),
-        new SettingOption("보통 (100%)", "100"),
-        new SettingOption("크게 (115%)", "115"),
-        new SettingOption("아주 크게 (130%)", "130"),
-    };
+        _meterWidthProbe = probe;
+        OnPropertyChanged(nameof(MeterScaleHint));
+    }
 
-    /// <summary>현재 주 모니터 해상도 + 권장 배율 힌트("현재 화면 2560×1440 · 권장 100%"). 감지 실패 시 빈 문자열.</summary>
-    public string MeterScaleHint { get; } = BuildScaleHint();
+    /// <summary>미터를 끌어 배율이 확정됐을 때 취소 기준선을 새 값으로 다시 잡고 화면을 갱신한다.</summary>
+    public void RebaseMeterScale()
+    {
+        _snapshot = _snapshot with { MeterScalePercent = _settings.MeterScalePercent };
+        OnPropertyChanged(nameof(MeterScalePercent));
+        OnPropertyChanged(nameof(MeterScaleTitle));
+        OnPropertyChanged(nameof(MeterScaleHint));
+    }
 
-    private static string BuildScaleHint()
+    private static string BuildScaleHint(double meterWidthDip)
     {
         try
         {
@@ -621,8 +644,21 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             }
 
             int w = s.Bounds.Width, h = s.Bounds.Height;
-            string rec = h <= 1080 ? "권장 85~100%" : h <= 1440 ? "권장 100%" : "권장 115~130%";
-            return $"현재 화면 {w}×{h} · {rec}";
+            if (meterWidthDip <= 0)
+            {
+                return $"현재 화면 {w}×{h}";
+            }
+
+            // 화면 폭은 물리 px, 미터 폭은 DIP 다. 같은 단위로 맞추지 않으면 고DPI 에서 점유율이 과소 보고된다.
+            double dpi = 1.0;
+            System.Windows.Window? any = System.Windows.Application.Current?.MainWindow;
+            if (any is not null)
+            {
+                dpi = System.Windows.Media.VisualTreeHelper.GetDpi(any).DpiScaleX;
+            }
+
+            double pct = meterWidthDip * (dpi > 0 ? dpi : 1.0) / w * 100.0;
+            return $"현재 화면 {w}×{h} · 미터 폭 {meterWidthDip:0}px (화면의 {pct:0.0}%)";
         }
         catch
         {
@@ -2318,6 +2354,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         FontFamily = DefaultFontFamily;
         RowHeight = 36;
         BossSlotScalePercent = MeterLayout.BossScaleDefault;
+        MeterScalePercent = MeterScalePolicy.ScaleDefault;
         MeterOpacity = 0.4;
         BarStyle = "fill";
         Skin = "dark";
@@ -2837,7 +2874,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         // **이미 저장됐고 되돌릴 수 없음**이 된다.
         string MeterLayoutId,
         bool SplitUiMode,
-        int BossSlotScalePercent)
+        int BossSlotScalePercent,
+        int MeterScalePercent)
     {
         public static Snapshot Capture(MeterSettings s, OverlayController c) => new(
             s.DisplayMode, s.DamageValueMode, s.RowDpsMetric, s.ContributionMode, s.NameDisplay,
@@ -2850,7 +2888,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             s.BuffUiIconSize, s.CooldownUiIconSize, s.CooldownUiPerRow, s.CooldownUiTextColor,
             s.MeterLayoutId,
             s.SplitUiMode,
-            s.BossSlotScalePercent);
+            s.BossSlotScalePercent,
+            s.MeterScalePercent);
 
         public void Apply(MeterSettings s, OverlayController c)
         {
@@ -2864,6 +2903,10 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             // 슬라이더(연속값)는 특히 여기 있어야 한다 — 세터가 즉시 파일에 쓰므로 빠뜨리면 '취소가
             // 안 됨'이 아니라 **이미 저장됐고 되돌릴 수 없음**이 되는데, 사용자는 원래 값을 기억 못 한다.
             s.BossSlotScalePercent = BossSlotScalePercent;
+            // 미터 크기도 같은 이유로 필요하다. 5단 콤보였을 땐 "다시 고르면 끝"이었지만 연속 배율은
+            // 원래 값을 사람이 기억하지 못한다. ⚠️ 미터를 직접 끌어 배율을 바꾼 경우에는 그게 사용자의
+            // 확정 조작이므로 취소가 되돌리면 안 된다 — App 이 RebaseMeterScale 로 기준선을 옮긴다.
+            s.MeterScalePercent = MeterScalePercent;
             s.MeterOpacity = MeterOpacity;
             s.MultiMonitorMode = MultiMonitor;
             s.OverlayTheme = Theme;

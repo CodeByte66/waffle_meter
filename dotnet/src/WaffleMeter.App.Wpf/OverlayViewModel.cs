@@ -204,6 +204,42 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// <summary>Exposed so XAML can bind theme-driven chrome (e.g. combat-time color) directly.</summary>
     public MeterColorTheme Theme { get; }
 
+    private int? _liveScalePercent;
+
+    /// <summary>
+    /// 미터가 <b>지금</b> 그려져야 하는 배율(%). 평소엔 저장된 설정값이고, 좌/우 가장자리를 끄는 동안에만
+    /// <see cref="LiveScalePercent"/> 가 그 위에 얹힌다.
+    /// <para>🔑 배율 <c>ScaleTransform</c> 은 두 군데에 있다 — 본체는 <c>OverlayWindow.xaml</c> 인라인,
+    /// 분리모드 두 창은 <c>Themes/MeterChrome.xaml</c> 의 Style Setter. <b>둘 다 이 프로퍼티를 본다.</b>
+    /// 한쪽만 바꾸면 분리 창만 다른 배율로 뜬다(그 파일 머리말이 이미 경고하는 함정이다).</para>
+    /// </summary>
+    public int ScalePercent => _liveScalePercent ?? Settings.MeterScalePercent;
+
+    /// <summary>
+    /// 드래그 중의 미리보기 배율. 확정 전이라 <b>설정에 쓰지 않는다</b> — 제스처가 끝날 때 한 번만 커밋한다.
+    /// <para>⚠️ 미리보기 중에는 창 크기를 대입하지 마라. 배율을 폭에서 읽는데 폭을 되쓰면 되먹임이 닫힌다.
+    /// 확대 중 아래 행이 잠깐 잘려 보이는 것은 <c>SizeToContent</c> 가 제스처 동안 꺼져 있기 때문이고,
+    /// 손을 떼는 순간 자동 높이가 다시 켜지며 맞는다. 그걸 "고치려고" 드래그 중 Height 를 대입하면 OS 의
+    /// 크기 조절 사각형과 싸우게 된다.</para>
+    /// </summary>
+    public int? LiveScalePercent
+    {
+        get => _liveScalePercent;
+        set
+        {
+            if (_liveScalePercent == value)
+            {
+                return;
+            }
+
+            _liveScalePercent = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ScalePercent)));
+        }
+    }
+
+    /// <summary>설정에서 배율이 바뀌었을 때 뷰를 다시 그리게 한다(드래그가 아닌 경로).</summary>
+    public void RaiseScaleChanged() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ScalePercent)));
+
     private Brush _combatTimeBrush = null!;
     public Brush CombatTimeBrush { get => _combatTimeBrush; private set => Set(ref _combatTimeBrush, value); }
 

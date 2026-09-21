@@ -284,9 +284,19 @@ public partial class OverlayWindow : Window
 
     private void OnDragHandle(object sender, MouseButtonEventArgs e)
     {
-        if (e.ButtonState == MouseButtonState.Pressed)
+        if (e.ButtonState != MouseButtonState.Pressed)
         {
-            DragMove();
+            return;
+        }
+
+        double startLeft = Left, startTop = Top;
+        DragMove();
+        // 실제로 움직였을 때만 알린다. 이동 0인 클릭은 위치를 "새로 정한 것"이 아닌데, 미터는 이제 배율을
+        // 끌어 키울 수 있어 일시적으로 화면 경계에 클램프돼 있을 수 있다 — 그 클램프된 좌표를 집(uiX/uiY)
+        // 으로 저장해 버리면 사용자가 정한 자리가 클릭 한 번마다 조금씩 걸어간다.
+        // OverlayPanelWindow 가 같은 사고를 같은 방식으로 이미 막고 있고, 미터 본체에만 없었다.
+        if (Math.Abs(Left - startLeft) > 0.5 || Math.Abs(Top - startTop) > 0.5)
+        {
             PositionChanged?.Invoke(Left, Top);
         }
     }

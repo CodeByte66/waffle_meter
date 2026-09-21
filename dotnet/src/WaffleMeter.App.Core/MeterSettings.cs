@@ -132,7 +132,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _showLatencyIndicator = ReadBool("showLatencyIndicator", false);
         _vrrCompatMode = ReadBool("vrrCompatMode", true);
         // gameOpt.includeAdvanced: 은퇴(2026-08-08) — 저장된 값은 읽지 않고 그대로 둔다(무해한 고아 키).
-        _meterScalePercent = ReadInt("meterScalePercent", 100);
+        _meterScalePercent = ReadInt("meterScalePercent", MeterScalePolicy.ScaleDefault);
         _showBuffUi = ReadBool("buffUi.show", false);
         _buffUiIconSize = ReadInt("buffUi.iconSize", 40);
         _buffUiTextColor = _props.GetProperty("buffUi.textColor") ?? "#FFFFFF";
@@ -220,8 +220,16 @@ public sealed class MeterSettings : INotifyPropertyChanged
 
     private int _meterScalePercent;
     /// <summary>미터 전체 크기 배율(퍼센트, 기본 100). 오버레이 루트 LayoutTransform로 글자·행·여백까지
-    /// 균일 확대/축소한다(해상도에 맞춘 체감 크기 조절). 폭은 사용자가 계속 드래그로 조절.</summary>
-    public int MeterScalePercent { get => _meterScalePercent; set => SetInt(ref _meterScalePercent, "meterScalePercent", value); }
+    /// 균일 확대/축소하고, <b>창 폭도 같은 비율로 함께 움직인다</b> — 그래야 내부 논리 열 예산이 배율에
+    /// 불변이다(<see cref="MeterScalePolicy"/>). 종전에는 폭이 변환 바깥에 있어 배율을 올릴수록 내부가
+    /// 오히려 좁아졌고 이름·태그·배지가 조용히 잘렸다.
+    /// <para>getter 도 클램프하는 이유: 남의 공유코드는 SettingsBundleApplier 가 값 검증 없이 그대로 심는다.
+    /// 종전에는 설정 UI 가 5단 콤보라 그게 사실상의 클램프였는데, 연속값이 되면서 그 보호가 사라졌다.</para></summary>
+    public int MeterScalePercent
+    {
+        get => MeterScalePolicy.ClampScale(_meterScalePercent);
+        set => SetInt(ref _meterScalePercent, "meterScalePercent", MeterScalePolicy.ClampScale(value));
+    }
 
     private bool _isMinimal;
     public bool IsMinimal { get => _isMinimal; set => SetBool(ref _isMinimal, "isMinimal", value); }

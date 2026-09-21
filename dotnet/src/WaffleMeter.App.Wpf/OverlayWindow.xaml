@@ -78,10 +78,14 @@
     <Border CornerRadius="6" Padding="{Binding Layout.PanelPadding}"
             TextElement.FontFamily="{Binding Settings.FontFamily, Converter={StaticResource FontConv}}">
         <!-- 미터 크기(배율): 루트에 LayoutTransform을 걸어 글자·행·여백까지 균일 확대/축소. SizeToContent=Height라
-             높이는 스케일된 콘텐츠에 자동으로 다시 맞춰진다. 폭(Window.Width)은 사용자가 계속 드래그로 조절. -->
+             높이는 스케일된 콘텐츠에 자동으로 다시 맞춰진다.
+             🔑 폭(Window.Width)은 이 변환 **바깥**이라 짝이 없었다 — 배율을 올리면 내부 논리 폭이 490÷배율로
+             오히려 줄어 이름·[서버]태그·전투력 배지가 예외도 로그도 없이 잘렸다. 이제 App 이 배율이 바뀔 때마다
+             Width 를 같은 비율로 함께 옮겨 논리 열 예산을 보존한다(MeterScalePolicy). 좌/우 가장자리 드래그가
+             이 배율을 움직이고, 모서리·상/하는 종전대로 폭·높이를 직접 바꾼다. -->
         <Border.LayoutTransform>
-            <ScaleTransform ScaleX="{Binding Settings.MeterScalePercent, Converter={StaticResource PercentScale}}"
-                            ScaleY="{Binding Settings.MeterScalePercent, Converter={StaticResource PercentScale}}"/>
+            <ScaleTransform ScaleX="{Binding ScalePercent, Converter={StaticResource PercentScale}}"
+                            ScaleY="{Binding ScalePercent, Converter={StaticResource PercentScale}}"/>
         </Border.LayoutTransform>
         <!-- ⚠️ 배경 기본값을 <Border.Background> 속성 요소로 두면 **로컬 값**이라 아래 트리거가 절대
              못 이긴다(계기판이 투명해지지 않았던 원인). 기본값도 Setter 로 내려야 트리거가 이긴다. -->
