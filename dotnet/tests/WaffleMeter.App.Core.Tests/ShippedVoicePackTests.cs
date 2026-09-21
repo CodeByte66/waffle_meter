@@ -59,6 +59,10 @@ public sealed class ShippedVoicePackTests
         // it, so this exact line is the default path rather than an edge case.
         yield return "알람, 지금입니다";
 
+        // 보스 무력화(그로기) 임박 — App.AnnounceGroggyImminent. 임계값(잔여 20%)을 문구에 넣지 않는 것이
+        // 계약이다: 파일명이 sha256(문구)라 숫자를 문구에 박으면 임계를 바꾸는 순간 클립이 고아가 된다.
+        yield return "그로기 임박";
+
         foreach (string boss in FieldBossNames())
         {
             foreach (int lead in new[] { 5, 10, 30 })
