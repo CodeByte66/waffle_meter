@@ -1772,14 +1772,31 @@ public sealed class DataManager : ICaptureGameData
             // triggers a clear), and the server is compared ONLY when both are known (>0): a truncated 0x3633
             // leaves Server=-1, which must not read as a cross-server switch (that would false-clear a
             // legitimate dungeon party preview on every truncated re-instance).
-            bool identityChanged = false;
-            if (oldExec != null && newExec != null
+            bool identityKnown = oldExec != null
                 && !string.IsNullOrWhiteSpace(oldExec.Nickname)
-                && !string.IsNullOrWhiteSpace(newExec.Nickname))
+                && !string.IsNullOrWhiteSpace(newExec.Nickname);
+            bool identityChanged = false;
+            if (identityKnown)
             {
-                bool nameChanged = !string.Equals(oldExec.Nickname, newExec.Nickname, StringComparison.Ordinal);
+                bool nameChanged = !string.Equals(oldExec!.Nickname, newExec.Nickname, StringComparison.Ordinal);
                 bool serverChanged = oldExec.Server > 0 && newExec.Server > 0 && oldExec.Server != newExec.Server;
                 identityChanged = nameChanged || serverChanged;
+            }
+
+            // 같은 캐릭터가 새 uid로 재등록된 경우(존/인스턴스 로드, 난입) 직업을 넘겨준다. 이게 없으면
+            // 0x9200 이름앵커로 승격된 본인은 Job=null / JobSource=None 으로 출발하고, 본인이 직업 전용
+            // 스킬을 처음 꽂을 때(OwnSkill)까지 직업 미상으로 남는다 — 쿨타임 픽커의 '내 직업만 보기'가
+            // CanFilterByJob => OwnJobBand != 0 이라 아예 잠기고 9직업 221개가 통째로 뜨는 증상이 그것이다.
+            // 0x3633(본인 로드)이 오는 경로는 그 패킷이 직업 바이트를 같이 실어 여기 오기 전에 이미
+            // TrySetJob(Authoritative)을 마쳤으므로, 실제로 비는 건 앵커 승격 경로뿐이다.
+            //
+            // ⚠️ 승격이 아니라 '이관'이다 — TrySetJob이 provenance 사다리를 그대로 지킨다(STRICTLY higher만
+            // 기록). 새 uid가 이미 같은/더 높은 출처로 직업을 잡았으면 건드리지 않고, OwnSkill을 Authoritative로
+            // 강등시키지도 않는다. 캐릭터가 실제로 바뀐 경우(identityChanged)와 한쪽 신원이 비어 있는 경우
+            // (identityKnown == false)는 남의 직업을 칠할 수 있으므로 제외한다.
+            if (identityKnown && !identityChanged)
+            {
+                newExec.TrySetJob(oldExec!.Job, oldExec.JobSource);
             }
 
             if (identityChanged)
