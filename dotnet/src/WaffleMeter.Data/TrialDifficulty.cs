@@ -38,20 +38,29 @@ public readonly record struct TrialDifficulty(int? Timelimit, int? Rebirthlimit,
         : $"시련 {LevelMin}~{LevelMax}단계";
 
     /// <summary>
-    /// The top difficulty — the only one this fight gets ranked at.
+    /// The three axes that change how much damage a run can put out.
     /// <para>보스 강화 4 raises the boss's max HP 120%, its damage amplification 50%, its combat speed 40%
-    /// and its groggy gauge 50%; 바크론 패턴 강화 4 adds 가시 속박, more 덩굴, and 탄환초 소환. Both change
-    /// how much damage a run can put out, so a percentile that mixed them with lower settings would not be
-    /// measuring anything.</para>
-    /// <para>부활 제한 joined the readable knobs once the room's <c>_affix_list</c> was decoded, so this now
-    /// demands all four rather than the three it could see before. 부활 제한 leaves the boss alone, but at
-    /// 16단계 it is 4 regardless — the point of including it is that the level is a NUMBER now, so "top"
-    /// means the same thing here as on the screen.</para>
+    /// and its groggy gauge 50%; 바크론 패턴 강화 4 adds 가시 속박, more 덩굴, and 탄환초 소환. A percentile
+    /// that mixed those with lower settings would not be measuring anything.</para>
+    /// <para>⚠️ 부활 제한 is deliberately NOT here even though it is readable now. This predicate is
+    /// the one older builds could evaluate, and widening it would silently retire every run they can still
+    /// file. Ask <see cref="IsTop16Difficulty"/> when you mean the number on the screen.</para>
+    /// </summary>
+    public bool IsTopDifficulty =>
+        Timelimit == 4 && BossBuff == 4 && SkillUpgrade == 4;
+
+    /// <summary>
+    /// 16단계 — all four knobs at 4, i.e. the level the screen shows.
+    /// <para>부활 제한 joined the readable knobs once the room's <c>_affix_list</c> was decoded. It leaves
+    /// the boss alone, so it is not a damage axis; what it buys is that "top" means here exactly what it
+    /// means on the screen. Kept SEPARATE from <see cref="IsTopDifficulty"/> rather than folded into it —
+    /// the statistics site made the same split (a second axis set was ADDED beside the existing one, not
+    /// substituted for it), and the two repos must not drift on what a name promises.</para>
     /// <para>⚠️ 86 observed rooms put the sum at 16 only 42% of the time, so this is a real filter, not a
     /// formality.</para>
     /// </summary>
-    public bool IsTopDifficulty =>
-        Timelimit == 4 && Rebirthlimit == 4 && BossBuff == 4 && SkillUpgrade == 4;
+    public bool IsTop16Difficulty =>
+        IsTopDifficulty && Rebirthlimit == 4;
 }
 
 /// <summary>

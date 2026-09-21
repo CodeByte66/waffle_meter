@@ -37,7 +37,11 @@ public sealed class TierTrialGateTests
             {
                 new { ord = 5, key = "expedition-bakron-floating-island", name = "바크론의 공중섬", category = "원정" },
             },
-            ["variants"] = new object[] { new { dungeonOrd = 5, ord = 9, label = "시련 13~16단계" } },
+            ["variants"] = new object[]
+            {
+                new { dungeonOrd = 5, ord = 9, label = "시련 13~16단계" },
+                new { dungeonOrd = 5, ord = 10, label = "시련 16단계" },
+            },
             // The trial codes are deliberately absent here — that is the whole point of the gate.
             ["mobs"] = new Dictionary<string, int[]> { ["2300812"] = [5, 2, 3] },
             ["rows"] = new object[]
@@ -73,6 +77,29 @@ public sealed class TierTrialGateTests
 
     private static object TopDifficultyGate() =>
         Gate(new Dictionary<string, int> { ["timelimit"] = 4, ["bossBuff"] = 4, ["skillUpgrade"] = 4 });
+
+    /// <summary>The shape the server actually publishes once 부활 제한 became readable: the four-axis gate
+    /// FIRST, the three-axis gate still behind it. Both point at the same dungeon and boss.</summary>
+    private static object Top16ThenTopGates() => new[]
+    {
+        new
+        {
+            dungeonOrd = 5,
+            variantOrd = 10,
+            mobs = new Dictionary<string, int> { ["2300580"] = 1, ["2300581"] = 2, ["2300582"] = 3 },
+            axes = new Dictionary<string, int>
+            {
+                ["timelimit"] = 4, ["rebirthlimit"] = 4, ["bossBuff"] = 4, ["skillUpgrade"] = 4,
+            },
+        },
+        new
+        {
+            dungeonOrd = 5,
+            variantOrd = 9,
+            mobs = new Dictionary<string, int> { ["2300580"] = 1, ["2300581"] = 2, ["2300582"] = 3 },
+            axes = new Dictionary<string, int> { ["timelimit"] = 4, ["bossBuff"] = 4, ["skillUpgrade"] = 4 },
+        },
+    };
 
     private static TrialDifficulty Knobs(int? timelimit, int? bossBuff, int? skillUpgrade) =>
         new(timelimit, Rebirthlimit: null, bossBuff, skillUpgrade);
@@ -171,6 +198,46 @@ public sealed class TierTrialGateTests
         TierArtifact artifact = Build(TopDifficultyGate());
 
         Assert.Null(artifact.Placement(2600068, Knobs(4, 4, 4)));   // 정령왕 아그로 — a field boss
+    }
+
+    // ── two gates, in order ───────────────────────────────────────────────────
+
+    /// <summary>🔑 The server publishes the narrower gate first and the wider one behind it, so order is
+    /// load-bearing: first match wins and the array order in the JSON is the server's ranking. Reordering or
+    /// sorting the gates on parse would file every 16단계 run under the wider variant instead.</summary>
+    [Fact]
+    public void The_first_gate_that_matches_wins_and_json_order_is_the_ranking()
+    {
+        TierArtifact artifact = Build(Top16ThenTopGates());
+
+        TierMobPlacement? placement = artifact.Placement(TrialBoss, new TrialDifficulty(4, 4, 4, 4));
+
+        Assert.Equal(10, placement!.Value.VariantOrd);   // the four-axis gate, not the three-axis one behind it
+    }
+
+    /// <summary>🔴 The reason the two gates coexist at all. A build that cannot read 부활 제한 holds null
+    /// there, which shuts gate [0] — and then gate [1] still catches the run. Collapsing the two into one
+    /// four-axis gate would drop those uploads on the floor instead.</summary>
+    [Fact]
+    public void A_meter_that_cannot_read_the_fourth_axis_falls_through_to_the_wider_gate()
+    {
+        TierArtifact artifact = Build(Top16ThenTopGates());
+
+        TierMobPlacement? placement = artifact.Placement(TrialBoss, Knobs(4, 4, 4));   // rebirthlimit null
+
+        Assert.Equal(9, placement!.Value.VariantOrd);
+    }
+
+    /// <summary>A run that is 13단계 by the fourth axis is still top by the three damage axes, so it lands on
+    /// the wider gate — not on nothing, and not on 16단계.</summary>
+    [Fact]
+    public void A_run_short_on_the_fourth_axis_lands_on_the_wider_gate()
+    {
+        TierArtifact artifact = Build(Top16ThenTopGates());
+
+        TierMobPlacement? placement = artifact.Placement(TrialBoss, new TrialDifficulty(4, 1, 4, 4));
+
+        Assert.Equal(9, placement!.Value.VariantOrd);
     }
 
     // ── end to end ───────────────────────────────────────────────────────────────────────────────

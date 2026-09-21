@@ -33,7 +33,23 @@ public sealed class TrialRoomAffixRunBoundaryTests
 
         Assert.Equal(16, t.Current.Level);
         Assert.Equal("시련 16단계", t.Current.Label);
-        Assert.True(t.Current.IsTopDifficulty);
+        Assert.True(t.Current.IsTop16Difficulty);
+    }
+
+    [Fact]
+    public void 부활_제한은_16단계만_가른다()
+    {
+        // 🔑 두 술어를 일부러 분리해 둔다. 부활 제한은 보스를 건드리지 않으니 피해량 모집단을
+        // 가르는 축이 아니고, 그래서 이 축을 IsTopDifficulty 에 섮으면 이전 빌드가 아직 정상으로
+        // 올리고 있는 런들을 조용히 탈락시킨다. 통계웹도 같은 이유로 축 집합을 교체하지 않고
+        // 하나를 더 올렸다 — 두 레포가 같은 이름으로 다른 약속을 하면 안 된다.
+        var t = new TrialDifficultyTracker();
+
+        t.ObserveRoomAffixes(Trial, roomKey: 384095, Quad(4, 1, 4, 4));
+
+        Assert.Equal(13, t.Current.Level);
+        Assert.True(t.Current.IsTopDifficulty);      // 피해축 3개는 여전히 최고치
+        Assert.False(t.Current.IsTop16Difficulty);   // 그래도 16단계는 아니다
     }
 
     [Fact]
