@@ -84,6 +84,14 @@ public sealed class StreamProcessor
     // 2026-06-10 server patch inserted a message into the 0x36 category, shifting every 0x36 opcode
     // whose first byte >= 0x40 by +1 (Kotlin StreamProcessor fix 88ca14e / release v1.7.9). Other
     // categories (0x38 damage, 0x8D battle) are untouched. OwnNickname (0x33 < 0x40) is unchanged.
+    // 0x3600 MapFrame_NT — 본문이 서버 시계(Int64 LE epoch ms) 하나뿐인 20Hz 최빈 패킷. 버프 갱신(0x382B)이
+    // 싣는 절대 만료시각을 로컬 시각축으로 옮기는 데만 쓴다(ParseBuffPacket 참조).
+    // ⚠️ 이 키는 일부러 <see cref="OpcodeNames"/>에 넣지 않는다. 그 딕셔너리는 이름표가 아니라
+    // <see cref="LooksLikeGamePacket"/>의 게임 스트림 판정 기준이고, 그 판정이 노이즈 가드 면제와 VPN 중복
+    // 억제 하트비트를 굴린다. 0x3600은 게임 프레임의 8~28%라 등록하는 순간 그 휴리스틱이 조용히 바뀐다.
+    // 대신 디스패치 직전에 가로채고 return 한다 — dispatch/unknown 브레드크럼도 안 남기므로 패킷 로그가
+    // 커지는 게 아니라 오히려 그만큼 줄어든다(지금은 프레임당 두 줄을 쓴다).
+    private const int ServerClockKey = 0x00 | (0x36 << 8);     // 0x3600
     private const int OwnNicknameKey = 0x33 | (0x36 << 8);     // 0x3633 (unchanged)
     private const int OtherNicknameKey = 0x45 | (0x36 << 8);   // 0x3645 (was 0x3644)
     private const int OwnCombatPowerKey = 0x56 | (0x36 << 8);  // 0x3656 (was 0x3655)
@@ -145,10 +153,69 @@ public sealed class StreamProcessor
     private const int AbyssArtifactZoneKey = 0x05 | (0xE3 << 8);  // 0xE305
     private const int AbyssArtifactAllKey = 0x07 | (0xE3 << 8);   // 0xE307
 
+
     // Epoch-ms sanity bounds for the phase window (2020-01-01 .. 2100-01-01). A window is only believed when
     // both ends land inside these, so a coincidental map-id match can't manufacture one.
     private const long MinPlausibleEpochMs = 1_577_836_800_000L;
     private const long MaxPlausibleEpochMs = 4_102_444_800_000L;
+
+    /// <summary>서버 시계 − 로컬 도착시각. 0x3600이 올 때마다 1/16 EMA로 따라간다.</summary>
+    private long _serverClockOffsetMs;
+    private bool _serverClockKnown;
+
+    /// <summary>로컬 시계와 서버 시계가 이만큼 넘게 벌어지면 파싱 사고로 본다. 실측 오프셋은 세션 중앙값
+    /// 0.99~4.36초라 한참 안쪽이고, 사용자 PC 시계가 정말 몇 분씩 틀어져 있으면 채택을 포기하고 종전
+    /// 동작(도착시각 + duration)으로 떨어지는 게 맞다 — fail-open.</summary>
+    private const long MaxPlausibleClockOffsetMs = 300_000L;
+
+    /// <summary>서버가 선언한 만료시각에서 유도한 잔여시간의 상한. 직업 버프 대역만 여기 도달하므로 전투
+    /// 길이를 넘는 값은 파싱 사고다.</summary>
+    private const long MaxPlausibleBuffRemainingMs = 3_600_000L;
+
+    /// <summary>0x3600 MapFrame_NT의 유일한 필드(Int64 LE epoch ms)를 읽어 시계 오프셋을 갱신한다.
+    /// <para>⚠️ 길이 검사가 필수다 — 최근 3세션 20,507프레임이 전부 11바이트였지만 과거 코퍼스에 12바이트가
+    /// 한 건 있었고, <c>ReadUInt64Le</c>는 버퍼가 짧으면 던진다.</para>
+    /// <para>데시메이션은 하지 않는다. 세션 안에서 오프셋은 60초 창 최대 변동 31~97ms로 안정하지만 8시간
+    /// 세션 전체로는 ~900ms 이동하므로, 세션 시작에 한 번 캐시하면 끝에서 그만큼 틀어진다. EMA는 1/16이라
+    /// 프레임당 비용이 뺄셈 두 번이고 16ms 미만 잔차는 남지만 그건 오프셋 자체의 흔들림보다 작다.</para></summary>
+    private void TrackServerClock(byte[] packet, int bodyOffset, long arrivedAt)
+    {
+        if (bodyOffset < 0 || bodyOffset + 8 > packet.Length)
+        {
+            return;
+        }
+
+        long serverNow = PacketPrimitives.ReadUInt64Le(packet, bodyOffset);
+        if (serverNow < MinPlausibleEpochMs || serverNow > MaxPlausibleEpochMs)
+        {
+            return;
+        }
+
+        long offset = serverNow - arrivedAt;
+        if (offset < -MaxPlausibleClockOffsetMs || offset > MaxPlausibleClockOffsetMs)
+        {
+            return;
+        }
+
+        _serverClockOffsetMs = _serverClockKnown
+            ? _serverClockOffsetMs + ((offset - _serverClockOffsetMs) / 16)
+            : offset;
+        _serverClockKnown = true;
+    }
+
+    /// <summary>서버 시각축의 절대 시각을 로컬 시각축으로 옮긴다. 소비자(오버레이 카운트다운·업타임 구간)가
+    /// 전부 로컬 시각축이라 이 환산을 빠뜨리면 남은시간이 오프셋만큼 통째로 어긋난다.</summary>
+    private bool TryServerTimeToLocal(long serverTime, out long localMs)
+    {
+        localMs = 0;
+        if (!_serverClockKnown || serverTime < MinPlausibleEpochMs || serverTime > MaxPlausibleEpochMs)
+        {
+            return false;
+        }
+
+        localMs = serverTime - _serverClockOffsetMs;
+        return true;
+    }
 
     // Opcodes safe to replay from a DUP-SUPPRESSED second game stream (see OnPacketReceived identityOnly). These
     // are all IDEMPOTENT — nickname (own/other), power, party roster, member profile, and mob spawn just
@@ -339,6 +406,14 @@ public sealed class StreamProcessor
         // lock is untouched (no double-count) and the skipped packets don't even read as processed.
         if (identityOnly && !IdentityReplayOpcodes.Contains(opcodeKey))
         {
+            return;
+        }
+
+        // 서버 시계는 여기서 가로챈다 — 등록하지 않는 이유는 ServerClockKey 주석 참조. 필드 하나를 읽어
+        // 대입하고 끝이므로 할당도 로깅도 이벤트도 없다.
+        if (opcodeKey == ServerClockKey)
+        {
+            TrackServerClock(packet, opcodeOffset + 2, arrivedAt);
             return;
         }
 
@@ -2150,7 +2225,9 @@ public sealed class StreamProcessor
         }
     }
 
-    /// <summary>Buff/debuff apply 0x382A/0x382B. Kotlin parseBuffPacket (1075-1130).</summary>
+    /// <summary>Buff/debuff apply 0x382A/0x382B. Kotlin parseBuffPacket (1075-1130).
+    /// <para>두 opcode는 본문 레이아웃도 다르고(<c>refresh</c> 분기) <c>_duration_ms</c>의 의미도 다르다 —
+    /// 아래 만료시각 블록 참조.</para></summary>
     private void ParseBuffPacket(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, long arrivedAt)
     {
         try
@@ -2234,7 +2311,8 @@ public sealed class StreamProcessor
             // (measured: 23 applies / 280 s, held-gap p50 1.5 s), so give it a short fallback duration that each
             // re-broadcast refreshes — the overlay then shows it as a maintained buff and it fades a few seconds
             // after the stance actually ends (there is no buff-remove opcode to end it exactly).
-            if (duration == 4294967295L)
+            bool indefinite = duration == 4294967295L;
+            if (indefinite)
             {
                 if (skillCode is < 191300000 or > 191399999) // 폭주's variant band (base 19130000); others drop
                 {
@@ -2244,15 +2322,43 @@ public sealed class StreamProcessor
                 duration = IndefiniteStanceFallbackMs;
             }
 
+            // 갱신(0x382B)에서만 서버가 선언한 절대 만료시각을 쓴다.
+            // 🔑 0x382B의 _duration_ms는 지속시간이 아니다 — 그 버프 인스턴스의 '나이 + 잔여'다. 같은 도착
+            //    시각에 만료는 같은데 duration만 5000/5599/6400으로 갈리고, 한 계열의 duration이 도착 간격만큼
+            //    정확히 증가한다(6900→7651, Δ751). 그래서 arrivedAt + duration은 언제나 실제보다 뒤로 늘어나고
+            //    (오차 부호가 전부 음수, p01 −7,490ms) 6세션에서 0x382B의 21.0~38.2%가 500ms 이상 어긋났다.
+            //    증상: 오버레이 카운트다운이 늦게 끝나고 업타임이 과대 계상된다(원소의 흐름 +46.5%).
+            // ⚠️ 0x382A(최초 적용)는 건드리지 않는다 — 6세션 43,921건 중 500ms 초과가 0건이라 고칠 게 없고,
+            //    괜히 같이 바꾸면 이득 없이 회귀 면적만 넓어진다.
+            // 🔴 무기한 버프(폭주)를 제외하는 건 값이 상한을 통과하기 때문이다 — duration 0xFFFFFFFF 프레임의
+            //    만료시각이 전 세션 4,102,412,400,000(2100-01-01 KST) 고정인데, 이 값이
+            //    MaxPlausibleEpochMs(4,102,444,800,000)보다 9시간 작아서 **에폭 검사로는 안 걸린다**.
+            //    지금은 아래 MaxPlausibleBuffRemainingMs(1시간)가 결과적으로 같이 막아 주지만, 그건 우연히
+            //    겹친 것이지 의도가 아니다 — 센티넬 값이 바뀌면 그 상한만으로는 못 막는다. 두 가드는 독립이다.
+            long buffEnd = arrivedAt + duration;
+            long recordedDuration = duration;
+            bool serverAnchored = false;
+            if (refresh && !indefinite && TryServerTimeToLocal(serverTime, out long endLocal))
+            {
+                long remaining = endLocal - arrivedAt;
+                if (remaining > 0 && remaining <= MaxPlausibleBuffRemainingMs)
+                {
+                    buffEnd = endLocal;
+                    recordedDuration = remaining;
+                    serverAnchored = true;
+                }
+            }
+
             int level = ReadAbnormalLevel(packet, offset + actorInfo.Length);
-            _data.SaveUseBuff(targetInfo.Value, skillCode, arrivedAt, arrivedAt + duration, duration, actorInfo.Value, level, slotInfo.Value);
+            _data.SaveUseBuff(targetInfo.Value, skillCode, arrivedAt, buffEnd, recordedDuration, actorInfo.Value, level, slotInfo.Value);
             _sink.Meta("buff",
                 ("target", targetInfo.Value),
                 ("actor", actorInfo.Value),
                 ("skill", skillCode),
-                ("duration", duration),
+                ("duration", recordedDuration),
                 ("level", level),
-                ("serverTime", serverTime));
+                ("serverTime", serverTime),
+                ("anchored", serverAnchored));
         }
         catch
         {

@@ -31,6 +31,20 @@ public sealed class OpcodeRegistrationTests
     /// </summary>
     private static readonly HashSet<string> NotAnOpcode = new();
 
+    /// <summary>
+    /// <b>등록하지 않는 것이 의도인</b> opcode. 여기 넣는 순간 위 가드가 그 상수를 안 보게 되므로, 넣을 때는
+    /// 반드시 (a) 왜 등록하면 안 되는지와 (b) 그 대신 무엇이 도달성을 지키는지를 같이 적는다.
+    /// <para><c>ServerClockKey</c>(0x3600): <c>OpcodeNames</c> 는 이름표가 아니라
+    /// <c>LooksLikeGamePacket</c> 의 <b>게임 스트림 판정 기준</b>이고, 그 판정이 노이즈 가드 면제와 VPN 중복
+    /// 억제 하트비트를 굴린다. 0x3600 은 게임 프레임의 8~28% 라 등록하는 순간 그 휴리스틱이 조용히 바뀐다.
+    /// 그래서 디스패치 직전에 가로채고 <c>return</c> 한다 — 도달성은 아래
+    /// <see cref="An_intercepted_opcode_is_handled_before_the_dispatch_gate"/> 가 지킨다.</para>
+    /// </summary>
+    private static readonly HashSet<string> InterceptedBeforeDispatch = new(StringComparer.Ordinal)
+    {
+        "ServerClockKey",
+    };
+
     private static Dictionary<int, string> OpcodeNames()
     {
         FieldInfo? f = typeof(StreamProcessor)
@@ -56,6 +70,7 @@ public sealed class OpcodeRegistrationTests
         Dictionary<int, string> names = OpcodeNames();
 
         string[] missing = OpcodeConstants()
+            .Where(c => !InterceptedBeforeDispatch.Contains(c.Name))
             .Where(c => !names.ContainsKey(c.Value))
             .Select(c => $"{c.Name} (0x{c.Value:X4})")
             .OrderBy(s => s, StringComparer.Ordinal)
@@ -86,5 +101,51 @@ public sealed class OpcodeRegistrationTests
     public void The_guard_actually_sees_the_opcode_constants()
     {
         Assert.True(OpcodeConstants().Count() >= 20, "opcode 상수를 못 찾았다 — 리플렉션 조건이 낡았다");
+    }
+
+    /// <summary>면제 목록에 이름이 오타로 남아 가드가 조용히 헐거워지는 것을 막는다.</summary>
+    [Fact]
+    public void Every_exempted_name_is_a_real_opcode_constant()
+    {
+        string[] known = OpcodeConstants().Select(c => c.Name).ToArray();
+        string[] stale = InterceptedBeforeDispatch.Where(n => !known.Contains(n)).Order(StringComparer.Ordinal).ToArray();
+
+        Assert.True(
+            stale.Length == 0,
+            "면제 목록에 존재하지 않는 상수 이름이 있다 — 상수를 지웠거나 이름이 바뀌었다:\n  "
+            + string.Join("\n  ", stale));
+    }
+
+    private sealed class CountingSink : IStreamProcessorSink
+    {
+        public readonly List<int> Dispatched = [];
+        public readonly List<int> Unknown = [];
+
+        public void Dispatch(int opcode, string? opcodeName, bool extraFlag, int len) => Dispatched.Add(opcode);
+        public void UnknownOpcode(int opcode, bool extraFlag, int len) => Unknown.Add(opcode);
+        public void CompressedPacket(int len, bool extraFlag) { }
+        public void ParserError(string stage, string reason) { }
+        public void Damage(string kind, ParsedDamagePacket packet, bool saved, string? reason, int? mobCode) { }
+        public void Meta(string type, params (string Key, object? Value)[] fields) { }
+        public void Battle(int target, int toggle, int? mobCode, string? mobName, bool accepted, string? reason) { }
+    }
+
+    /// <summary>
+    /// 면제된 opcode 가 정말로 <b>가로채기</b>로 처리되는지 — 등록을 안 했으니 그냥 두면 unknown 으로 버려진다
+    /// (면제가 "도달 불가"를 정당화하는 구멍이 되면 이 파일 전체가 무의미해진다).
+    /// <para>동시에 이것이 0x3600 을 등록하지 않는 두 번째 이유를 지킨다 — 가로채기는 dispatch·unknown
+    /// 브레드크럼을 <b>둘 다</b> 남기지 않으므로, 패킷 로그가 20Hz × 두 줄만큼 커지는 게 아니라 오히려 줄어든다.</para>
+    /// </summary>
+    [Fact]
+    public void An_intercepted_opcode_is_handled_before_the_dispatch_gate()
+    {
+        // 0x3600 MapFrame_NT 실측 레이아웃: [len varint][00 36][Int64 LE 서버시계] = 11바이트.
+        byte[] frame = [0x0E, 0x00, 0x36, 0x69, 0xED, 0x53, 0xBE, 0xA0, 0x01, 0x00, 0x00];
+
+        var sink = new CountingSink();
+        new StreamProcessor(sink, NullCaptureGameData.Instance).OnPacketReceived(frame, 0);
+
+        Assert.Empty(sink.Dispatched);
+        Assert.Empty(sink.Unknown);
     }
 }
