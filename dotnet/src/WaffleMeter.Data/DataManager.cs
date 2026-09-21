@@ -281,6 +281,12 @@ public sealed class DataManager : ICaptureGameData
     public void SaveTrialAffix(TrialAffixGroup group, int level, long arrivedAt) =>
         TrialDifficulty.Observe(group, level);
 
+    /// <summary>0x9702 방 스냅샷 꼬리의 어픽스 네 축. 이 경로가 <b>정본</b>이다 — 네 축이 다 와서 단계가
+    /// 점값이 되고, 인스턴스보다 먼저 도착한다. 어보노멀 경로(<see cref="SaveTrialAffix"/>)는 독립 소스로
+    /// 남겨 둔다(둘은 서로를 교차검증한다).</summary>
+    public void ObserveRoomAffixes(int dungeonId, int roomKey, int[] levels) =>
+        TrialDifficulty.ObserveRoomAffixes(dungeonId, roomKey, levels);
+
     public void SaveInstancePhaseWindow(int mapId, int phase, long startMs, long windowMs) =>
         TrialDifficulty.ObservePhaseWindow(mapId, phase, startMs, windowMs);
 

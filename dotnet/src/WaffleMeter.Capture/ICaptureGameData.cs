@@ -256,6 +256,13 @@ public interface ICaptureGameData
     /// 사람이 빠진다).</summary>
     void RemovePartyMemberByKey(int key) { }
 
+    /// <summary>0x9702 방 스냅샷 꼬리의 시련 난이도 어픽스 네 축(각 1~4, <c>TrialAffixGroup</c> 순서).
+    /// <paramref name="dungeonId"/> 는 걸러내지 않고 그대로 넘어온다 — 어느 던전을 시련으로 볼지는 데이터
+    /// 계층이 정한다(여기서 하드코딩하면 신규 시련형 콘텐츠가 붙어도 흔적이 안 남는다).
+    /// <para><paramref name="roomKey"/> 가 <b>런 토큰</b>이다. 런마다 반드시 새 key 가 발급되고(실측 9/9)
+    /// 같은 방에서 재풀하면 유지되므로, 인스턴스 맵 전환보다 이쪽이 정확한 런 경계다.</para></summary>
+    void ObserveRoomAffixes(int dungeonId, int roomKey, int[] levels) { }
+
     /// <summary>0xE005 — 그로기(무력화) 게이지. <paramref name="cur"/>가 <paramref name="max"/>에서 0으로
     /// 깎이고 바닥에서 그로기가 터진다.
     /// <para>⚠️ <paramref name="max"/>를 캐시하지 마라 — 보스·세션마다 다르고 도중에 바뀌기도 한다.

@@ -1217,6 +1217,60 @@ public sealed class StreamProcessor
     /// plausible name — and hand the whole set to the data layer, which matches each member to a known uid
     /// (by name+server, the same identity our 0x3645/0x3633 snapshots carry) for the pre-combat party
     /// preview. A full snapshot, so it REPLACES the roster.</summary>
+    /// <summary>
+    /// 0x9702 방 스냅샷의 <b>꼬리</b>에 실린 시련 난이도 어픽스. 본문 끝 = <c>[count u8][affix i32 LE × n][_reason u8]</c>
+    /// 이고 값은 <c>축번호*10 + 레벨</c>(축 0=제한시간 1=부활제한 2=보스강화 3=바크론패턴, 레벨 1~4).
+    ///
+    /// <para>🔴 <b>반드시 프레임 끝에서 역으로 앵커한다.</b> 앞에서 오프셋을 누적하면 가변 길이 멤버 배열에서
+    /// 깨진다 — 실측으로 7월 비시련 꼬리는 <c>…01|00|reason</c> 인데 9월엔 <c>…01|XX|00|reason</c> 으로
+    /// 바이트가 하나 늘어 있었다. 뒤에서 세면 그 변동에 영향을 안 받는다: 어픽스 넷이면 count 는 언제나
+    /// <c>Length - 18</c>(= 4×4바이트 + count 1 + reason 1) 이고, 53/53 적중했다.</para>
+    ///
+    /// <para>채택은 <see cref="TrialAffixCatalog.TryDecodeAffixQuad"/> 가 fail-closed 로 판정한다. 비시련
+    /// 방 스냅샷 505건 전부 count=0 이라 애초에 걸리지 않고, 우연히 4가 서 있던 3건도 축/레벨 검사에서
+    /// 떨어졌다(오탐 0).</para>
+    ///
+    /// <para>⚠️ <c>_dungeon_id</c> 는 여기서 스코프로 쓰지 않고 <b>그대로 넘긴다</b>. 하드코딩으로 시련만
+    /// 통과시키면 신규 시련형 콘텐츠가 붙었을 때 흔적도 안 남는다 — 스코프 판정은 데이터 계층이 한다.</para>
+    /// </summary>
+    private void ParseRoomAffixes(byte[] packet, int offset)
+    {
+        // 어픽스 넷 + count + reason = 18바이트. 그보다 짧으면 어픽스를 실은 방이 아니다.
+        int countAt = packet.Length - 18;
+        if (countAt <= offset + 2 || packet[countAt] != TrialAffixCatalog.GroupCount)
+        {
+            return;
+        }
+
+        Span<int> raw = stackalloc int[TrialAffixCatalog.GroupCount];
+        for (int i = 0; i < raw.Length; i++)
+        {
+            raw[i] = (int)PacketPrimitives.ReadUInt32LeAsLong(packet, countAt + 1 + (i * 4));
+        }
+
+        if (!TrialAffixCatalog.TryDecodeAffixQuad(raw, out int[] levels))
+        {
+            return;
+        }
+
+        // 헤더: [02 97][roomKey u32][descLen u8][desc][_limit_member u8][_dungeon_id u32]
+        int roomKey = (int)PacketPrimitives.ReadUInt32LeAsLong(packet, offset + 2);
+        int descLen = offset + 6 < packet.Length ? packet[offset + 6] & 0xFF : 0;
+        int dungeonAt = offset + 8 + descLen;
+        if (dungeonAt + 4 > packet.Length)
+        {
+            return;
+        }
+
+        int dungeonId = (int)PacketPrimitives.ReadUInt32LeAsLong(packet, dungeonAt);
+        _data.ObserveRoomAffixes(dungeonId, roomKey, levels);
+        _sink.Meta("trial-affix-room",
+            ("dungeon", dungeonId),
+            ("room", roomKey),
+            ("levels", string.Join(",", levels)),
+            ("reason", packet[^1]));
+    }
+
     private void ParsePartyRoster(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
     {
         int offset = lengthInfo.Length + (extraFlag ? 1 : 0);
@@ -1224,6 +1278,8 @@ public sealed class StreamProcessor
         {
             return;
         }
+
+        ParseRoomAffixes(packet, offset);
 
         var members = new List<(string Nickname, int Server, int Slot)>();
         var keys = new List<(string Nickname, int Server, int Key)>();                    // 제거(0x9622)가 key 로만 지명한다

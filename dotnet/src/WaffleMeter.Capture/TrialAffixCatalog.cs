@@ -7,7 +7,8 @@ public enum TrialAffixGroup
     /// <summary>제한 시간 — 1800/1200/900/600s. Carried by the instance phase window, not by a buff.</summary>
     Timelimit = 0,
 
-    /// <summary>부활 제한 — 3/2/1/0 revives. No observed carrier yet.</summary>
+    /// <summary>부활 제한 — 3/2/1/0 revives. Carried by the room's <c>_affix_list</c> (0x9702 tail), which is
+    /// where all four knobs turn out to live; confirmed by driving it 1→2→3→4 while the other three held.</summary>
     Rebirthlimit = 1,
 
     /// <summary>보스 강화 — the only knob that touches boss stats: max HP x1.0/1.3/1.7/2.2 plus damage
@@ -27,9 +28,12 @@ public readonly record struct TrialAffix(TrialAffixGroup Group, int Level);
 /// dungeon's mobs, so the chosen level can be read straight off a buff-apply packet — the code identifies the
 /// level 1:1, no value decoding needed. Each group has a hidden first-stage code that casts a system skill and
 /// a visible second-stage code that the skill applies; both are listed because both appear on the wire.</para>
-/// <para>The remaining two groups (제한 시간 / 부활 제한) are not abnormals — they are instance settings, so
-/// they can never appear here. 제한 시간 is recoverable from the instance's phase window; 부활 제한 has no
-/// known carrier.</para>
+/// <para>The remaining two groups (제한 시간 / 부활 제한) are not abnormals, so they can never appear in the
+/// code map here. 제한 시간 is also recoverable from the instance's phase window.</para>
+/// <para><b>All four, however, ride the room itself.</b> The 0x9702 room snapshot ends with
+/// <c>_affix_list</c> — see <see cref="TryDecodeAffixQuad"/>. That path is the primary one now: it carries
+/// every knob, it arrives before the instance does, and it is what pins the level to a number instead of a
+/// range. The abnormal codes below stay as an independent second source for cross-checking.</para>
 /// </summary>
 public static class TrialAffixCatalog
 {
@@ -72,6 +76,45 @@ public static class TrialAffixCatalog
     /// own drop rules, since these codes sit below the job-buff band and carry an indefinite duration and so
     /// would be discarded twice over.</summary>
     public static bool IsAffixCode(int skillCode) => ByCode.ContainsKey(skillCode);
+
+    /// <summary>
+    /// Decode the room's <c>_affix_list</c> — four <c>i32</c> whose value is <c>axis * 10 + level</c>
+    /// (axis 0~3 in <see cref="TrialAffixGroup"/> order, level 1~4).
+    /// <para><b>fail-closed.</b> Every axis must appear exactly once and every level must be in range, or the
+    /// whole quad is thrown away. A wrong stage label is worse than no label — it files the run under a
+    /// difficulty it was not played at, and a tier percentile is what consumes it. Measured against 505
+    /// non-trial room snapshots across nine dungeon ids plus three coincidental outbound matches: all
+    /// rejected, zero false positives.</para>
+    /// </summary>
+    public static bool TryDecodeAffixQuad(ReadOnlySpan<int> raw, out int[] levels)
+    {
+        levels = new int[GroupCount];
+        if (raw.Length != GroupCount)
+        {
+            return false;
+        }
+
+        int seen = 0;
+        foreach (int value in raw)
+        {
+            int axis = value / 10;
+            int level = value % 10;
+            if (axis < 0 || axis >= GroupCount || level < 1 || level > 4)
+            {
+                return false;
+            }
+
+            if ((seen & (1 << axis)) != 0)
+            {
+                return false; // 같은 축이 두 번 = 어픽스 배열이 아니다
+            }
+
+            seen |= 1 << axis;
+            levels[axis] = level;
+        }
+
+        return seen == (1 << GroupCount) - 1;
+    }
 
     /// <summary>The 제한 시간 level a dungeon time budget implies, or 0 when it matches no level. The window
     /// is exact (it comes from the instance, not from a timer the client runs), so this is a lookup rather
