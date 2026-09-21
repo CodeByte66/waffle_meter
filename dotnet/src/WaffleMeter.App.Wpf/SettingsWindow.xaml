@@ -1625,6 +1625,17 @@
                         </Grid>
 
                         <Border Style="{StaticResource SectionDivider}"/>
+                        <TextBlock Text="보스 그로기 알림" Style="{StaticResource SectionHeader}" Margin="0,0,0,10"/>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="그로기 임박 알림" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="싸우고 있는 보스의 무력화 게이지가 20% 남으면 &quot;그로기 임박&quot;을 읽어줍니다. 게이지가 다시 차면 다음 번에 또 알려줍니다. (보스에 따라 게이지를 보내지 않는 전투가 있어 항상 울리지는 않습니다)" Style="{StaticResource SettingDesc}"/>
+                            </StackPanel>
+                            <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding GroggyAlarmEnabled}"/>
+                        </Grid>
+
+                        <Border Style="{StaticResource SectionDivider}"/>
                         <TextBlock Text="감시자 카이라 알림" Style="{StaticResource SectionHeader}" Margin="0,0,0,10"/>
                         <Grid Margin="0,0,0,14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

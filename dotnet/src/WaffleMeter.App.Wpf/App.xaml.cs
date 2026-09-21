@@ -983,6 +983,11 @@ public partial class App : Application
         services.Data.InstanceMapChanged += (mapId, atMs) =>
             Dispatcher.BeginInvoke(() => OnInstanceMapChanged(services, mapId, atMs));
 
+        // 보스 무력화(그로기) 임박. 데이터 계층이 현재 타깃의 게이지만 보고 사이클당 한 번만 올려 주므로
+        // 여기서는 켜져 있는지만 보고 읽는다. 오버레이는 만들지 않는다 — 게이지 자체는 게임 클라가 이미
+        // 그린다(EGroggyGuardDisplayType). 미터가 보태는 건 "화면에서 눈을 떼고도 안다"는 것뿐이다.
+        services.Data.GroggyImminent += () => Dispatcher.BeginInvoke(AnnounceGroggyImminent);
+
         // Combat-assist overlay: the local player's active buff slots, refreshed twice a second.
         _buffOverlayVm = new BuffOverlayViewModel();
         _buffOverlay = new BuffOverlayPanel(_buffOverlayVm);
@@ -3264,6 +3269,23 @@ public partial class App : Application
         };
         _buffEndPending[code] = (t, endMs);
         t.Start();
+    }
+
+    /// <summary>현재 타깃의 그로기 게이지가 잔여 20%에 닿았다.
+    /// <para>문구가 곧 구운 클립의 주소다 — <c>BakedVoicePack</c>이 <c>SHA256(voice + "\n" + text)</c>로 파일을
+    /// 찾으므로 <b>한 글자만 바꿔도 다른 클립</b>이 되고 이미 구운 것은 고아가 된다. 그래서 숫자를 읽지 않는다:
+    /// "…이십 퍼센트"로 구우면 임계값을 다시 못 바꾼다. 지금 문구는 임계값·판정 규칙과 무관하므로 나중에
+    /// 임계를 옮기거나 하강 속도 기반(ETA) 규칙으로 갈아타도 클립이 그대로 산다.</para>
+    /// <para>5음절 ≈ 1.65초(실측 회귀 <c>초 ≈ 0.545 + 0.2209 × 음절</c>). 잔여 20%의 리드타임 중앙값이
+    /// 4.7초라 말이 끝난 뒤에도 3초가 남는다.</para></summary>
+    private void AnnounceGroggyImminent()
+    {
+        if (_settings is not { GroggyAlarmEnabled: true })
+        {
+            return;
+        }
+
+        PlayAlert("그로기 임박");
     }
 
     private void PlayAlert(string spokenText)

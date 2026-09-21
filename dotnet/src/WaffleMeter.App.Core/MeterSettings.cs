@@ -118,6 +118,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _fieldBossLead10 = ReadBool("alarms.fieldBossLead10", true);
         _fieldBossLead30 = ReadBool("alarms.fieldBossLead30", false);
         _fieldBossAlarmMuteInCombat = ReadBool("alarms.fieldBossMuteInCombat", false);
+        _groggyAlarmEnabled = ReadBool("alarms.groggyEnabled", false);
         _kairaAlarmEnabled = ReadBool("alarms.kairaEnabled", false);
         _kairaLead10 = ReadBool("alarms.kairaLead10", true);
         _kairaLead5 = ReadBool("alarms.kairaLead5", false);
@@ -417,6 +418,15 @@ public sealed class MeterSettings : INotifyPropertyChanged
     /// fight isn't interrupted by a respawn toast). A suppressed alert can still fire once the fight ends if
     /// it's still inside its lead window.</summary>
     public bool FieldBossAlarmMuteInCombat { get => _fieldBossAlarmMuteInCombat; set => SetBool(ref _fieldBossAlarmMuteInCombat, "alarms.fieldBossMuteInCombat", value); }
+
+    private bool _groggyAlarmEnabled;
+    /// <summary>현재 타깃 보스의 무력화(그로기) 게이지가 <b>잔여 20%</b>로 내려오면 "그로기 임박"을 읽어 준다.
+    /// 사이클당 한 번이고, 게이지가 만충으로 리필되면 다음 사이클에 다시 울린다.
+    /// <para>기본 OFF. 켜기 전에 알아 둘 것 — 그로기 방송(0x E005)이 <b>모든 전투에 오지는 않는다</b>.
+    /// 원정/초월/성역 전투 단위 커버리지가 92.9%이고, 제때 울리는 비율까지 곱하면 실제 체감은 약 76%다
+    /// (원정 87% · 초월 72% · 성역 32%). 성역이 낮은 건 게이지가 거의 안 깎이고 바로 터지는 즉발 그로기가
+    /// 그쪽에 몰려 있기 때문이라 임계값으로는 해결되지 않는다.</para></summary>
+    public bool GroggyAlarmEnabled { get => _groggyAlarmEnabled; set => SetBool(ref _groggyAlarmEnabled, "alarms.groggyEnabled", value); }
 
     private string _fieldBossDisabled;
     /// <summary>Comma-separated boss codes the user unchecked in the boss picker; the reminder skips these.

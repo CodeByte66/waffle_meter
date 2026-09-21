@@ -153,6 +153,13 @@ public sealed class StreamProcessor
     private const int AbyssArtifactZoneKey = 0x05 | (0xE3 << 8);  // 0xE305
     private const int AbyssArtifactAllKey = 0x07 | (0xE3 << 8);   // 0xE307
 
+    // 0xE005 UpdateGroggyInfo_NT — 보스 무력화(그로기) 게이지. 본문은 두 모양뿐이다(실측 907프레임):
+    //   17B: [entity varint][mask=0x03][state=0x01 GroggyGuard][max u32 LE][cur u32 LE][flags]
+    //    9B: [entity varint][mask=0x00][state=0x03 Groggy][flags]   ← 발동 순간(표본 0.3%)
+    // 게이지는 max 에서 0 으로 **깎이고**, 바닥에서 그로기가 터진 뒤 만충으로 리필된다.
+    // 🔴 max 는 상수가 아니다 — 같은 보스도 세션마다 다르고(실측 4티어: 2250/3000/6000/7500) 도중에 바뀌기도
+    //    한다(시련 '보스 강화' 어픽스가 게이지를 올린다). 캐시하거나 상수로 박으면 비율이 통째로 틀어진다.
+    private const int GroggyKey = 0x05 | (0xE0 << 8);             // 0xE005
 
     // Epoch-ms sanity bounds for the phase window (2020-01-01 .. 2100-01-01). A window is only believed when
     // both ends land inside these, so a coincidental map-id match can't manufacture one.
@@ -278,6 +285,7 @@ public sealed class StreamProcessor
         [FieldBossTimerKey] = "FieldBossTimer",
         [AbyssArtifactZoneKey] = "AbyssArtifact",
         [AbyssArtifactAllKey] = "AbyssArtifact",
+        [GroggyKey] = "Groggy",
     };
 
     private static readonly byte[] PowerMarker = { 0xF4, 0xCB, 0x1F };
@@ -526,6 +534,9 @@ public sealed class StreamProcessor
                 case AbyssArtifactZoneKey:
                 case AbyssArtifactAllKey:
                     ParseAbyssArtifacts(packet, opcodeOffset + 2, wholeAbyss: opcodeKey == AbyssArtifactAllKey);
+                    break;
+                case GroggyKey:
+                    ParseGroggy(packet, opcodeOffset + 2);
                     break;
             }
         }
@@ -2701,6 +2712,50 @@ public sealed class StreamProcessor
     /// <para>⚠️ owner 바이트는 종족이 아니라 <b>이번 서버 매칭 안의 슬롯</b>이다. 같은 캐릭터가 08-23엔 1,
     /// 08-28엔 2였다 — 어느 쪽이 우리인지는 <see cref="AbyssArtifactBuffCatalog"/>의 점령 개수 어보노멀로
     /// 따로 알아낸다.</para></summary>
+    /// <summary>0xE005 UpdateGroggyInfo_NT — 보스 무력화(그로기) 게이지 갱신.
+    /// <para>실측 907프레임 기준 본문은 두 모양뿐이다. 17바이트짜리만 수치를 싣고, 9바이트짜리는
+    /// <c>_state=0x03(Groggy)</c> 즉 발동 순간을 알릴 뿐 게이지가 없다(표본 0.3%) — 여기서는 조용히 무시한다.
+    /// 알림 래치는 리필로 풀리므로 발동 신호가 없어도 다음 사이클이 정상 동작한다.</para>
+    /// <para>⚠️ 길이를 하드코딩하지 않는다 — mask/state 로 모양을 판정하고, 수치 필드가 들어갈 자리가
+    /// 실제로 있을 때만 읽는다. 새 변종이 생기면 오독하는 대신 조용히 버리는 쪽이 맞다(fail-closed).</para>
+    /// <para>⚠️ 발신자가 보스 전용이 아니다 — 잡몹·수정체·레이저 같은 코호트 밖 엔티티도 같은 방송을 낸다.
+    /// 어느 엔티티를 볼지는 데이터 계층이 현재 타깃으로 고른다.</para></summary>
+    private void ParseGroggy(byte[] packet, int bodyStart)
+    {
+        VarIntOutput entity = PacketPrimitives.ReadVarInt(packet, bodyStart);
+        if (entity.Length <= 0 || entity.Value <= 0)
+        {
+            return;
+        }
+
+        int offset = bodyStart + entity.Length;
+        if (offset + 1 >= packet.Length)
+        {
+            return;
+        }
+
+        // mask = 필드 존재 비트마스크, state = EGroggyState. 게이지가 실린 건 (0x03, 0x01) 하나뿐이다.
+        if (packet[offset] != 0x03 || packet[offset + 1] != 0x01)
+        {
+            return;
+        }
+
+        offset += 2;
+        if (offset + 8 > packet.Length)
+        {
+            return;
+        }
+
+        long max = PacketPrimitives.ReadUInt32LeAsLong(packet, offset);
+        long cur = PacketPrimitives.ReadUInt32LeAsLong(packet, offset + 4);
+        if (max <= 0 || cur < 0)
+        {
+            return;
+        }
+
+        _data.SaveGroggyGauge(entity.Value, max, cur);
+    }
+
     private void ParseAbyssArtifacts(byte[] packet, int bodyStart, bool wholeAbyss)
     {
         Span<AbyssArtifactZone> zones = stackalloc AbyssArtifactZone[AbyssArtifactParser.MaxZones];

@@ -255,6 +255,12 @@ public interface ICaptureGameData
     /// <summary>0x9622 — 멤버 제거. 로스터 key 로만 지운다(이름으로 지우면 동명이인·잘린 닉에서 엉뚱한
     /// 사람이 빠진다).</summary>
     void RemovePartyMemberByKey(int key) { }
+
+    /// <summary>0xE005 — 그로기(무력화) 게이지. <paramref name="cur"/>가 <paramref name="max"/>에서 0으로
+    /// 깎이고 바닥에서 그로기가 터진다.
+    /// <para>⚠️ <paramref name="max"/>를 캐시하지 마라 — 보스·세션마다 다르고 도중에 바뀌기도 한다.
+    /// 그리고 발신자가 보스 전용이 아니므로 어느 엔티티를 볼지는 받는 쪽이 고른다.</para></summary>
+    void SaveGroggyGauge(int entityId, long max, long cur) { }
 }
 
 /// <summary>No catalog / empty runtime map; all writes no-op (default capture-only context).</summary>

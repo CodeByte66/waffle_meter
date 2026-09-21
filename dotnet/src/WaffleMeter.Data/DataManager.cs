@@ -3023,6 +3023,90 @@ public sealed class DataManager : ICaptureGameData
         MaybeFollowSelfTarget(pdp); // Feature 2 (염화의 수호검): 본인이 때리는 수호검으로 표시 전환
     }
 
+    // ---- 그로기(무력화) 게이지 ----
+
+    /// <summary>알림 임계. 원정/초월/성역 보스 실측(게이지형 하강 사이클 281건)에서 잔여 20%면 말이 끝난 뒤
+    /// 평균 4.7초가 남고 성공률 86.1%다. 15%도 성공률은 같지만(85.8%) 남는 시간이 3.4초로 줄고 문구가
+    /// 7음절을 넘으면 78.6%로 무너진다. 12%부터는 절벽이다(76.5% → 10%에서 59.8% → 5%에서 6%).</summary>
+    private const double GroggyAlertRatio = 0.20;
+
+    /// <summary>래치 해제선. 리필(만충 복귀)이면 다음 사이클이므로 다시 울릴 수 있어야 한다.</summary>
+    private const double GroggyRearmRatio = 0.95;
+
+    private int _groggyEntity;
+    private long _groggyMax;
+    private double _groggyRatio = 1.0;
+    private bool _groggyAlerted;
+
+    /// <summary>현재 타깃의 그로기 게이지가 알림 임계 아래로 내려왔다. 사이클당 한 번만 발화한다.</summary>
+    public event Action? GroggyImminent;
+
+    /// <summary>현재 타깃의 그로기 잔여 비율(1.0 = 만충, 모르면 1.0).</summary>
+    public double GroggyRatio() => _groggyRatio;
+
+    /// <summary>0xE005 갱신. <b>현재 타깃 것만</b> 본다 — 한 세션에서 그로기를 방송하는 엔티티가 수십 개이고
+    /// 거기엔 잡몹·수정체 같은 비보스가 섞인다.
+    /// <para>🔴 <paramref name="max"/>를 캐시하지 않는다. 같은 보스도 세션마다 티어가 다르고(실측 2250/3000/
+    /// 6000/7500) 시련 '보스 강화' 어픽스로 전투 도중에 바뀌기도 한다. 바뀐 프레임은 새 max 와 옛 cur 이
+    /// 같이 실려 비율이 1을 넘을 수 있으므로, 그 틱은 래치 판정을 건너뛰고 값만 받아 둔다 — 안 그러면
+    /// 거짓 리필로 읽혀 래치가 풀리고 같은 사이클에 두 번 울린다.</para></summary>
+    public void SaveGroggyGauge(int entityId, long max, long cur)
+    {
+        if (entityId <= 0 || max <= 0)
+        {
+            return;
+        }
+
+        int target = CurrentTarget();
+        if (target <= 0 || entityId != target)
+        {
+            return;
+        }
+
+        // 타깃이 바뀌었으면(페이즈 전환·재풀) 상태를 통째로 새로 시작한다.
+        bool retargeted = entityId != _groggyEntity;
+        bool rescaled = !retargeted && max != _groggyMax;
+        _groggyEntity = entityId;
+        _groggyMax = max;
+
+        double ratio = Math.Clamp((double)Math.Min(cur, max) / max, 0.0, 1.0);
+        _groggyRatio = ratio;
+
+        if (retargeted)
+        {
+            // 새 엔티티 = 새 사이클. 단 판정은 건너뛰지 않는다 — 처음 본 프레임이 이미 임계 아래면
+            // (전투 중간에 미터를 켰거나 페이즈가 넘어간 직후) 그때가 바로 알려야 할 때다.
+            _groggyAlerted = false;
+        }
+        else if (rescaled)
+        {
+            // 🔴 래치를 건드리지 않고 값만 받는다. 이 프레임은 새 max 와 옛 cur 이 섞여 비율을 못 믿는다 —
+            // 여기서 래치를 풀면 같은 하강에서 두 번 울린다(거짓 리필).
+            return;
+        }
+
+        if (ratio >= GroggyRearmRatio)
+        {
+            _groggyAlerted = false;
+            return;
+        }
+
+        if (!_groggyAlerted && ratio <= GroggyAlertRatio)
+        {
+            _groggyAlerted = true;
+            GroggyImminent?.Invoke();
+        }
+    }
+
+    /// <summary>전투가 끝나면 게이지 상태를 버린다 — 다음 전투가 남의 래치를 물려받으면 안 된다.</summary>
+    private void ClearGroggyState()
+    {
+        _groggyEntity = 0;
+        _groggyMax = 0;
+        _groggyRatio = 1.0;
+        _groggyAlerted = false;
+    }
+
     // ---- battle state machine ----
 
     public int CurrentTarget() => _packetRepository.CurrentTarget();
@@ -3371,6 +3455,7 @@ public sealed class DataManager : ICaptureGameData
         SaveCurrentTarget(-1);
         _recentlyEndedBattles[mobId] = new EndedBattle(mobCode, Clock());
         _activeBattleMobCode = null;
+        ClearGroggyState();
     }
 
     // ---- battle log ----
