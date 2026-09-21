@@ -631,6 +631,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     }
     public int RefreshIntervalMs { get => _settings.RefreshIntervalMs; set { _settings.RefreshIntervalMs = value; OnPropertyChanged(); } }
     public int MaxVisibleRows { get => _settings.MaxVisibleRows; set { _settings.MaxVisibleRows = value; OnPropertyChanged(); } }
+
+    public bool DimDeadRows { get => _settings.DimDeadRows; set { _settings.DimDeadRows = value; OnPropertyChanged(); } }
     public bool LowSpecMode
     {
         get => _settings.LowSpecMode;

@@ -126,6 +126,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _fieldBossDisabled = _props.GetProperty("alarms.fieldBossDisabled") ?? "";
         _refreshIntervalMs = ReadInt("refreshIntervalMs", 500);
         _maxVisibleRows = ReadInt("maxVisibleRows", 10);
+        _dimDeadRows = ReadBool("dimDeadRows", true);
         _lowSpecMode = ReadBool("lowSpecMode", false);
         _showAetherStatus = ReadBool("showAetherStatus", true);
         _showLatencyIndicator = ReadBool("showLatencyIndicator", false);
@@ -459,6 +460,13 @@ public sealed class MeterSettings : INotifyPropertyChanged
     /// <summary>How many dealer rows the meter shows (1-10). Self is always shown even below the cap. All
     /// participants stay tracked; this only caps the display.</summary>
     public int MaxVisibleRows { get => _maxVisibleRows; set => SetInt(ref _maxVisibleRows, "maxVisibleRows", value); }
+
+    private bool _dimDeadRows;
+    /// <summary>죽어 있는 동안 그 캐릭터의 행을 흐리게 그린다.
+    /// <para>판정은 데이터 계층이 fail-open 으로 한다 — 살아서 딜하면 즉시 풀리고, 해제 신호를 하나라도
+    /// 받으면 푼다. 실측 사망 구간 41건 전부 해제됐고 "영영 회색" 후보는 와이어에 0건이다. 그래도 화면
+    /// 취향은 사람마다 달라서 끌 수 있게 둔다.</para></summary>
+    public bool DimDeadRows { get => _dimDeadRows; set => SetBool(ref _dimDeadRows, "dimDeadRows", value); }
 
     private bool _lowSpecMode;
     /// <summary>Frame-drop relief: pins the refresh interval to a low-churn value and force-disables any

@@ -137,6 +137,7 @@ public static class SettingsKeyCatalog
         // 남의 화면에 창이 생기면 안 되기 때문. F(Full) 에만 실린다.
         new("splitUiMode", F, "표시 형식", "UI 분리모드", S),
         new("maxVisibleRows", FD, "표시 형식", "표시 인원", S),
+        new("dimDeadRows", FD, "표시 형식", "사망 중 행 흐리게", S),
 
         // ── 크기와 글꼴 ────────────────────────────────────────────────────────────
         new("fontFamily", FD, "크기와 글꼴", "글꼴", S),

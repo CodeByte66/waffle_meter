@@ -598,6 +598,14 @@
                             </StackPanel>
                             <Slider Grid.Column="1" VerticalAlignment="Center" Minimum="1" Maximum="10" Value="{Binding MaxVisibleRows}" TickFrequency="1" IsSnapToTickEnabled="True"/>
                         </Grid>
+                        <Grid Margin="0,14,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="사망 중 행 흐리게" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Text="파티원이 죽어 있는 동안 그 행을 흐리게 표시합니다. 부활하거나 다시 딜을 넣으면 바로 원래대로 돌아옵니다." Style="{StaticResource SettingDesc}"/>
+                            </StackPanel>
+                            <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding DimDeadRows}"/>
+                        </Grid>
                         <Border Style="{StaticResource SectionDivider}"/>
                         <TextBlock Text="크기와 글꼴" Style="{StaticResource SectionHeader}" Margin="0,0,0,10"/>
                         <TextBlock x:Name="FontSectionHeader" Text="글꼴" Style="{StaticResource SettingTitle}"/>
