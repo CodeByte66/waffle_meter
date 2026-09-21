@@ -71,17 +71,18 @@ public sealed class DeadRowStateTests
     }
 
     [Fact]
-    public void Damage_from_a_greyed_row_clears_it_immediately()
+    public void Damage_does_not_clear_it_because_the_dead_keep_dealing()
     {
-        // 제자리 부활(부활석) 7건 전부 0.x초 안에 첫 타격이 들어온다. 어떤 해제 신호를 놓쳐도 여기서 풀린다 —
-        // "살아서 딜하는데 행은 회색" 을 구조적으로 불가능하게 만드는 줄이다.
+        // 🔴 "딜이 들어왔다 = 살아 있다"는 이 게임에서 거짓이다. 죽기 전에 걸어 둔 DoT 와 설치기가 죽어
+        // 있는 동안에도 계속 틱하고, 그 피해는 옳게 그 캐릭터에게 귀속된다(ParseDoTPacket 도 같은
+        // SaveDamage 로 들어온다). 틱 하나로 회색이 풀리면 죽어 있는 내내 살아 있는 것처럼 보인다.
         DataManager dm = Party();
         dm.SaveMemberVitals(Mate, hp: 0, live: 0, arrivedAt: _now);
         Assert.True(dm.IsDead(Mate));
 
         Damage(dm, Mate);
 
-        Assert.False(dm.IsDead(Mate));
+        Assert.True(dm.IsDead(Mate));
     }
 
     [Fact]

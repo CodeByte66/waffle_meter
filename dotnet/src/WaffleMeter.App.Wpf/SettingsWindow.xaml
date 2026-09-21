@@ -602,7 +602,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
                                 <TextBlock Text="사망 중 행 흐리게" Style="{StaticResource SettingTitle}"/>
-                                <TextBlock Text="파티원이 죽어 있는 동안 그 행을 흐리게 표시합니다. 부활하거나 다시 딜을 넣으면 바로 원래대로 돌아옵니다." Style="{StaticResource SettingDesc}"/>
+                                <TextBlock Text="파티원이 죽어 있는 동안 그 행을 흐리게 표시합니다. 부활하면 바로 원래대로 돌아옵니다. 죽어 있는 동안 들어오는 지속피해·설치기 딜은 그대로 그 캐릭터 딜로 집계됩니다." Style="{StaticResource SettingDesc}"/>
                             </StackPanel>
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding DimDeadRows}"/>
                         </Grid>
