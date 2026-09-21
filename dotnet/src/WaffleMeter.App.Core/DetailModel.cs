@@ -178,9 +178,17 @@ public sealed record DetailModel(
         }
 
         // totals: total damage includes DOT. Crit is a per-hit field present on EVERY hit, so its rate is over
-        // all non-DOT hits. Back/강타(double)/완벽(perfect)/페리(parry) come from the special-flag byte, which
-        // exists ONLY on flag-bearing (sw6) hits — non-directional hits (heals/buffs/passives, sw4) have no
-        // flag byte, so those judgments are unmeasurable on them and must NOT dilute the denominator.
+        // all non-DOT hits.
+        //
+        // 강타/완벽/막기도 **전체 타격**이 분모다. 판정 플래그 바이트가 없는 타격(sw4)은 "판정을 알 수 없는
+        // 타격"이 아니라 **아무것도 안 터진 타격**이다 — 같은 스킬·같은 크리 여부로 통제했을 때 피해 중앙값이
+        // "아무것도 안 터진 타격"과 5~15% 안에서 일치한다. 실패한 시도도 시도이므로 분모에 들어가야 한다.
+        // 종전에는 이 셋만 flag-bearing 수로 나눠서, **같은 창 위아래가 같은 지표를 다르게 보여줬다**
+        // (실측 한 전투: 타일 강타 59.3% vs 스킬 행 가중평균 54.6%). 분모가 작은 타일이 구조적으로 항상 높다.
+        // 스킬 행(BuildRow)과 업로드 페이로드가 이미 전체 타격 기준이라, 셋 중 타일만 혼자 다른 규칙이었다.
+        //
+        // ⚠️ 후방/전방은 예외로 남는다 — 방향은 플래그를 실은 타격에만 존재하는 판정이라 나머지로 나누면
+        // 비방향성 타격이 섞인 스킬에서 인위적으로 낮아진다. 그래서 타일·행·웹 셋 다 flag-bearing 분모다.
         long totalDamage = raws.Sum(r => r.Damage);
         int totalHits = raws.Where(r => !r.IsDot).Sum(r => r.Hits);
         int totalFlagged = raws.Where(r => !r.IsDot).Sum(r => r.Flagged);
@@ -194,11 +202,11 @@ public sealed record DetailModel(
             totalDamage,
             contribution,
             TotalPct(r => r.Crit, totalHits),
-            TotalPct(r => r.Strong, totalFlagged),
-            TotalPct(r => r.Perfect, totalFlagged),
+            TotalPct(r => r.Strong, totalHits),
+            TotalPct(r => r.Perfect, totalHits),
             TotalPct(r => r.Back, totalFlagged),
             TotalPct(r => r.Front, totalFlagged),
-            TotalPct(r => r.Parry, totalFlagged),
+            TotalPct(r => r.Parry, totalHits),
             totalHits,
             combatMs,
             groups,
