@@ -755,12 +755,32 @@ public sealed class StreamProcessor
 
         byte[] region = packet[start..(start + tempV)];
         pdp.Specials = DamageParsing.ParseSpecialDamageFlags(region);
-        // Attack direction (후방/전방) — the position byte the 07-01 patch added at region offset [2].
-        // Independent of the special-flag byte at [0], so it is read separately.
-        pdp.Position = DamageParsing.ParsePosition(region);
-        if (pdp.Specials.Contains(SpecialDamage.Restoration))
+
+        // region 레이아웃: [0] 플래그 바이트 · [1..] _restoration_hp varint · 그 다음이 각도 바이트.
+        // 🔴 _restoration_hp 의 폭이 값에 따라 변한다(실측 1바이트 33건 / 2바이트 70건). 종전에는 각도를
+        //    region[2]에, 뒤따르는 varint 들의 밀림을 +2로 **둘 다 고정**해 읽었고, 그건 폭이 2일 때만 맞는다.
+        //    폭 1인 흡혈 프레임에서는 피해 varint 를 한 바이트 어긋나게 읽어 한 자릿수를 피해로 기록했다
+        //    (흡혈은 '타격 피해의 20%'라는 독립 불변식이 있다 — 폭 1 프레임 33건에서 회복/피해 비가
+        //    종전 읽기로는 0.15~0.25 구간에 0건, 폭을 반영하면 33건 전부 든다. 중앙값 0.1990).
+        // ⚠️ 흡혈이 아닌 프레임은 손대지 않는다 — 그쪽은 이 필드가 1바이트라 지금 오프셋이 이미 맞다.
+        // ⚠️ 폭 2에서 밀림을 폭 그대로(=2) 쓰는 것은 **현행과 바이트 단위로 동일**하다. 코퍼스는 폭-1 모델도
+        //    똑같이 만족시키지만(두 모델이 갈리지 않는다), 이미 맞게 읽히던 70건을 한 바이트도 안 움직이는
+        //    쪽을 골랐다. 폭 3 표본이 생기면 그때 두 모델이 갈린다.
+        int restorationWidth = 1;
+        bool restoration = pdp.Specials.Contains(SpecialDamage.Restoration);
+        if (restoration)
         {
-            offset += 2;
+            VarIntOutput restorationHp = PacketPrimitives.ReadVarInt(region, 1);
+            if (restorationHp.Length > 0)
+            {
+                restorationWidth = restorationHp.Length;
+            }
+        }
+
+        pdp.Position = DamageParsing.ParsePosition(region, 1 + restorationWidth);
+        if (restoration)
+        {
+            offset += restorationWidth;
         }
 
         offset += tempV;

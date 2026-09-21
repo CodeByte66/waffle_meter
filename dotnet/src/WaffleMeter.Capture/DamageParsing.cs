@@ -109,14 +109,20 @@ public static class DamageParsing
     /// byte) = 0 (neither / side / positionless). A single value, not a bitmask — front and back are
     /// mutually exclusive. Matches the client's own layout — other meters read this same byte.
     /// </summary>
-    public static int ParsePosition(byte[] region)
+    public static int ParsePosition(byte[] region) => ParsePosition(region, 2);
+
+    /// <summary><paramref name="at"/> = 각도 바이트의 region 내 오프셋. 기본 2가 아니라 인자인 이유는
+    /// 그 앞의 <c>_restoration_hp</c> varint 폭이 값에 따라 1~3바이트로 변하기 때문이다 — 흡혈이 붙은
+    /// 타격에서 2로 고정해 읽으면 varint 중간 바이트를 각도로 읽는다. 실측(6세션 흡혈 프레임 120건):
+    /// 고정 읽기는 6·13·5 같은 값을 내지만 폭을 반영해 읽으면 <b>120건 전부 {0,1,2}</b>로 떨어진다.</summary>
+    public static int ParsePosition(byte[] region, int at)
     {
-        if (region.Length < 10 || region.Length < 3)
+        if (region.Length < 10 || at < 0 || at >= region.Length)
         {
             return 0;
         }
 
-        return region[2] switch
+        return region[at] switch
         {
             1 => 1,
             2 => 2,
