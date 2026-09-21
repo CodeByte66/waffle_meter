@@ -265,6 +265,10 @@ public partial class App : Application
         // 그대로 돌려주고(버프 저장소가 이미 비워졌으므로 재계산이 불가능하다), 라이브는 지금 값을 다시 센다.
         viewModel.MetricsResolver = report => services.Calculator.GetDpsMetrics(report);
 
+        // 죽어 있는 동안 그 행을 흐리게. 라이브 상태라서 기록 재생에서는 묻지 않는다 — 지난 전투를 보는데
+        // "지금 죽어 있는 사람"이 회색으로 뜨면 그 화면이 말하는 시점이 뒤섞인다(바로 위 티어와 같은 이유).
+        viewModel.DeadResolver = uid => !_viewingHistory && services.Data.IsDead(uid);
+
         // 후원자·랭커 닉네임 연출 명단. 파일이 없으면 아무도 연출을 갖지 않는다 — 서버 배포 채널이 붙기
         // 전까지가 그 상태다. 공개 repo 에 동봉하지 않는 이유는 부여를 철회해도 git 히스토리에서는 회수할
         // 수 없기 때문이다.

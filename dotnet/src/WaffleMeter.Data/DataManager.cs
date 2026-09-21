@@ -2169,8 +2169,113 @@ public sealed class DataManager : ICaptureGameData
     /// <para><see cref="OwnerBuffClearRevision"/>을 올려 두면 500ms 오버레이 틱이 "이번 틱에 사망 클리어가
     /// 있었다"를 알 수 있다 — 스냅샷을 뜬 직후 클리어가 들어오는 서브초 레이스에서 잔여 버프가 종료 음성을
     /// 외치는 것을 막는 용도다(사망으로 인한 초기화에는 종료 알림을 내지 않는다).</para></summary>
+    // ---- 사망 집합 (죽어 있는 동안 그 행을 회색으로) ----
+    //
+    // 두 신호를 합친다. 시작은 0x8D04(사망 브로드캐스트)와 파티 HP 의 hp==0 중 먼저 오는 쪽 — 0x8D04 가
+    // 최대 1초 빠르지만 AoI 사각에서 통째로 빠지는 경우가 있다(파티 재현율 13/14). 해제는 오직 "살아 있다"는
+    // 증거뿐이다.
+    //
+    // 🔴 이 자료구조 전체가 fail-open 이다. 살아서 딜하는 사람을 회색으로 두면 옆 칸의 오르는 DPS 와 정면
+    // 모순이라 미터 신뢰를 깎지만, 놓친 사망은 그냥 기능이 안 보일 뿐이다. 그래서:
+    //   · 해제는 "live==1 **또는** hp>0" — AND 가 아니다. 실측 41창에서 둘은 한 번도 어긋나지 않아
+    //     어느 쪽이 권위인지 증거가 없고, 증거가 없으면 fail-open 이 정한다.
+    //   · 해제에는 uid 존재 게이트를 걸지 않는다. UserRepository 가 캐릭터당 uid 를 3개로 제한해 축출하므로,
+    //     같은 캐릭터가 네 번째로 재인스턴스되면 옛 uid 가 사라지고 그 순간 해제가 조용히 버려진다
+    //     = 영구 회색. 모르는 uid 를 지우는 건 무해하다.
+    //   · **시간 타임아웃을 두지 않는다.** 이번 코퍼스 최장 사망 구간은 14.7초지만 직전 코퍼스엔 203~235초가
+    //     있었다. 대신 전투 경계에서 통째로 비운다 — 사망 직후 존 전환이 끼면 해제가 영영 안 오고
+    //     (0x921B 키별 최대 간격 123.9초 실측) 그때 유일한 안전망이 이것이다.
+    private readonly Dictionary<int, long> _deadSince = new();
+    private readonly object _deadGate = new();
+
+    /// <summary>그 엔티티가 지금 죽어 있는가. 표시 계층이 행마다 묻는다.</summary>
+    public bool IsDead(int entityId)
+    {
+        lock (_deadGate)
+        {
+            return _deadSince.ContainsKey(entityId);
+        }
+    }
+
+    private void MarkDead(int entityId, long arrivedAt)
+    {
+        if (entityId <= 0)
+        {
+            return;
+        }
+
+        lock (_deadGate)
+        {
+            _deadSince.TryAdd(entityId, arrivedAt);
+        }
+    }
+
+    private void ClearDead(int entityId)
+    {
+        lock (_deadGate)
+        {
+            _deadSince.Remove(entityId);
+        }
+    }
+
+    private void ClearAllDead()
+    {
+        lock (_deadGate)
+        {
+            _deadSince.Clear();
+        }
+    }
+
+    /// <summary>0x921B / 0x962B. 공대에서는 같은 키가 두 opcode 양쪽에 실려 오므로 멱등이다.</summary>
+    public void SaveMemberVitals(int key, long hp, byte live, long arrivedAt)
+    {
+        if (key <= 0)
+        {
+            return;
+        }
+
+        // 하나라도 살았다고 하면 푼다. live 가 {0,1} 밖이면 그 필드만 무시되고 hp 가 판정한다.
+        if (live == 1 || hp > 0)
+        {
+            ClearDead(key);
+            return;
+        }
+
+        // 마킹은 아는 유저에게만 — 0x8D04 의 99%가 몹이고, 같은 이유로 여기도 남의 엔티티를 담지 않는다.
+        if (_userRepository.Exist(key))
+        {
+            MarkDead(key, arrivedAt);
+        }
+    }
+
+    /// <summary>0x8D00 statId 0. <b>executor 한정</b> — 파티원은 이 경로로 판정하지 않는다(위 주석 참조).</summary>
+    public void ObserveEntityHp(int entityId, long currentHp)
+    {
+        int owner = _userRepository.Executor();
+        if (owner == 0 || entityId != owner)
+        {
+            return;
+        }
+
+        if (currentHp > 0)
+        {
+            ClearDead(entityId);
+        }
+        else
+        {
+            MarkDead(entityId, Clock());
+        }
+    }
+
     public void SaveEntityDeath(int entityId, long arrivedAt)
     {
+        // 마킹만 먼저. 아래 executor 게이트는 버프 오버레이를 비우는 별개 관심사이고, 파티원 사망은
+        // 거기서 걸러지지만 회색 표시에는 필요하다.
+        if (_userRepository.Exist(entityId))
+        {
+            MarkDead(entityId, arrivedAt);
+        }
+
         int owner = _userRepository.Executor();
         if (owner == 0 || entityId != owner)
         {
@@ -3026,6 +3131,11 @@ public sealed class DataManager : ICaptureGameData
         }
 
         _packetRepository.Save(pdp);
+
+        // 딜이 들어왔다 = 살아 있다. 제자리 부활(부활석) 7건 전부 0.x초 안에 첫 타격이 들어오므로, 이 한 줄이
+        // "살아서 딜하는데 행은 회색" 을 구조적으로 불가능하게 만든다 — 어떤 해제 신호를 놓쳐도 여기서 풀린다.
+        ClearDead(pdp.ActorId);
+
         MaybeFollowSelfTarget(pdp); // Feature 2 (염화의 수호검): 본인이 때리는 수호검으로 표시 전환
     }
 
@@ -3462,6 +3572,10 @@ public sealed class DataManager : ICaptureGameData
         _recentlyEndedBattles[mobId] = new EndedBattle(mobCode, Clock());
         _activeBattleMobCode = null;
         ClearGroggyState();
+
+        // 사망 집합의 유일한 안전망. 사망 직후 존 전환이 끼면 그 키의 HP 브로드캐스트가 영영 안 오고
+        // (0x921B 키별 최대 간격 123.9초 실측) 시간 타임아웃은 일부러 안 두므로, 전투 경계에서 비운다.
+        ClearAllDead();
     }
 
     // ---- battle log ----

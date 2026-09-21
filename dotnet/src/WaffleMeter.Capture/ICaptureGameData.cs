@@ -256,6 +256,16 @@ public interface ICaptureGameData
     /// 사람이 빠진다).</summary>
     void RemovePartyMemberByKey(int key) { }
 
+    /// <summary>0x921B / 0x962B — 파티·공대 멤버의 HP 와 <paramref name="live"/> 플래그.
+    /// <para>공대에서는 같은 키가 두 opcode 양쪽에 실려 오므로 <b>멱등</b>이어야 한다.
+    /// <paramref name="live"/> 가 {0,1} 밖이면 그 필드만 무효로 보고 <paramref name="hp"/> 는 살려라.</para></summary>
+    void SaveMemberVitals(int key, long hp, byte live, long arrivedAt) { }
+
+    /// <summary>0x8D00 statId 0 이 실어 온 현재 HP. <b>본인</b> 사망/부활을 닫는 유일한 경로다(본인은 파티 HP
+    /// 브로드캐스트에 안 실린다). 받는 쪽이 executor 한정으로 소비한다 — 파티원으로 넓히면 AoI 희소성 때문에
+    /// 부활 인지가 최대 78초 늦는다.</summary>
+    void ObserveEntityHp(int entityId, long currentHp) { }
+
     /// <summary>0x9702 방 스냅샷 꼬리의 시련 난이도 어픽스 네 축(각 1~4, <c>TrialAffixGroup</c> 순서).
     /// <paramref name="dungeonId"/> 는 걸러내지 않고 그대로 넘어온다 — 어느 던전을 시련으로 볼지는 데이터
     /// 계층이 정한다(여기서 하드코딩하면 신규 시련형 콘텐츠가 붙어도 흔적이 안 남는다).

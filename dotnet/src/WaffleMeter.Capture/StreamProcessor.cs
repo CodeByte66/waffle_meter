@@ -136,6 +136,13 @@ public sealed class StreamProcessor
     // 0x9200 — 파티/공대 멤버 상세 프로필. 0x9702 로스터와 달리 레코드마다 엔티티 uid를 함께 싣는 유일한
     // 브로드캐스트라, 본인 로드 패킷(0x3633)이 오지 않은 재인스턴스에서 본인을 새 uid에 묶는 근거가 된다.
     private const int MemberProfileKey = 0x00 | (0x92 << 8);   // 0x9200
+    // 파티/공대 멤버 HP·MP 브로드캐스트. **같은 레이아웃**이라 한 핸들러가 둘 다 받는다
+    // (0x921B 8,047프레임 + 0x962B 2,041프레임, exact-consume 실패 0).
+    // 공대에서는 **둘 다 온다** — 0x921B 가 본인 서브파티, 0x962B 가 전원이고 같은 키가 양쪽에 실린다.
+    // 따라서 소비 측은 멱등이어야 하고, "0x921B 에 없으니 파티가 아니다" 로 판단하면 안 된다.
+    // 본문 마지막 바이트가 `_live` 이고, 이게 사망→부활 구간을 닫는 신호다(실측 41창 전부 해제).
+    private const int PartyMemberHpMpKey = 0x1B | (0x92 << 8);  // 0x921B PartyUpdateMemberHPMP_NT
+    private const int ForceMemberHpMpKey = 0x2B | (0x96 << 8);  // 0x962B ForceUpdateMemberHPMP_NT
     // Resource-status family (0x61 category) carrying the aether (오드) balance. Two opcodes ride the same
     // marker-based body layout; both are handled by the one resource parser.
     private const int AetherKeyA = 0x0B | (0x61 << 8);         // 0x610B
@@ -278,6 +285,8 @@ public sealed class StreamProcessor
         [Key(0x1F, 0x97)] = "PartyMemberUpdate",
         [Key(0x22, 0x96)] = "PartyMemberRemove",
         [MemberProfileKey] = "MemberProfile",
+        [PartyMemberHpMpKey] = "PartyMemberVitals",
+        [ForceMemberHpMpKey] = "ForceMemberVitals",
         [AetherKeyA] = "AetherStatus",
         [AetherKeyB] = "AetherStatus",
         [InstancePhaseKeyA] = "InstancePhase",
@@ -516,6 +525,10 @@ public sealed class StreamProcessor
                     break;
                 case MemberProfileKey:
                     ParseMemberProfile(packet, lengthInfo, extraFlag);
+                    break;
+                case PartyMemberHpMpKey:
+                case ForceMemberHpMpKey:
+                    ParseMemberVitals(packet, lengthInfo, extraFlag, arrivedAt);
                     break;
                 case AetherKeyA:
                 case AetherKeyB:
@@ -2114,6 +2127,54 @@ public sealed class StreamProcessor
     /// mask=2/1개/statId=0 한 형태여서 u64 HP의 하위 32비트에 <b>우연히</b> 착지했기 때문에 동작했다.
     /// 그래서 최대 HP만 실린 프레임(실측 9건)에서는 최대치를 "잔여 HP"로 발행해 교전 첫 프레임에 보스 HP가
     /// 순간적으로 만피로 튀었다. 이제 statId를 실제로 보고 현재 HP가 있을 때만 발행한다.</para></summary>
+    /// <summary>
+    /// 0x921B / 0x962B — 파티·공대 멤버의 HP·MP 브로드캐스트. 두 opcode의 레이아웃이 같아 한 핸들러가 받는다.
+    /// <code>[key varint][hp varint][hp_max varint][ 25바이트 고정 꼬리 ]</code>
+    /// 꼬리 마지막 바이트가 <c>_live</c> 이고, 이것이 사망→부활 구간을 <b>닫는</b> 유일한 신호다
+    /// (실측 41창 전부 해제, 부활석 부활 포함).
+    ///
+    /// <para>🔴 <b>길이 화이트리스트를 쓰지 마라.</b> 실측 본문이 31/32/33바이트로 보이는 건 이 파티 구성의
+    /// 우연이다 — 31B가 뜻하는 건 "hp==0"이 아니라 "hp&lt;128"이고 key varint 폭도 마침 전부 2였을 뿐이다.
+    /// <c>offset + 25 == Length</c> 하나만 쓰면 서버가 필드를 늘려도 오독이 아니라 드롭으로 떨어진다.</para>
+    ///
+    /// <para>⚠️ <c>live</c> 가 {0,1} 밖의 값이면 그 <b>필드만</b> 버리고 hp 신호는 살린다 — 소비 측이
+    /// fail-open(하나라도 살았다고 하면 푼다)이라 여기서 프레임을 통째로 버리면 해제가 사라진다.</para>
+    /// </summary>
+    private void ParseMemberVitals(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, long arrivedAt)
+    {
+        int offset = lengthInfo.Length + (extraFlag ? 1 : 0);
+        if (offset + 2 > packet.Length)
+        {
+            return;
+        }
+
+        byte lo = packet[offset];
+        byte hi = packet[offset + 1];
+        if (!((lo == 0x1B && hi == 0x92) || (lo == 0x2B && hi == 0x96)))
+        {
+            return;
+        }
+
+        offset += 2;
+
+        VarIntOutput key = PacketPrimitives.ReadVarInt(packet, offset);
+        if (key.Length <= 0) return;
+        offset += key.Length;
+
+        VarIntOutput hp = PacketPrimitives.ReadVarInt(packet, offset);
+        if (hp.Length <= 0) return;
+        offset += hp.Length;
+
+        VarIntOutput hpMax = PacketPrimitives.ReadVarInt(packet, offset);
+        if (hpMax.Length <= 0) return;
+        offset += hpMax.Length;
+
+        // 꼬리는 고정 25바이트([mp u32][mp_max u32][0][0][? u32][? u32] + live u8). 정확히 안 맞으면 버린다.
+        if (offset + 25 != packet.Length) return;
+
+        _data.SaveMemberVitals(key.Value, hp.Value, packet[^1], arrivedAt);
+    }
+
     private void ParseRemainHp(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
     {
         int offset = lengthInfo.Length;
@@ -2167,6 +2228,16 @@ public sealed class StreamProcessor
 
         // 프레임을 정확히 소진하지 못했으면 우리가 아는 형태가 아니다 — 노이즈이거나 서버가 포맷을 바꿨다.
         if (offset != packet.Length) return;
+
+        // 🔴 본인 사망/부활은 이 경로가 유일하다 — 본인은 파티 HP 브로드캐스트(0x921B/0x962B)에 안 실린다.
+        // 아래 mobCode 게이트가 플레이어를 전부 걸러내므로 여기서 먼저 흘린다.
+        // ⚠️ 데이터 계층이 executor 한정으로 받는다. **파티원으로 확장하지 마라** — 0x8D00 은 파티원 HP도
+        // 싣고 사망 재현율은 같지만, AoI 희소성 때문에 hp>0 복귀가 40~64초 늦는 사례가 실측으로 있다
+        // (진실 14.70초 ↔ 이 경로 78.50초). 확장하면 살아서 딜하는 사람을 최대 78초 회색으로 둔다.
+        if (currentHp is { } liveHp)
+        {
+            _data.ObserveEntityHp(mobIdInfo.Value, liveHp);
+        }
 
         int? mobCode = _data.GetMobId(mobIdInfo.Value);
         if (mobCode is null)

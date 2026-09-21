@@ -116,6 +116,11 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// </summary>
     public Func<DpsReport, IReadOnlyDictionary<int, RowTier>>? TierResolver { get; set; }
 
+    /// <summary>"이 uid 가 지금 죽어 있는가". <see cref="TierResolver"/> 와 같은 방식으로 주입한다 — 이 뷰모델은
+    /// 데이터 계층을 안 들고 있고, 저장된 전투를 다시 그릴 때는 아무도 죽어 있지 않아야 하기 때문이다(주입이
+    /// 없으면 전부 false).</summary>
+    public Func<int, bool>? DeadResolver { get; set; }
+
     /// <summary>nDPS/rDPS for the report being shown. Injected the same way <see cref="TierResolver"/> is, so a
     /// live report and a history replay go through one function — a saved battle returns its frozen snapshot and
     /// a live one recomputes. Null (not wired) simply means the row metric selector has nothing to switch to and
@@ -962,7 +967,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
                 GaugeFxEnabled: gaugeSkinId is not null
                     && _settings.NameFxMode == "animated"
                     && !_settings.LowSpecMode
-                    && _settings.BarStyle == "fill");
+                    && _settings.BarStyle == "fill",
+                IsDead: DeadResolver?.Invoke(e.Uid) ?? false);
 
             if (i < Rows.Count)
             {
@@ -1181,7 +1187,13 @@ public sealed record RowViewModel(
     string? GaugeSkinId = null,
     /// <summary>Whether the decoration may animate on this row. Separate from having a skin, because 색상만
     /// (static), low-spec and <c>BarStyle != fill</c> all keep the colour fill and drop only the decoration.</summary>
-    bool GaugeFxEnabled = false);
+    bool GaugeFxEnabled = false,
+    /// <summary>이 캐릭터가 <b>지금 죽어 있는가</b>. 죽어 있는 동안 행을 흐리게 그린다.
+    /// <para>맨 끝에 붙인다 — 이 record 는 같은 타입 이웃이 많아 중간에 끼우면 컴파일은 되면서 값이 조용히
+    /// 뒤바뀐다(위 <c>NameFillBrush</c> 주석이 같은 이유를 적고 있다).</para>
+    /// <para>판정은 데이터 계층이 fail-open 으로 한다 — 살아서 딜하는 사람을 회색으로 두는 쪽이
+    /// 사망을 놓치는 쪽보다 나쁘다.</para></summary>
+    bool IsDead = false);
 
 // 레이아웃 기하는 행에 굽지 않는다. 구웠더니 설정에서 레이아웃을 바꿔도 다음 Update(report) 까지
 // 옛 기하가 남았고, 전투가 없으면 리포트가 안 와서 "대기 중" 화면의 행이 영영 안 바뀌었다.

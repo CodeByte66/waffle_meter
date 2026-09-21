@@ -101,6 +101,12 @@
                                     <Setter Property="Background" Value="{DynamicResource Skin.RowBg}"/>
                                     <Setter Property="BorderBrush" Value="{Binding Tier.RowBorder}"/>
                                     <Style.Triggers>
+                                        <!-- 죽어 있는 동안 행 전체를 흐리게. 판정은 fail-open 이라(살아서 딜하면
+                                             즉시 풀린다) 이 상태가 오래 남을 수 없고, 그래서 숨기지 않고 흐리게만
+                                             한다 — 행이 사라지면 그 자리의 순위가 흔들려 읽던 눈이 미끄러진다. -->
+                                        <DataTrigger Binding="{Binding IsDead}" Value="True">
+                                            <Setter Property="Opacity" Value="0.45"/>
+                                        </DataTrigger>
                                         <!-- 티어 색을 행 테두리에 입히지 않는 레이아웃. 카드가 없거나
                                              헤어라인뿐인 곳에서는 색 테두리가 행 사이를 벌려 보이게 하고
                                              의미 없는 선을 남긴다 — 티어는 칩으로만 말한다. -->
