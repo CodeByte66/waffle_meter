@@ -247,10 +247,15 @@ public sealed class DataManager : ICaptureGameData
 
     public void LoadSkills(IEnumerable<Skill> skills)
     {
-        foreach (Skill s in skills)
+        var all = skills as IReadOnlyCollection<Skill> ?? skills.ToList();
+        foreach (Skill s in all)
         {
             _skillRepository.Save(s.Code, s);
         }
+
+        // 같은 목록으로 특화 종류(일반 3칸 / 스티그마 5티어)를 인덱싱한다 — 코드 꼬리의 의미가 종류마다
+        // 다르므로 이 판별 없이는 상세창과 업로드가 스티그마에 틀린 빌드를 싣는다.
+        SpecCatalog.Default.Index(all);
     }
 
     /// <summary>Load the instanced-content (원정/초월/성역) boss classification: mobCode -> category.</summary>
@@ -3249,6 +3254,10 @@ public sealed class DataManager : ICaptureGameData
         }
 
         _packetRepository.Save(pdp);
+
+        // 특화 종류 런타임 승격. skills.json 에 변형 코드가 아예 없는 base 가 실재해서(실측 14200000 퇴보 베기,
+        // 13380000 암격) 인덱싱만으로는 종류를 모르는 스킬이 남는다. 실제로 본 꼬리가 그걸 메운다.
+        SpecCatalog.Default.Observe(pdp.RawSkillCode);
 
         // 딜이 들어왔다 = 살아 있다. 제자리 부활(부활석) 7건 전부 0.x초 안에 첫 타격이 들어오므로, 이 한 줄이
         // "살아서 딜하는데 행은 회색" 을 구조적으로 불가능하게 만든다 — 어떤 해제 신호를 놓쳐도 여기서 풀린다.

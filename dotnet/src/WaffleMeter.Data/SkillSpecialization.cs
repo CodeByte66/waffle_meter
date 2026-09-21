@@ -24,9 +24,29 @@ public static class SkillSpecialization
     /// mob skills, and DoT-only rows have none, and a malformed suffix (a digit outside 1..5) yields null
     /// rather than a wrong guess.
     /// </summary>
-    public static bool[]? Decode(int rawSkillCode)
+    public static bool[]? Decode(int rawSkillCode) => Decode(rawSkillCode, SpecCatalog.Default.KindOf(rawSkillCode));
+
+    /// <summary>
+    /// <paramref name="kind"/> 를 명시하는 오버로드.
+    ///
+    /// <para>🔴 <b>스티그마는 언제나 null 이다.</b> 스티그마는 티어마다 별개의 데미지 컴포넌트가 있어서
+    /// 코드 꼬리가 *그 타격을 낸 컴포넌트의 티어*이지 플레이어의 빌드가 아니다 — 실측으로 본인 스티그마
+    /// hit 의 79.8%가 틀린 티어를 실었고, 11캐릭터 hit 기준으로는 42.8%만 맞았다. 값이 1~5 라고 해서
+    /// 그럴듯하다고 쓰면 안 된다. 하한(<c>관측 꼬리 ≤ 실제 티어</c>)으로는 쓸 수 있지만 그건 빌드가 아니므로
+    /// 이 API 가 돌려줄 값이 아니다.</para>
+    ///
+    /// <para>⚠️ <see cref="SpecKind.None"/>(카탈로그 미인덱싱 또는 분류 실패)은 <b>종전 동작 그대로</b>
+    /// 꼬리를 읽는다. 여기서 null 로 막으면 카탈로그가 안 실린 호스트에서 특화가 통째로 조용히 사라진다 —
+    /// 이 저장소가 반복해서 당한 모양이다. 실측으로 문제가 확인된 건 스티그마 하나이므로 거기만 막는다.</para>
+    /// </summary>
+    public static bool[]? Decode(int rawSkillCode, SpecKind kind)
     {
         if (rawSkillCode <= 0)
+        {
+            return null;
+        }
+
+        if (kind == SpecKind.Stigma)
         {
             return null;
         }
