@@ -42,9 +42,6 @@ jobs:
     env:
       # secrets/vars can't be referenced in step-level `if:`, so surface the signing gate as an env flag.
       SIGN_ENABLED: ${{ vars.SIGNPATH_ORG_ID != '' }}
-      # Anti-analysis obfuscation gate (OFF until repo VARIABLE `OBFUSCATE` = 'true'). Kept off by default
-      # so it can't silently break a release; enable + test before relying on it (docs/replay-feature-plan.md §7).
-      OBFUSCATE_ENABLED: ${{ vars.OBFUSCATE == 'true' }}
       SIGNPATH_PROJECT_SLUG: waffle_meter
       SIGNPATH_POLICY_SLUG: release-signing
     steps:
@@ -81,48 +78,28 @@ jobs:
       - name: Publish capture helper (into the same folder)
         run: dotnet publish dotnet/tools/WaffleMeter.CaptureHost/WaffleMeter.CaptureHost.csproj -c Release -r win-x64 --self-contained true -p:WaffleVersion=${{ env.VERSION }} -p:DebugType=none -p:DebugSymbols=false -p:IncludeSourceRevisionInInformationalVersion=false -o publish
 
-      # ---- Inject the PRIVATE replay engine DLL into publish/ (before obfuscate/sign/pack).
-      # The engine (0x37xx decode + reconstruction — the reverse-engineered secret) is NOT referenced by
-      # the app at compile time; it is discovered at runtime by ReplayEngineLoader. The source lives in the
-      # private waffle_meter_replay repo; here we clone it as a SIBLING of this checkout (its csproj
-      # references the public assemblies via ../../../../waffle_meter, so sibling layout is required),
-      # build the engine, and drop the DLL into publish/. Without the token (e.g. a fork) the step skips and
-      # the release ships without replay. Placed before obfuscate/sign so the engine DLL is hardened + signed.
-      # Gated OFF by default (repo VARIABLE SHIP_REPLAY must be 'true'): the movement-replay feature is still
-      # WIP, so releases ship WITHOUT it until it's finished. Set the variable to re-enable once ready.
-      - name: Inject replay engine (private module)
-        if: vars.SHIP_REPLAY == 'true'
+      # ---- Build + inject the replay engine DLL into publish/ (before sign/pack).
+      # The engine (0x37xx decode + path reconstruction) lives in its own PUBLIC repo waffle_meter_replay and
+      # is NOT referenced by the app at compile time — ReplayEngineLoader discovers it at runtime. We clone it
+      # as a SIBLING of this checkout (its csproj references the public assemblies via ../../../../waffle_meter,
+      # so sibling layout is required), build it, and drop the DLL into publish/.
+      #
+      # 🔑 No gate and no token, on purpose. This step used to be behind the repo variable SHIP_REPLAY and a
+      # PAT for a private repo. Both are gone: a repo variable can change what a SIGNED release contains
+      # without leaving a trace in the commit history, which is exactly the trust relationship SignPath's OSS
+      # signing is built on. What ships is now decided by the source alone.
+      - name: Inject replay engine
         shell: pwsh
         env:
-          REPLAY_REPO_TOKEN: ${{ secrets.REPLAY_REPO_TOKEN }}
           REPLAY_REPO: ${{ github.repository_owner }}/waffle_meter_replay
         run: |
-          if (-not $env:REPLAY_REPO_TOKEN) {
-            Write-Host "::warning::REPLAY_REPO_TOKEN not set — this release ships WITHOUT replay"
-            exit 0
-          }
-          # Clone the private engine as a sibling of this checkout so its ../../../../waffle_meter refs resolve.
           $sibling = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) "waffle_meter_replay"
-          Write-Host "cloning private replay engine $env:REPLAY_REPO -> $sibling"
-          git clone --depth 1 "https://x-access-token:$($env:REPLAY_REPO_TOKEN)@github.com/$($env:REPLAY_REPO).git" "$sibling"
+          Write-Host "cloning replay engine $env:REPLAY_REPO -> $sibling"
+          git clone --depth 1 "https://github.com/$($env:REPLAY_REPO).git" "$sibling"
           $proj = Join-Path $sibling "dotnet/src/WaffleMeter.Replay/WaffleMeter.Replay.csproj"
           dotnet publish $proj -c Release -p:WaffleVersion=${{ env.VERSION }} -p:DebugType=none -p:DebugSymbols=false -p:IncludeSourceRevisionInInformationalVersion=false -o _engine_out
           Copy-Item _engine_out/WaffleMeter.Replay.dll publish/ -Force
           Write-Host "replay engine injected -> publish/WaffleMeter.Replay.dll"
-
-      # ---- Anti-analysis: obfuscate the rename-safe app DLLs in publish/ before signing/packing.
-      # OFF by default (env gate above); never touches App.Wpf (BAML) or the Stats JSON DTOs (see config). ----
-      - name: Obfuscate app assemblies (Obfuscar)
-        if: env.OBFUSCATE_ENABLED == 'true'
-        shell: pwsh
-        run: |
-          dotnet tool install -g Obfuscar.GlobalTool
-          # Obfuscar writes to publish_obf/ (in-place fails on the cross-referencing assemblies — file lock),
-          # so copy the obfuscated DLLs back over publish/ for the sign/pack steps that follow.
-          New-Item -ItemType Directory -Force publish_obf | Out-Null
-          obfuscar.console .github/obfuscar.xml
-          Copy-Item publish_obf/*.dll publish/ -Force
-          Write-Host "obfuscated + copied back: $((Get-ChildItem publish_obf/*.dll).Name -join ', ')"
 
       # WinDivert.dll/.sys come from dotnet/third-party/windivert via CaptureHost.csproj (bundled on publish).
 
