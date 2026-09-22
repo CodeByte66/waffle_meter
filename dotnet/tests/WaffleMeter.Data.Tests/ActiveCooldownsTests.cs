@@ -263,4 +263,64 @@ public sealed class ActiveCooldownsTests
 
         Assert.Empty(dm.ActiveCooldowns(t0 + 1_000));
     }
+
+    /// <summary>궁성 = 밴드 14, 마도성 = 밴드 15. jobByte 는 다른 공간이다(ConvertFromCode: 궁성 13~16, 마도성 25~28).</summary>
+    private const int SorcererJobByte = 25;
+    private const int SharedUid = 702;
+
+    /// <summary>
+    /// 🔴 <b>남이 쓰던 uid 를 본인이 물려받으면, 그 남의 시전이 내 쿨타임 줄로 넘어오면 안 된다.</b>
+    ///
+    /// <para>제보: "스킬쿨타임이 마도인데 궁성스킬이 나옵니다". 직업 인식은 멀쩡했다 — 코퍼스 실측에서
+    /// jobByte↔실제 직업 불일치는 0종이었고 마도성은 26·28을 달고 와 정상 판정된다. 범인은 <b>보류 시전</b>이다.</para>
+    ///
+    /// <para>엔티티 id 는 풀 사이에 재사용된다(<c>DpsCalculator.ResolveActor</c> 가 그 성질에 기대고 있다).
+    /// executor 가 아직 0 인 창에서는 <c>SaveCooldown</c> 이 <b>누구의</b> 시전이든 그 uid 앞으로 스테이징하고
+    /// (본인 시전이 0x3633 보다 먼저 오는 비율이 실측 27.6% 라 필요한 장치다), 나중에 그 uid 가 executor 로
+    /// 확정되면 통째로 재생한다. 그 사이에 uid 주인이 바뀌면 <b>남의 쿨이 내 것이 된다.</b></para>
+    ///
+    /// <para>닉네임이 바뀌는 순간 이걸 무효화하는 분기가 <c>DataManager.SaveNickname</c> 에 이미 있는데,
+    /// 거기서 지우는 건 <c>_pendingSelfBuffs</c> 뿐이었다 — 쿨타임 쌍둥이(v2.12.2)가 나중에 생기면서 그 자리가
+    /// 같이 갱신되지 않았다. 그래서 버프는 막히고 쿨타임만 샜다.</para>
+    /// </summary>
+    [Fact]
+    public void A_stranger_who_had_my_uid_first_does_not_leave_their_cooldowns_on_my_overlay()
+    {
+        long t0 = 1_000_000;
+        var dm = new DataManager { Clock = () => t0 };
+        dm.LoadCooldownCatalog(ShippedCatalog());
+
+        // 궁성 파티원이 그 uid 를 쓰는 동안 시전한다. 본인이 아직 미확정이라 '본인 후보'로 스테이징된다.
+        dm.SaveNickname(SharedUid, "궁성파티원", isExecutor: false, server: 3, jobByte: RangerJobByte);
+        dm.SaveCooldown(BlessedBowCast, 80_000, t0, actorId: SharedUid, fromCast: true);
+
+        // 같은 uid 를 본인(마도성)이 물려받는다 — 닉네임이 바뀌므로 미터도 점유자 교체를 안다.
+        dm.Clock = () => t0 + 2_000;
+        dm.SaveNickname(SharedUid, "마도본인", isExecutor: true, server: 3, jobByte: SorcererJobByte);
+
+        IReadOnlyList<SkillCooldownView> rows = dm.ActiveCooldowns(t0 + 2_000);
+
+        Assert.All(rows, r => Assert.Equal(15, r.Job));   // 마도성 칸만 있어야 한다
+        Assert.DoesNotContain(rows, r => r.GroupId == BlessedBow);
+    }
+
+    /// <summary>같은 사람이 같은 uid 를 계속 쓰는 정상 경로는 그대로여야 한다 — 위 수정이 보류 재생 자체를
+    /// 죽이면 본인 시전의 27.6% 가 사라진다.</summary>
+    [Fact]
+    public void The_same_character_keeping_its_uid_still_gets_its_staged_casts_back()
+    {
+        long t0 = 1_000_000;
+        var dm = new DataManager { Clock = () => t0 };
+        dm.LoadCooldownCatalog(ShippedCatalog());
+
+        dm.SaveNickname(SharedUid, "본인", isExecutor: false, server: 3, jobByte: RangerJobByte);
+        dm.SaveCooldown(BlessedBowCast, 80_000, t0, actorId: SharedUid, fromCast: true);
+
+        dm.Clock = () => t0 + 2_000;
+        dm.SaveNickname(SharedUid, "본인", isExecutor: true, server: 3, jobByte: RangerJobByte);
+
+        SkillCooldownView row = Assert.Single(
+            dm.ActiveCooldowns(t0 + 2_000).Where(r => r.GroupId == BlessedBow && !r.IsReady));
+        Assert.Equal(78_000, row.RemainingMs);
+    }
 }

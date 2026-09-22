@@ -1565,11 +1565,17 @@ public sealed class DataManager : ICaptureGameData
                 _pendingExecutorAnchor = null;
             }
 
-            // ...그리고 그 uid로 스테이징해 둔 본인 후보 버프도 무효다 — 새 점유자의 버프가 본인 것으로
+            // ...그리고 그 uid로 스테이징해 둔 본인 후보 버프·시전도 무효다 — 새 점유자의 것이 본인 것으로
             // 재생되면 안 된다.
+            //
+            // 🔴 시전(_pendingSelfCooldowns)이 여기 빠져 있었다. 버프만 지우고 쿨타임을 두면, 남이 쓰던 uid를
+            // 본인이 물려받는 순간 그 남의 쿨이 내 오버레이로 넘어온다 — 제보 "스킬쿨타임이 마도인데 궁성스킬이
+            // 나옵니다"가 정확히 이것이다(직업 인식은 멀쩡했다. 코퍼스 실측 jobByte↔직업 불일치 0종).
+            // 쿨타임 쌍둥이가 버프보다 나중에(v2.12.2) 생기면서 이 무효화 자리가 같이 갱신되지 않았다.
             lock (_ownerBuffGate)
             {
                 _pendingSelfBuffs.Remove(uid);
+                _pendingSelfCooldowns.Remove(uid);
             }
         }
 
