@@ -342,6 +342,26 @@ public class FieldBossAlarmTests
         }
     }
 
+    /// <summary>그 바인딩이 실제로 무언가에 닿는지까지 본다. <b>WPF 바인딩 경로는 런타임에 풀리므로
+    /// 오타가 나도 컴파일은 되고, 예외도 로그도 없이 설명이 통째 빈칸으로 렌더된다.</b> 하필 이번 변경의
+    /// 핵심이 "화면 문구를 상수에서 파생시킨다"인데, App.Wpf 엔 테스트 프로젝트가 없어 바인딩을 실제로
+    /// 돌려 볼 수가 없다. 그래서 양쪽 소스를 읽어 <b>이름이 서로 맞는지</b>만이라도 고정한다.</summary>
+    [Fact]
+    public void Every_binding_the_kaira_settings_block_uses_resolves_to_a_public_property()
+    {
+        string xaml = RepoFile("dotnet", "src", "WaffleMeter.App.Wpf", "SettingsWindow.xaml");
+        string vm = RepoFile("dotnet", "src", "WaffleMeter.App.Wpf", "SettingsViewModel.cs");
+
+        // 설정 화면의 감시자 카이라 블록이 쓰는 바인딩 전부.
+        string[] paths = { "KairaScheduleDesc", "KairaAlarmEnabled", "KairaLead10", "KairaLead5", "KairaLead1" };
+
+        foreach (string path in paths)
+        {
+            Assert.Contains($"{{Binding {path}}}", xaml, StringComparison.Ordinal);
+            Assert.Matches($@"public\s+\w+\??\s+{path}\b", vm);
+        }
+    }
+
     private static string RepoFile(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
