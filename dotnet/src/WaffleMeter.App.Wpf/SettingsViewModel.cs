@@ -1659,6 +1659,14 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     public bool GroggyAlarmEnabled { get => _settings.GroggyAlarmEnabled; set { _settings.GroggyAlarmEnabled = value; OnPropertyChanged(); } }
 
+    /// <summary>The 출현 알림 description line. Generated from <see cref="KairaAlarm.SpawnHoursKst"/> rather
+    /// than typed into the XAML: the hours moved once already (0시 앵커 → 1시, 2026-09-22) and a hand-written
+    /// copy would have gone on telling the user the old times after the logic was fixed.</summary>
+    public string KairaScheduleDesc =>
+        "어비스 하층의 감시자 카이라는 서버가 리젠 시각을 보내지 않습니다. 대신 한국 시각 "
+        + $"{KairaAlarm.SpawnHoursText}시 정각마다 반드시 출현하므로, 미리 가서 대기할 수 있도록 출현 전에 "
+        + "알려줍니다. (어디에 있든 울립니다)";
+
     public bool KairaAlarmEnabled { get => _settings.KairaAlarmEnabled; set { _settings.KairaAlarmEnabled = value; OnPropertyChanged(); } }
     public bool KairaLead10 { get => _settings.KairaLead10; set { _settings.KairaLead10 = value; OnPropertyChanged(); } }
     public bool KairaLead5 { get => _settings.KairaLead5; set { _settings.KairaLead5 = value; OnPropertyChanged(); } }

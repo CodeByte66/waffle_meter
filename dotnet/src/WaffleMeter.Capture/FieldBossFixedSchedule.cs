@@ -32,7 +32,7 @@ public static class FieldBossFixedSchedule
     private static readonly Dictionary<int, Kind> ByBossCode = new()
     {
         // 감시자 카이라(2600089)는 여기 없다 — 서버가 시각을 0으로 보내는 유일한 보스라 리젠 타이머로
-        // 다룰 수가 없고, KST 0시 기준 4시간 격자(00·04·08·12·16·20시) 별도 알림(KairaAlarm)으로 뺐다.
+        // 다룰 수가 없고, KST 1시 기준 4시간 격자 별도 알림(KairaAlarm)으로 뺐다.
         // ⚠️ 확정 출현이 됐다고 여기로 옮기지 마라 — FieldBossCatalog.ScheduledSpawnCode 의 doc 참고.
         [2600084] = Kind.FriSun2205,   // 수호신장 나흐마 ×3 (하층)
         [2600093] = Kind.FriSun2205,

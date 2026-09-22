@@ -141,7 +141,8 @@ public static class FieldBossCatalog
     /// <summary>감시자 카이라 (어비스 하층). The server sends a ZEROED timestamp for this one boss in every
     /// capture, so it has no respawn time to remind against. It therefore gets its own clock-based reminder
     /// and is kept out of the boss picker and the timer-driven alarm — see <c>KairaAlarm</c>.
-    /// <para>2026-09-02 패치로 <b>KST 0시 기준 4시간마다(00·04·08·12·16·20시) 100% 확정 출현</b>이 됐다.
+    /// <para>2026-09-02 패치로 <b>4시간마다 100% 확정 출현</b>이 됐다(격자의 앵커는 KST 1시 — 시각은
+    /// <c>KairaAlarm.SpawnAnchorHourKst</c> 가 정본이니 여기에 다시 적지 마라).
     /// 종전 이름은 <c>HourlySpawnCode</c> 였는데, 그 이름이 남아 있으면 '매시 정각'이라는 죽은 전제를 계속
     /// 퍼뜨린다 — 이 저장소는 "주석으로만 두면 회귀한다"가 명문 규칙이라 이름 쪽을 고쳤다.</para>
     /// <para>⚠️ 그렇다고 <c>FieldBossFixedSchedule</c> 표에 넣지 마라. 넣는 순간
