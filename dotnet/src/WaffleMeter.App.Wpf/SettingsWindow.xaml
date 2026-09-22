@@ -1653,7 +1653,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,16,0">
                                 <TextBlock Text="출현 알림" Style="{StaticResource SettingTitle}"/>
-                                <TextBlock Text="어비스 하층의 감시자 카이라는 서버가 리젠 시각을 보내지 않습니다. 대신 한국 시각 0·4·8·12·16·20시 정각마다 반드시 출현하므로, 미리 가서 대기할 수 있도록 출현 전에 알려줍니다. (어디에 있든 울립니다)" Style="{StaticResource SettingDesc}"/>
+                                <TextBlock Text="{Binding KairaScheduleDesc}" Style="{StaticResource SettingDesc}"/>
                             </StackPanel>
                             <CheckBox Grid.Column="1" Style="{StaticResource ToggleSwitch}" IsChecked="{Binding KairaAlarmEnabled}"/>
                         </Grid>
