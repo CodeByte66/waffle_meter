@@ -748,7 +748,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
             TargetName = pName;
             TargetVariantText = pVariant ?? string.Empty;
             TargetVariantVisibility = string.IsNullOrEmpty(pVariant) ? Visibility.Collapsed : Visibility.Visible;
-            // 무대 서브라인 "던전 · 난이도". 페이즈는 미터에 데이터가 없어 넣지 않는다.
+            // 무대 서브라인 "던전 · 난이도". 페이즈는 여기 넣지 않는다 — 카탈로그가 페이즈를 가른 보스(델트라스)는
+            // DisplayParts 가 이름 쪽에 붙여 준다("델트라스 1페이즈").
             TargetSubtitle = string.Join(" · ",
                 new[] { pDungeon, pVariant }.Where(x => !string.IsNullOrWhiteSpace(x)));
             TargetSubtitleVisibility = TargetSubtitle.Length > 0 ? Visibility.Visible : Visibility.Collapsed;

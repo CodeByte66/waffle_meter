@@ -3,7 +3,10 @@
 namespace WaffleMeter.Data;
 
 /// <summary>Where a boss mobCode sits in the supported-dungeon catalog.
-/// <para><see cref="BossIndex"/> is 1-based, matching the stats web's boss ordering.</para></summary>
+/// <para><see cref="BossIndex"/> is the stats web's boss index — a stored, append-only coordinate (the web's
+/// <c>boss_index</c>, the tier artifact's <c>b</c>), NOT the boss's position in the dungeon. 비탄의 설원 lists
+/// 1, 3, 2: 델트라스 2페이즈 kept the 2 it had owned since the raid opened, and 1페이즈 was appended as 3 when the
+/// two phases were split (2026-09-25).</para></summary>
 public readonly record struct EncounterInfo(
     string DungeonKey,
     string DungeonName,
@@ -220,9 +223,10 @@ public sealed class EncounterCatalog
         }
 
         // Prefer the live mob name over the catalog's: the catalog's boss names are the web's display names and
-        // can drift from mobs.json (e.g. "바실루스" vs "위악의 바실루스"). Only the SUFFIX comes from here.
+        // can drift from mobs.json (e.g. "바실루스" vs "위악의 바실루스"). Only the SUFFIX comes from here —
+        // except where the web split one mob name into phases (see BossLabel).
         // Blank-not-empty has to be caught as well, or a whitespace name renders as a bare "  (시련)".
-        string name = fallback.Trim().Length > 0 ? fallback : info.BossName;
+        string name = BossLabel(fallback, info.BossName);
         return name.Trim().Length > 0 ? $"{name} ({info.VariantLabel})" : fallback;
     }
 
@@ -250,10 +254,34 @@ public sealed class EncounterCatalog
             info = info with { VariantLabel = variantOverride! };
         }
 
-        string name = fallback.Trim().Length > 0 ? fallback : info.BossName;
+        string name = BossLabel(fallback, info.BossName);
         return name.Trim().Length > 0
             ? (name, info.VariantLabel, info.DungeonName)
             : (fallback, null, null);
+    }
+
+    /// <summary>
+    /// 화면에 쓸 보스 이름. 원칙은 라이브 몹 이름(mobs.json)이고, 카탈로그 이름은 라이브 이름이 비었을 때만 쓴다.
+    ///
+    /// <para>예외는 하나다 — 카탈로그 이름이 <b>"라이브 이름 + 공백 + 무언가"</b>이면 카탈로그 쪽을 쓴다. 웹이
+    /// 한 몹 이름을 둘로 가른 경우이고, 그 구분은 카탈로그에만 있다. 델트라스는 페이즈마다 코드가 다르지만
+    /// mobs.json 에선 여섯 코드가 모두 "델트라스"라서, 이 예외가 없으면 1페이즈와 2페이즈가 같은 이름으로 보인다.
+    /// (2026-09-25 웹이 "델트라스 1페이즈"/"델트라스 2페이즈"를 별도 보스로 나눴다.)</para>
+    ///
+    /// <para>⚠️ 전역으로 카탈로그 이름을 우선하지 마라. 델트라스 말고도 두 이름이 어긋난 코드가 9개 있고
+    /// ("위악의 바실루스"/"바실루스", "에몬"/"가라앉은 에몬", 아울도르/아욜도르) 모두 이 접두 규칙에 걸리지
+    /// 않는다 — 거기선 지금처럼 라이브 이름을 쓴다. 걸리는 코드 집합은
+    /// <c>ShippedEncounterCatalogTests</c> 가 여섯 개로 고정한다 — 시드가 바뀌어 규칙이 번지면 거기서 깨진다.</para>
+    /// </summary>
+    private static string BossLabel(string liveName, string catalogName)
+    {
+        string live = liveName.Trim();
+        if (live.Length == 0)
+        {
+            return catalogName;
+        }
+
+        return catalogName.StartsWith(live + " ", StringComparison.Ordinal) ? catalogName : liveName;
     }
 
     private static string? NullableStr(JsonElement el, string name) =>
