@@ -131,6 +131,67 @@ public sealed class EncounterCatalogTests
         Assert.Equal("위대한 바크론 (시련)", catalog.DisplayName(2300582, "위대한 바크론"));
     }
 
+    // 비탄의 설원 after the 2026-09-25 split: one live mob name ("델트라스") behind two catalog bosses, and a boss
+    // index that is not the array position (2페이즈 kept 2, 1페이즈 was appended as 3).
+    private const string PhasedJson = """
+    {
+      "dungeons": [
+        {
+          "key": "sanctuary-snowfield-of-lament",
+          "category": "성역",
+          "categoryOrd": 3,
+          "name": "비탄의 설원",
+          "variantType": "difficulty",
+          "bosses": [{"index": 1, "name": "귀환자 트리톤"}, {"index": 3, "name": "델트라스 1페이즈"}, {"index": 2, "name": "델트라스 2페이즈"}],
+          "variants": [
+            {"label": "어려움", "dungeonId": 620025, "difficulty": "어려움", "stage": null,
+             "mobs": [[2301112, 1], [2301113, 3], [2301115, 2]]}
+          ]
+        }
+      ]
+    }
+    """;
+
+    /// <summary>The one exception to "the live name wins": when the catalog name is the live name plus a
+    /// space-separated qualifier, the web split one mob into several bosses and only the catalog knows which is
+    /// which. mobs.json calls all six 델트라스 codes "델트라스".</summary>
+    [Fact]
+    public void Display_name_takes_the_catalog_name_when_it_qualifies_the_live_name()
+    {
+        EncounterCatalog catalog = EncounterCatalog.Parse(PhasedJson);
+
+        Assert.Equal("델트라스 1페이즈 (어려움)", catalog.DisplayName(2301113, "델트라스"));
+        Assert.Equal("델트라스 2페이즈 (어려움)", catalog.DisplayName(2301115, "델트라스"));
+        Assert.Equal(("델트라스 1페이즈", "어려움", "비탄의 설원"), catalog.DisplayParts(2301113, "델트라스"));
+        Assert.Equal(("델트라스 2페이즈", "어려움", "비탄의 설원"), catalog.DisplayParts(2301115, "델트라스"));
+        Assert.Equal("귀환자 트리톤 (어려움)", catalog.DisplayName(2301112, "귀환자 트리톤"));
+    }
+
+    /// <summary>The index is the web's stored coordinate, read from <c>bosses[].index</c> — not the position in
+    /// the array.</summary>
+    [Fact]
+    public void Boss_index_comes_from_the_bosses_entry_not_its_position()
+    {
+        EncounterCatalog catalog = EncounterCatalog.Parse(PhasedJson);
+
+        Assert.Equal(3, catalog.Lookup(2301113)!.Value.BossIndex);
+        Assert.Equal(2, catalog.Lookup(2301115)!.Value.BossIndex);
+        Assert.Equal("델트라스 1페이즈", catalog.Lookup(2301113)!.Value.BossName);
+    }
+
+    /// <summary>The exception has to stay narrow. A catalog name that merely CONTAINS the live name, or that is
+    /// the shorter of the two ("바실루스" for a live "위악의 바실루스"), keeps the live name.</summary>
+    [Theory]
+    [InlineData("델트라스의 심장", "델트라스", "델트라스 (어려움)")]      // no space after the live name
+    [InlineData("바실루스", "위악의 바실루스", "위악의 바실루스 (어려움)")] // catalog is the shorter name
+    [InlineData("가라앉은 에몬", "에몬", "에몬 (어려움)")]                 // qualifier in front, not behind
+    public void Display_name_keeps_the_live_name_unless_the_catalog_extends_it(string catalogName, string liveName, string expected)
+    {
+        EncounterCatalog catalog = EncounterCatalog.Parse(PhasedJson.Replace("델트라스 1페이즈", catalogName));
+
+        Assert.Equal(expected, catalog.DisplayName(2301113, liveName));
+    }
+
     [Fact]
     public void Supported_covers_exactly_the_catalogued_codes()
     {

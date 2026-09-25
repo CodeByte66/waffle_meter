@@ -207,7 +207,7 @@
                         <TextBlock Text="{Binding TargetName}" Foreground="{DynamicResource Skin.Fg}"
                                    FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                    FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=15.5}"/>
-                        <!-- "던전 · 난이도". 페이즈는 미터에 데이터가 없어 넣지 않는다. -->
+                        <!-- "던전 · 난이도". 페이즈는 여기 넣지 않는다 — 카탈로그가 페이즈를 가른 보스(델트라스)는 이름(TargetName) 쪽에 붙는다. -->
                         <TextBlock Text="{Binding TargetSubtitle}" Foreground="{DynamicResource Skin.MutedFg}"
                                    FontSize="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter=10.5}"
                                    Margin="{Binding Layout.BossScale, Converter={StaticResource BossScale}, ConverterParameter='0,2,0,0'}"
