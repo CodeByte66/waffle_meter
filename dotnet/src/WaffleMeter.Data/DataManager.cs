@@ -2082,7 +2082,7 @@ public sealed class DataManager : ICaptureGameData
                 {
                     // Key by BASE code so the SAME buff re-cast by a different player/rank refreshes the one slot
                     // in place (no duplicate icon, no duplicate start alert) — the later cast takes over.
-                    _ownerBuffs[baseCode] = entry;
+                    PutOwnerBuffLocked(baseCode, entry, buffStart);
                 }
 
                 LiveBuffsChanged?.Invoke();
@@ -2129,8 +2129,31 @@ public sealed class DataManager : ICaptureGameData
         bool indefinite = baseCode == IndefiniteStanceBaseCode; // 폭주: synthetic-TTL maintained stance
         // Keep the maintained stance on screen well past its short synthetic duration so a held re-broadcast gap
         // doesn't false-expire it; a real "off" then clears within the keep-alive.
-        long overlayEnd = indefinite ? buffStart + IndefiniteStanceOverlayKeepAliveMs : buffEnd;
+        // on/off 오라는 펄스의 선언 만료 뒤로 유예를 붙인다 — 늦은 펄스 하나에 아이콘이 꺼졌다 켜지지 않게.
+        long overlayEnd = indefinite ? buffStart + IndefiniteStanceOverlayKeepAliveMs
+            : ToggleAuraBaseCodes.Contains(baseCode) ? buffEnd + ToggleAuraGraceMs
+            : buffEnd;
         return (baseCode, (overlayEnd, actorId, duration, indefinite, level, slot));
+    }
+
+    /// <summary>오버레이 사전에 넣는 공통 경로. on/off 오라는 여기서 <b>연속 유지 시작 시각</b>을 이어 붙인다 —
+    /// 앞 펄스가 아직 (유예 포함) 살아 있을 때 온 펄스는 같은 유지로 보고 시작 시각을 그대로 둔다. 적용 순서
+    /// 정렬이 이 값을 써서, 1초마다 오는 펄스가 아이콘을 "방금 걸린 버프" 자리로 끌고 가지 않는다.
+    /// <para>_ownerBuffGate를 이미 잡은 상태에서 호출된다.</para></summary>
+    private void PutOwnerBuffLocked(
+        int baseCode, (long End, int Actor, long Duration, bool Indefinite, int Level, int Slot) entry, long pulseAt)
+    {
+        if (ToggleAuraBaseCodes.Contains(baseCode))
+        {
+            bool held = _ownerBuffs.TryGetValue(baseCode, out var prev) && prev.End > pulseAt
+                        && _toggleHeldSince.ContainsKey(baseCode);
+            if (!held)
+            {
+                _toggleHeldSince[baseCode] = pulseAt;
+            }
+        }
+
+        _ownerBuffs[baseCode] = entry;
     }
 
     // A uid that could plausibly be the local player before its own-load packet is recognized: inside the entity
@@ -2169,8 +2192,11 @@ public sealed class DataManager : ICaptureGameData
         bool changed = false;
         lock (_ownerBuffGate)
         {
+            // on/off 오라는 제거로 지우지 않고 유예가 끝낼 때까지 둔다. 서버가 인스턴스를 지웠다가 1초 안에 새
+            // 펄스를 보내는 일이 흔해서(실측 세션당 수~수십 회) 여기서 지우면 그게 곧 깜빡임이다.
             foreach (int baseCode in _ownerBuffs
-                         .Where(kv => kv.Value.Slot != 0 && slots.Contains(kv.Value.Slot))
+                         .Where(kv => kv.Value.Slot != 0 && slots.Contains(kv.Value.Slot)
+                                      && !ToggleAuraBaseCodes.Contains(kv.Key))
                          .Select(kv => kv.Key)
                          .ToList())
             {
@@ -2509,6 +2535,26 @@ public sealed class DataManager : ICaptureGameData
     // momentary owner==0) doesn't false-expire it — the reported "폭주가 유지되는데 꺼졌다고 뜬다" bug.
     private const int IndefiniteStanceBaseCode = 19130000;
     private const long IndefiniteStanceOverlayKeepAliveMs = 20_000;
+
+    // 켜 두는 동안 짧은 지속시간을 약 1초마다 다시 보내는 on/off 오라. 실측(2026-08-07~09-25 7세션): 보호의 빛은
+    // 1,250ms 를 996ms 간격으로, 두 진언은 2,400ms 를 997ms 간격으로 보낸다. 남은 시간이 1~0초를 계속 오가서
+    // 카운트다운이 그냥 떨리는 숫자로 읽힌다 — 시간·링을 그리지 않는다(OwnerBuffView.Toggle).
+    // 현재 다른 직업에는 이런 버프가 없다(같은 7세션 전 직업 버프 스캔으로도 이 셋뿐).
+    private static readonly HashSet<int> ToggleAuraBaseCodes =
+    [
+        17410000, // 치유성 보호의 빛
+        18160000, // 호법성 질주의 진언
+        18190000, // 호법성 불패의 진언
+    ];
+
+    // on/off 오라의 유예. 펄스가 선언 만료를 넘겨 늦게 오는 일이 0.2~2.4%(세션별)라 그대로 두면 아이콘이 한두
+    // 틱 꺼졌다 켜진다. 대가로, 실제로 끄거나 오라 범위를 벗어나도 아이콘이 이만큼 더 남는다.
+    private const long ToggleAuraGraceMs = 3_000;
+
+    // on/off 오라의 연속 유지 시작 시각(base 코드 → ms). _ownerBuffs 와 같은 _ownerBuffGate 로 보호한다.
+    // 믿는 건 PutOwnerBuffLocked 가 "앞 항목이 아직 살아 있다"를 확인했을 때뿐이라, 클리어·만료 때 따로 비우지
+    // 않아도 다음 유지에 옛 값이 새지 않는다.
+    private readonly Dictionary<int, long> _toggleHeldSince = new();
 
     // ---- 회생의 계약: (B) 긴급 회복 프록 ----
     // 이 스킬은 두 효과를 가지는데 서버가 버프로 방송하는 건 (A) 5초 상태이상-저항 스택뿐이다. 실전에서 의미
@@ -2963,13 +3009,16 @@ public sealed class DataManager : ICaptureGameData
                     ? bn.Name
                     : Buff(kv.Key)?.Name ?? Skill(kv.Key)?.Name ?? $"버프 {kv.Key}";
                 bool onCooldown = IsOnCooldown(CooldownGroupId(kv.Key), nowMs);
+                bool toggle = ToggleAuraBaseCodes.Contains(kv.Key);
                 result.Add(new OwnerBuffView(
                     kv.Key, name, kv.Value.End - nowMs, kv.Value.Duration, kv.Value.End,
                     owner != 0 && kv.Value.Actor != owner,
                     !hidden,  // Overlay: 음성만 (hidden + voice) is announced but not drawn
                     onCooldown,
                     kv.Value.Indefinite,
-                    kv.Value.Level));
+                    kv.Value.Level,
+                    toggle,
+                    toggle && _toggleHeldSince.TryGetValue(kv.Key, out long heldSince) ? heldSince : 0));
             }
 
             SuppressExclusiveLosers(result, nowMs);
@@ -2995,7 +3044,14 @@ public sealed class DataManager : ICaptureGameData
 
             OwnerBuffView a = rows[ai], b = rows[bi];
             int loser;
-            if (pair.FixedWinner != 0)
+            // 펄스가 끊겨 유예로만 남은 on/off 오라는 실제로 걸려 있는 쪽에 무조건 진다. 레벨을 먼저 보면, 레벨
+            // 높은 보호의 빛이 꺼진 뒤 유예 동안 서버가 대신 걸어 준 불패의 진언을 가린다.
+            bool aLapsed = IsLapsedToggle(a, nowMs), bLapsed = IsLapsedToggle(b, nowMs);
+            if (aLapsed != bLapsed)
+            {
+                loser = aLapsed ? pair.A : pair.B;
+            }
+            else if (pair.FixedWinner != 0)
             {
                 loser = pair.FixedWinner == pair.A ? pair.B : pair.A;
             }
@@ -3020,6 +3076,9 @@ public sealed class DataManager : ICaptureGameData
             rows.RemoveAll(r => r.Code == loser);
         }
     }
+
+    /// <summary>on/off 오라인데 마지막 펄스의 선언 만료가 지나 유예로만 떠 있는가.</summary>
+    private static bool IsLapsedToggle(OwnerBuffView v, long nowMs) => v.Toggle && nowMs >= v.EndMs - ToggleAuraGraceMs;
 
     private void ClearOwnerBuffs()
     {
@@ -3077,7 +3136,10 @@ public sealed class DataManager : ICaptureGameData
                 {
                     if (kv.Value.End > now)
                     {
-                        _ownerBuffs[kv.Key] = kv.Value;
+                        // 스테이징은 마지막 펄스만 들고 있으므로(last-write-wins) 그 펄스 시각이 유지 시작이 된다.
+                        long pulseAt = kv.Value.End - kv.Value.Duration
+                                       - (ToggleAuraBaseCodes.Contains(kv.Key) ? ToggleAuraGraceMs : 0);
+                        PutOwnerBuffLocked(kv.Key, kv.Value, pulseAt);
                         changed = true;
                     }
                 }

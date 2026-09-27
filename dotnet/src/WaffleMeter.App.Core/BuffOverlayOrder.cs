@@ -40,7 +40,8 @@ public static class BuffOverlayOrder
             Remaining => buffs.OrderByDescending(b => b.RemainingMs).ThenBy(b => b.Code),
             Name => buffs.OrderBy(b => b.Name, StringComparer.Ordinal).ThenBy(b => b.Code),
             // 적용 시각 = 만료 - 지속시간. 무한 스탠스(지속시간 0)는 EndMs가 그대로 쓰여도 무방하다.
-            _ => buffs.OrderBy(b => b.EndMs - b.DurationMs).ThenBy(b => b.Code),
+            // on/off 오라는 1초마다 펄스가 다시 와서 그 식이 매번 "방금"이 되므로 유지 시작 시각을 쓴다.
+            _ => buffs.OrderBy(b => b.HeldSinceMs > 0 ? b.HeldSinceMs : b.EndMs - b.DurationMs).ThenBy(b => b.Code),
         };
 
         // LINQ OrderBy는 안정 정렬이라, 고정 순위로 한 번 더 정렬해도 같은 순위 안에서는 모드 순서가 보존된다.
