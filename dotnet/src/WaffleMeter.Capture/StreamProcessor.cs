@@ -260,6 +260,14 @@ public sealed class StreamProcessor
         // (who holds each artifact right now), so replaying it cannot inflate anything, and it arrives at login
         // — exactly the moment a second server connection is most likely to be the one carrying it.
         AbyssArtifactZoneKey, AbyssArtifactAllKey,
+        // 파티 신청 계열(2026-09-27). "신청이 한 명씩 패널에 안 뜬다"의 정체가 이것이었다 — 신청은 늘 같은
+        // 서버 연결(실측 .103)을 타는데, 그 연결은 5초만 조용해도 다른 서버 연결이나 **자기 자신의 역방향**
+        // (클라→서버)에게 primary 를 뺏긴다. 모집 중 대기는 딱 그 조용한 구간이라, 정적 뒤 첫 패킷인 신청이
+        // 여기서 통째로 버려졌다(09-25 신청 1건, 09-12·08-07 취소 각 1건 실측 유실). 신청·취소·수락·비우기는
+        // 전부 requester 로 덮어쓰거나 지우거나 전부 비우는 멱등 연산이라 VPN 복제로 두 번 와도 무해하다.
+        // ⚠️ 0x9709(RefuseJoinKey)는 **넣지 않는다** — id 없이 "대기 중 하나 해소"를 세는 신호라, 진짜 복제
+        // 스트림에서 두 번 처리되면 거절 한 번에 카드가 두 장 지워진다(고치려던 증상을 VPN 사용자에게 만든다).
+        JoinRequestKey, CancelJoinKey, AdmitJoinKey, InstanceStartKey, ExitPartyKey,
     };
 
     private static readonly Dictionary<int, string> OpcodeNames = new()

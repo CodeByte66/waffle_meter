@@ -211,6 +211,38 @@ public class JoinRequestParsingTests
     }
 
     [Fact]
+    public void Join_family_is_replayed_from_a_dup_suppressed_stream()
+    {
+        // 신청은 늘 같은 서버 연결을 타는데, 그 연결은 조용하면 다른 연결(또는 자기 역방향)에게 primary 를
+        // 뺏겨 identityOnly 로만 돈다. 이 계열이 허용 목록 밖이면 정적 뒤 첫 패킷인 신청이 통째로 버려진다
+        // — 실측 2026-09-25: 신청 1건이 이렇게 사라졌고, 그 사람의 거절(0x9709)이 애먼 카드를 지웠다.
+        var (join, _, proc) = NewProcessor();
+
+        proc.OnPacketReceived(GoldenJoinRequest, 1717_000_000, identityOnly: true);
+        proc.OnPacketReceived(GoldenCancel, 0, identityOnly: true);
+        proc.OnPacketReceived(GoldenAdmit, 0, identityOnly: true);
+        proc.OnPacketReceived([0x08, 0x18, 0x97, 0x00, 0x00], 0, identityOnly: true); // InstanceStart
+        proc.OnPacketReceived([0x08, 0x1D, 0x97, 0x00, 0x00], 0, identityOnly: true); // ExitParty
+
+        Assert.Equal(94890, Assert.Single(join.Requests).Requester);
+        Assert.Equal([13227, 109885], join.Removed);
+        Assert.Equal([109885], join.Admitted);
+        Assert.Equal(2, join.Cleared);
+    }
+
+    [Fact]
+    public void Resolve_is_not_replayed_from_a_dup_suppressed_stream()
+    {
+        // 0x9709 는 id 없이 "하나 해소"를 세는 신호라 멱등이 아니다. 진짜 VPN 복제라면 primary 에서 이미
+        // 한 번 처리됐으므로, 복제 쪽까지 받으면 거절 한 번에 카드가 두 장 지워진다.
+        var (join, _, proc) = NewProcessor();
+
+        proc.OnPacketReceived([0x08, 0x09, 0x97, 0x00, 0x00], 0, identityOnly: true);
+
+        Assert.Equal(0, join.Refused);
+    }
+
+    [Fact]
     public void Garbage_nickname_join_request_is_rejected()
     {
         var (join, diag, proc) = NewProcessor();
