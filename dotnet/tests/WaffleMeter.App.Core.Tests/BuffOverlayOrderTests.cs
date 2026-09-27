@@ -32,6 +32,20 @@ public sealed class BuffOverlayOrderTests
     }
 
     [Fact]
+    public void A_held_toggle_sorts_by_when_it_was_switched_on_not_by_its_last_pulse()
+    {
+        // 보호의 빛: 1초마다 펄스라 end - duration 은 늘 "방금"(1,049,000)이다. 켠 시각(1,010,000)으로 세워야
+        // A(1,000,000)와 B(1,015,000) 사이에 머문다 — 안 그러면 펄스마다 맨 뒤로 끌려간다.
+        var toggle = new OwnerBuffView(17410000, "보호의 빛", 4_000, 1_250, 1_050_250, ByOther: true, Overlay: true,
+            OnCooldown: false, Indefinite: false, Toggle: true, HeldSinceMs: 1_010_000);
+
+        int[] order = BuffOverlayOrder.Sort(new[] { C, toggle, A, B }, BuffOverlayOrder.Applied, null)
+            .Select(b => b.Code).ToArray();
+
+        Assert.Equal(new[] { 11110000, 17410000, 12220000, 13330000 }, order);
+    }
+
+    [Fact]
     public void Remaining_order_puts_the_longest_first()
     {
         Assert.Equal(new[] { 12220000, 13330000, 11110000 }, Order(BuffOverlayOrder.Remaining));

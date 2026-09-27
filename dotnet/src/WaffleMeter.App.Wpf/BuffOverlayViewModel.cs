@@ -125,8 +125,9 @@ public sealed class BuffOverlayViewModel : INotifyPropertyChanged
             OwnerBuffView b = buffs[target];
             bool onCooldown = grayOnCooldown && b.OnCooldown; // only gray when the option is on
             // A maintained stance (폭주) has only a synthetic keep-alive, not a real countdown — draw it as a
-            // plain "on" icon (no ring, no timer) by reporting an unknown duration.
-            long dur = b.Indefinite ? 0 : b.DurationMs;
+            // plain "on" icon (no ring, no timer) by reporting an unknown duration. on/off 오라(보호의 빛·진언)도
+            // 같다: 1초마다 다시 오는 펄스라 잔여가 1~0초 톱니로 떨기만 한다.
+            long dur = b.Indefinite || b.Toggle ? 0 : b.DurationMs;
 
             int current = -1;
             for (int i = 0; i < Slots.Count; i++)
@@ -139,9 +140,11 @@ public sealed class BuffOverlayViewModel : INotifyPropertyChanged
             }
 
             // 무기한 유지 자세(폭주)는 만료가 합성 keep-alive 라 점멸시키면 매번 거짓 경고가 된다 — 음성 쪽이
-            // 같은 이유로 이미 제외하고 있다.
+            // 같은 이유로 이미 제외하고 있다. on/off 오라는 잔여가 늘 창 안이라 켜 두는 내내 점멸한다
+            // (지금은 지속시간 하한이 먼저 막지만, 시간을 안 그리는 아이콘이 점멸만 하는 건 막아 둔다).
             bool expiring = expiryWarnMs > 0
                             && !b.Indefinite
+                            && !b.Toggle
                             && b.DurationMs > expiryMinDurationMs
                             && b.RemainingMs > 0
                             && b.RemainingMs <= expiryWarnMs;

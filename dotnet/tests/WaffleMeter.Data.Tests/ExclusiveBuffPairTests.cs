@@ -66,6 +66,30 @@ public sealed class ExclusiveBuffPairTests
     }
 
     [Fact]
+    public void A_lapsed_toggle_yields_to_the_one_actually_up()
+    {
+        // 보호의 빛·불패의 진언은 1초마다 오는 펄스(1,250ms / 2,400ms)라 3초 유예가 붙는다. 레벨 높은 보호의
+        // 빛이 꺼지면 서버가 불패의 진언을 대신 건다 — 그 유예 동안 레벨 비교가 불패를 가리면 안 된다.
+        long t0 = 1_000_000;
+        DataManager dm = Self(t0);
+        dm.SaveUseBuff(Me, Protect, t0, t0 + 1_250, 1_250, 3, level: 30);
+        dm.SaveUseBuff(Me, Invincible, t0 + 2_000, t0 + 4_400, 2_400, 4, level: 20);
+
+        Assert.Equal(new[] { 18190000 }, Codes(dm, t0 + 2_500)); // 보호의 빛은 유예로만 남아 있다
+    }
+
+    [Fact]
+    public void Two_live_toggles_still_go_by_level()
+    {
+        long t0 = 1_000_000;
+        DataManager dm = Self(t0);
+        dm.SaveUseBuff(Me, Protect, t0, t0 + 1_250, 1_250, 3, level: 30);
+        dm.SaveUseBuff(Me, Invincible, t0, t0 + 2_400, 2_400, 4, level: 20);
+
+        Assert.Equal(new[] { 17410000 }, Codes(dm, t0 + 500)); // 둘 다 펄스 안 — 레벨 높은 보호의 빛
+    }
+
+    [Fact]
     public void Gale_always_beats_the_blessing()
     {
         // 서버가 질풍 활성 중에는 축복 적용을 막지만 이미 걸린 축복은 제거하지 않는다(최대 ~20초 잔존).
