@@ -11,7 +11,7 @@ namespace WaffleMeter.App.Core;
 /// <para>🔑 <b>버프 매니저와의 결정적 차이</b>: 표시할 스킬 선택(<c>cooldownUi.hidden</c>)은
 /// <see cref="MeterSettings"/> 프로퍼티가 <b>아니다</b>. <see cref="CooldownVisibility"/> 가 설정 파일에 직접
 /// 읽고 쓴다. 그래서 버프가 쓰는 <c>MeterSettings.PropertyChanged</c> 훅 하나로는 픽커 편집이 <b>영원히</b>
-/// 캡처되지 않는다 — 여기서는 스칼라 4개를 그 훅으로, 스킬 선택을
+/// 캡처되지 않는다 — 여기서는 스칼라(외형 4개 + 배치 순서)를 그 훅으로, 스킬 선택을
 /// <see cref="CooldownVisibility.Changed"/> 로 잡아 두 경로를 함께 쓴다.</para>
 ///
 /// <para>App.Core 에 산다(WPF·Data 참조 없음) — App.Wpf 에는 테스트 프로젝트가 없어서, 이 로직이 저기 있으면
@@ -30,6 +30,7 @@ public sealed class CooldownPresetManager : IDisposable
         nameof(MeterSettings.CooldownUiIconSize),
         nameof(MeterSettings.CooldownUiTextColor),
         nameof(MeterSettings.CooldownUiPerRow),
+        nameof(MeterSettings.CooldownUiOrder),
     };
 
     private readonly MeterSettings _settings;
@@ -123,6 +124,7 @@ public sealed class CooldownPresetManager : IDisposable
             _settings.CooldownUiIconSize = preset.IconSize;
             _settings.CooldownUiTextColor = preset.TextColor;
             _settings.CooldownUiPerRow = preset.PerRow;
+            _settings.CooldownUiOrder = preset.Order;
 
             // 스킬 선택은 가드 안에서 쓴다. 버프는 이 자리에서 '스토어 푸시'를 하므로 가드 밖이어도 되지만,
             // 여기서는 이것이 설정 파일 쓰기라서 밖에 두면 방금 적용한 값을 곧바로 다시 캡처하게 된다.
@@ -181,6 +183,7 @@ public sealed class CooldownPresetManager : IDisposable
         // 카탈로그가 커질 때 새 스킬을 슬롯 수만큼 숨기고, (b) 카탈로그 자산이 없는 실행 한 번이 세 슬롯의
         // 선택을 전부 "숨긴 것 없음"으로 덮는다.
         Hidden = _visibility.RawHidden,
+        Order = _settings.CooldownUiOrder,
     };
 
     // 기동은 프리셋을 절대 *적용*하지 않는다: 라이브 설정이 이미 활성 슬롯의 내용이고, 픽커도 그 파일에서

@@ -15,6 +15,8 @@ namespace WaffleMeter.Data;
 /// <param name="IsReady">Whether the skill can be recast now.</param>
 /// <param name="Job">Job band (11–19), for grouping.</param>
 /// <param name="Order">Stable position inside the job.</param>
+/// <param name="IsStigma">스티그마 스킬인가. 기본 순서가 직업 안에서 일반을 먼저, 스티그마를 나중에 세운다 —
+/// 카탈로그 순서(base 코드 오름차순)만으로는 둘이 뒤섞여 픽커의 일반/스티그마 묶음과 어긋난다.</param>
 public readonly record struct SkillCooldownView(
     int GroupId,
     int DisplayCode,
@@ -23,4 +25,5 @@ public readonly record struct SkillCooldownView(
     long TotalMs,
     bool IsReady,
     int Job,
-    int Order);
+    int Order,
+    bool IsStigma = false);

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows.Media;
 using WaffleMeter.App.Core;
 using WaffleMeter.Data;
 
@@ -18,9 +19,15 @@ namespace WaffleMeter.App.Wpf;
 public sealed class CooldownPickerViewModel : INotifyPropertyChanged
 {
     private readonly List<SkillJobGroupViewModel> _all;
+    private readonly CooldownCatalog _catalog;
+    private readonly MeterSettings? _settings;
 
-    public CooldownPickerViewModel(CooldownCatalog catalog, CooldownVisibility visibility)
+    /// <param name="settings">배치 순서(<c>cooldownUi.order</c>)를 읽고 쓰는 곳. 없으면 배치 영역은 안내문만
+    /// 띄우고 아무것도 저장하지 않는다(설정 없이 창만 그려 보는 도구용).</param>
+    public CooldownPickerViewModel(CooldownCatalog catalog, CooldownVisibility visibility, MeterSettings? settings = null)
     {
+        _catalog = catalog;
+        _settings = settings;
         Dictionary<int, string> jobName = SkillCatalog.JobPrefix.ToDictionary(kv => kv.Value, kv => kv.Key);
         var names = new Dictionary<int, string>();
 
@@ -82,7 +89,131 @@ public sealed class CooldownPickerViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(OwnJobName));
             OnPropertyChanged(nameof(FilterLabel));
             RebuildGroups();
+            UpdateArrangeHint();
         }
+    }
+
+    // ---- 배치(순서) ----------------------------------------------------------------------------------------
+    //
+    // 미리보기는 오버레이가 <b>지금 실제로 그리는 목록</b>을 그대로 받는다(App 이 틱마다 밀어 넣는다). 표시 여부
+    // 필터와 "안 배운 스킬은 안 깐다"까지 이미 적용된 목록이라, 여기서 보는 칸과 게임 화면의 칸이 늘 같다.
+    // 🔑 보이는 것이 곧 실제 순서여야 한다 — 버프 픽커의 ▲▼ 는 목록이 그 순서로 재정렬되지 않아 "눌러도 반응
+    // 없는 버튼"으로 읽혀 제거됐다(SettingsWindow.xaml 의 위치 고정 주석).
+
+    /// <summary>미리보기 한 칸의 피치(아이콘 34 + 좌우 여백 2+2). XAML 의 칸 크기·여백과 같아야 한다 —
+    /// 다르면 미리보기가 오버레이와 다른 자리에서 줄을 바꾼다.</summary>
+    public const double ArrangePitch = 38;
+
+    /// <summary>오버레이가 그리는 순서 그대로의 칸들. 드래그 중에는 이 컬렉션 자체가 움직인다.</summary>
+    public ObservableCollection<CooldownArrangeItem> ArrangeItems { get; } = new();
+
+    private double _arrangeMaxWidth = 8 * ArrangePitch;
+    /// <summary>미리보기의 폭 상한 = "한 줄 최대 개수" × 피치. 오버레이와 같은 자리에서 줄이 바뀌게 한다.</summary>
+    public double ArrangeMaxWidth { get => _arrangeMaxWidth; private set => Set(ref _arrangeMaxWidth, value); }
+
+    private string _arrangeHint = string.Empty;
+    /// <summary>미리보기가 비어 있을 때의 안내. 칸이 있으면 빈 문자열이고 화면에서 접힌다.</summary>
+    public string ArrangeHint { get => _arrangeHint; private set => Set(ref _arrangeHint, value); }
+
+    /// <summary>"기본 순서로" 를 누를 수 있는가 — 직업을 알고 저장할 곳이 있어야 한다.</summary>
+    public bool CanResetArrangement => _settings is not null && _ownJobBand != 0;
+
+    private bool _dragging;
+    private List<int> _orderBeforeDrag = [];
+
+    /// <summary>오버레이가 그리는 행을 받아 미리보기를 맞춘다. 드래그 중에는 무시한다 — 틱마다 덮으면 사용자가
+    /// 끌고 있는 칸이 제자리로 튕긴다. 칸 구성이 같으면 컬렉션을 건드리지 않는다(스크롤·호버가 튀지 않게).</summary>
+    public void SetArrangeSource(IReadOnlyList<SkillCooldownView> drawnRows, int perRow)
+    {
+        ArrangeMaxWidth = Math.Clamp(perRow, 4, 16) * ArrangePitch;
+        if (_dragging)
+        {
+            return;
+        }
+
+        List<SkillCooldownView> mine = _ownJobBand == 0
+            ? []
+            : drawnRows.Where(r => r.Job == _ownJobBand).ToList();
+
+        if (mine.Count != ArrangeItems.Count || !mine.Select(r => r.GroupId).SequenceEqual(ArrangeItems.Select(i => i.Code)))
+        {
+            ArrangeItems.Clear();
+            foreach (SkillCooldownView r in mine)
+            {
+                ArrangeItems.Add(new CooldownArrangeItem(r.GroupId, r.Name, JoinIcons.Skill(r.DisplayCode)));
+            }
+        }
+
+        UpdateArrangeHint();
+    }
+
+    public void BeginArrangeDrag(CooldownArrangeItem item)
+    {
+        _dragging = true;
+        _orderBeforeDrag = ArrangeItems.Select(i => i.Code).ToList();
+        item.IsDragged = true;
+    }
+
+    /// <summary>드래그 중 칸을 옮긴다. 저장은 놓을 때 한 번만 한다(<see cref="EndArrangeDrag"/>) — 지나가는 칸마다
+    /// 쓰면 프리셋 자동 저장과 오버레이 다시 그리기가 칸 수만큼 돈다.</summary>
+    public void MoveArrangeItem(int from, int to)
+    {
+        if (from == to || from < 0 || to < 0 || from >= ArrangeItems.Count || to >= ArrangeItems.Count)
+        {
+            return;
+        }
+
+        ArrangeItems.Move(from, to);
+    }
+
+    /// <summary>드래그를 끝내고 지금 미리보기 순서를 저장한다. 숨긴·안 배운 스킬은 미리보기에 없으므로 제자리를
+    /// 지킨다(<see cref="SkillCooldownOrder.Rearrange"/>).</summary>
+    public void EndArrangeDrag()
+    {
+        if (!_dragging)
+        {
+            return;
+        }
+
+        _dragging = false;
+        foreach (CooldownArrangeItem item in ArrangeItems)
+        {
+            item.IsDragged = false;
+        }
+
+        // 제자리에 놓았으면 저장하지 않는다. 지금 순서를 그대로 "사용자 배치"로 굳히면 그 직업은 기본 순서를
+        // 잃는다 — 이후 패치로 생긴 일반 스킬이 일반 묶음이 아니라 스티그마 뒤에 붙는다.
+        if (_settings is null || _ownJobBand == 0 || ArrangeItems.Select(i => i.Code).SequenceEqual(_orderBeforeDrag))
+        {
+            return;
+        }
+
+        List<int> stored = SkillCooldownOrder.Parse(_settings.CooldownUiOrder);
+        List<int> jobOrder = SkillCooldownOrder.JobOrder(_catalog.Skills.Where(s => s.Job == _ownJobBand), stored);
+        List<int> next = SkillCooldownOrder.Rearrange(stored, _ownJobBand, jobOrder, ArrangeItems.Select(i => i.Code).ToList());
+        _settings.CooldownUiOrder = SkillCooldownOrder.Format(next);
+        Changed?.Invoke(); // 게임 화면의 오버레이도 바로 따라오게
+    }
+
+    /// <summary>내 직업의 배치를 지운다. 다른 직업의 배치는 그대로다.</summary>
+    public void ResetArrangement()
+    {
+        if (!CanResetArrangement)
+        {
+            return;
+        }
+
+        _settings!.CooldownUiOrder =
+            SkillCooldownOrder.Format(SkillCooldownOrder.WithoutJob(SkillCooldownOrder.Parse(_settings.CooldownUiOrder), _ownJobBand));
+        Changed?.Invoke();
+    }
+
+    private void UpdateArrangeHint()
+    {
+        ArrangeHint = _ownJobBand == 0 ? "캐릭터가 인식되면 오버레이에 그려지는 순서대로 여기에 나타납니다."
+            : ArrangeItems.Count == 0 ? "오버레이에 표시할 스킬이 없습니다. 아래에서 스킬을 켜 주세요."
+            : string.Empty;
+        OnPropertyChanged(nameof(CanResetArrangement));
     }
 
     /// <summary>직업을 알아야 "내 직업만" 을 걸 수 있다.</summary>
@@ -188,4 +319,42 @@ public sealed class CooldownPickerViewModel : INotifyPropertyChanged
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+        {
+            return;
+        }
+
+        field = value;
+        OnPropertyChanged(name);
+    }
+}
+
+/// <summary>배치 미리보기의 한 칸. 오버레이와 같은 아이콘(마지막으로 본 특화 코드의 것)을 쓴다.</summary>
+public sealed class CooldownArrangeItem(int code, string name, ImageSource? icon) : INotifyPropertyChanged
+{
+    public int Code { get; } = code;
+    public string Name { get; } = name;
+    public ImageSource? Icon { get; } = icon;
+
+    private bool _isDragged;
+    /// <summary>지금 끌고 있는 칸 — 테두리를 강조해 무엇을 옮기는지 보이게 한다.</summary>
+    public bool IsDragged
+    {
+        get => _isDragged;
+        set
+        {
+            if (_isDragged == value)
+            {
+                return;
+            }
+
+            _isDragged = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsDragged)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

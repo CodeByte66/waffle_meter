@@ -66,6 +66,10 @@
                                 <Setter TargetName="g" Property="Background" Value="{DynamicResource Skin.ControlHover}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource Skin.Fg}"/>
                             </Trigger>
+                            <!-- "기본 순서로"는 직업을 모르면 누를 수 없다 — 누를 수 없다는 게 보여야 한다. -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="g" Property="Opacity" Value="0.35"/>
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -108,6 +112,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
@@ -134,8 +139,76 @@
                 </Grid>
             </Border>
 
-            <!-- 도구 줄 -->
+            <!-- 배치: 오버레이가 지금 그리는 칸을 같은 순서·같은 줄바꿈으로 보여 주고, 드래그로 순서를 바꾼다.
+                 보이는 것이 곧 실제 순서라야 한다 — 목록과 실제 순서가 따로 노는 편집기는 "반응 없는 버튼"이 된다.
+                 Viewbox(DownOnly)는 창이 "한 줄 최대 개수"보다 좁을 때 줄바꿈 자리를 지킨 채 통째로 줄이려는 것 —
+                 폭을 창에 맞춰 버리면 미리보기가 오버레이와 다른 자리에서 줄을 바꾼다. -->
             <Border Grid.Row="1" Background="{DynamicResource Skin.SectionBg}"
+                    BorderBrush="{DynamicResource Skin.Border}" BorderThickness="0,0,0,1">
+                <StackPanel Margin="14,8,14,10">
+                    <Grid Margin="0,0,0,6">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="배치" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold" FontSize="12"/>
+                            <TextBlock Text="아이콘을 끌어서 오버레이 순서를 바꿉니다" Foreground="{DynamicResource Skin.MutedFg}"
+                                       FontSize="10.5" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Button Content="기본 순서로" Click="OnResetArrangement" Style="{StaticResource CdGhostButton}"
+                                HorizontalAlignment="Right" IsEnabled="{Binding CanResetArrangement}"
+                                ToolTip="이 직업의 배치를 지우고 기본 순서(일반 → 스티그마)로 되돌립니다."/>
+                    </Grid>
+                    <TextBlock Text="{Binding ArrangeHint}" Foreground="{DynamicResource Skin.MutedFg}" FontSize="11"
+                               TextWrapping="Wrap" Margin="1,2,0,2">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ArrangeHint}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left">
+                        <ItemsControl x:Name="ArrangeList" ItemsSource="{Binding ArrangeItems}"
+                                      MaxWidth="{Binding ArrangeMaxWidth}" Background="Transparent"
+                                      PreviewMouseLeftButtonDown="OnArrangeMouseDown"
+                                      PreviewMouseMove="OnArrangeMouseMove"
+                                      PreviewMouseLeftButtonUp="OnArrangeMouseUp"
+                                      LostMouseCapture="OnArrangeLostCapture">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <!-- 칸 34 + 좌우 여백 2 = 피치 38. ⚠️ CooldownPickerViewModel.ArrangePitch 와 같아야 한다. -->
+                                    <Border x:Name="cell" Width="34" Height="34" Margin="2" CornerRadius="3"
+                                            BorderThickness="1" BorderBrush="{DynamicResource Skin.SoftBorder}"
+                                            Background="{DynamicResource Skin.ControlBg}" Cursor="SizeAll"
+                                            ToolTip="{Binding Name}">
+                                        <Border Width="30" Height="30" CornerRadius="2" ClipToBounds="True">
+                                            <Border.Clip>
+                                                <RectangleGeometry Rect="0,0,30,30" RadiusX="2" RadiusY="2"/>
+                                            </Border.Clip>
+                                            <Image Source="{Binding Icon}" Stretch="Fill"
+                                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                                        </Border>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsDragged}" Value="True">
+                                            <Setter TargetName="cell" Property="BorderBrush" Value="{DynamicResource Skin.Accent}"/>
+                                            <Setter TargetName="cell" Property="BorderThickness" Value="2"/>
+                                            <Setter TargetName="cell" Property="Background" Value="{DynamicResource Skin.AccentSoft}"/>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Viewbox>
+                </StackPanel>
+            </Border>
+
+            <!-- 도구 줄 -->
+            <Border Grid.Row="2" Background="{DynamicResource Skin.SectionBg}"
                     BorderBrush="{DynamicResource Skin.Border}" BorderThickness="0,0,0,1">
                 <Grid Margin="14,8">
                     <ToggleButton Style="{StaticResource CdFilterToggle}" HorizontalAlignment="Left"
@@ -150,7 +223,7 @@
             </Border>
 
             <!-- 직업 카드 -->
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="12,10">
+            <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Padding="12,10">
                 <ItemsControl ItemsSource="{Binding Groups}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>

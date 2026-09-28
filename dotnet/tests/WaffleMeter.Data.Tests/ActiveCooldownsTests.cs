@@ -253,6 +253,22 @@ public sealed class ActiveCooldownsTests
     }
 
     [Fact]
+    public void A_job_prefill_lists_normal_skills_before_stigmas()
+    {
+        // 카탈로그 순서(base 코드 오름차순)만 따르면 직업마다 스티그마 13~14개가 일반 스킬 사이에 끼어, 픽커의
+        // 일반/스티그마 묶음과 오버레이 순서가 어긋난다.
+        long t0 = 1_000_000;
+        DataManager dm = WithSelfJob(t0, RangerJobByte);
+
+        IReadOnlyList<SkillCooldownView> rows = dm.ActiveCooldowns(t0 + 1_000);
+        int firstStigma = rows.ToList().FindIndex(r => r.IsStigma);
+
+        Assert.True(firstStigma > 0);
+        Assert.All(rows.Take(firstStigma), r => Assert.False(r.IsStigma));
+        Assert.All(rows.Skip(firstStigma), r => Assert.True(r.IsStigma));
+    }
+
+    [Fact]
     public void Skills_outside_the_catalog_are_not_drawn()
     {
         // 대시(1101) 같은 공용 코드는 0x3847 이 실제로 실어 보내지만 이름도 아이콘도 없다 — 번호만 뜬 슬롯을
