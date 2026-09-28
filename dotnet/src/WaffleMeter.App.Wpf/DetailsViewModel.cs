@@ -219,7 +219,7 @@ public sealed class DetailsViewModel : INotifyPropertyChanged
 
     // ---- 티어 타일 (요약 격자의 14번째 칸) ----
     private string _tierLabelText = "이번 전투 등급";
-    /// <summary>타일 제목. `누적 등급`(서버가 준 본인 성적) / `이번 전투 등급`(이 전투에서 계산한 값).</summary>
+    /// <summary>타일 제목. `이번 주 등급`(서버가 준 본인 주간 성적) / `이번 전투 등급`(이 전투에서 계산한 값).</summary>
     public string TierLabelText { get => _tierLabelText; private set => Set(ref _tierLabelText, value); }
 
     private string _tierRankText = string.Empty;
