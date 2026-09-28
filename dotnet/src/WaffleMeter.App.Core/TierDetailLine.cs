@@ -2,7 +2,7 @@ namespace WaffleMeter.App.Core;
 
 /// <summary>전투상세 창의 티어 타일에 그릴 세 조각. <see cref="HasValue"/> 가 false 면 타일 자체를 접는다.</summary>
 /// <param name="HasValue">그릴 것이 있는가. 티어 정보가 없거나(전투력 미확보·미지원 보스) 등급을 못 읽으면 false.</param>
-/// <param name="Label">타일 제목 — `누적 등급` / `이번 전투 등급`. 두 값은 서로 다른 시점을 말하므로 뭉개면 안 된다.</param>
+/// <param name="Label">타일 제목 — `이번 주 등급` / `이번 전투 등급`. 두 값은 서로 다른 시점을 말하므로 뭉개면 안 된다.</param>
 /// <param name="Rank">등급 이름 — <c>챌린저</c>.</param>
 /// <param name="Percent">이번 전투 백분위 — <c>상위 0.7%</c>. 표본이 없으면 빈 문자열.</param>
 /// <param name="Basis">그 백분위가 무엇과 비교한 값인지 — <c>전체 전투력 기준</c> / <c>전투력 700k–750k 미만 기준</c>.
@@ -48,8 +48,9 @@ public static class TierDetail
         return new TierDetailLine(
             true,
             // 파티원은 언제나 이번 전투 등급이고(커리어 티어는 본인 것만 서버에서 온다), 본인도 기록 재생에서는
-            // 이번 전투 등급이다 — 그 구분을 라벨이 직접 말해야 한다.
-            t.IsCareer ? "누적 등급" : "이번 전투 등급",
+            // 이번 전투 등급이다 — 그 구분을 라벨이 직접 말해야 한다. 커리어 티어는 매주 수요일에 초기화되는
+            // 주간 성적이다(비교 모집단만 최근 30일). 그래서 '누적'이 아니라 '이번 주'라고 부른다.
+            t.IsCareer ? "이번 주 등급" : "이번 전투 등급",
             tierName,
             percent,
             basis);

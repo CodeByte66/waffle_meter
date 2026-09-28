@@ -40,11 +40,11 @@ public sealed class TierDetailLineTests
     [Fact]
     public void A_career_tier_is_labelled_as_a_standing_not_as_this_fight()
     {
-        // 두 값은 서로 다른 시점을 말한다 — 누적 성적과 이번 전투 결과를 같은 말로 부르면 안 된다.
+        // 두 값은 서로 다른 시점을 말한다 — 이번 주 성적과 이번 전투 결과를 같은 말로 부르면 안 된다.
         TierDetailLine line = TierDetail.Build(
             new RowTier(2, 1.2, IsCareer: true, ComparisonBasis: Whole), "마스터");
 
-        Assert.Equal("누적 등급", line.Label);
+        Assert.Equal("이번 주 등급", line.Label);
     }
 
     [Fact]
