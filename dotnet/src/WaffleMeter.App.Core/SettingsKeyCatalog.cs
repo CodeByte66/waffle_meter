@@ -212,6 +212,8 @@ public static class SettingsKeyCatalog
         new("cooldownUi.transparent", FD, "스킬 쿨타임", "투명 배경", CD),
         new("cooldownUi.perRow", FD, "스킬 쿨타임", "한 줄 최대 개수", CD),
         new("cooldownUi.presets", F, "스킬 쿨타임", "프리셋 3슬롯", CD),
+        // 표시 여부(hidden)와 같은 분류다 — 직업별 스킬 코드라 외형 공유(디자인)에는 싣지 않는다.
+        new("cooldownUi.order", F, "스킬 쿨타임", "스킬 배치 순서", CD),
         // External: MeterSettings 에 프로퍼티가 없는 키(CooldownVisibility 가 직접 읽고 쓴다) — 손으로
         // 넣지 않으면 완성도 테스트의 시야 밖이라 전체 백업에서 조용히 빠진다. joinSkills.hidden 과 같다.
         new("cooldownUi.hidden", F, "스킬 쿨타임", "표시할 스킬", CD, External: true),

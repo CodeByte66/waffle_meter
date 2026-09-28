@@ -1144,7 +1144,7 @@ public partial class App : Application
         // 저장 키만 다르다. ⚠️ 선택 집합은 반드시 별도 인스턴스여야 한다 — SkillVisibility/CooldownVisibility
         // 는 집합을 참조로 넘기므로 하나를 공유하면 배지 토글이 쿨타임 표시를 함께 바꾼다.
         _cooldownVisibility = new CooldownVisibility(services.Props, services.Data.CooldownCatalog);
-        _cooldownPickerVm = new CooldownPickerViewModel(services.Data.CooldownCatalog, _cooldownVisibility);
+        _cooldownPickerVm = new CooldownPickerViewModel(services.Data.CooldownCatalog, _cooldownVisibility, _settings);
         _cooldownFlyout = new CooldownPickerFlyout { DataContext = _cooldownPickerVm };
         LoadWindowSize(services.Props, "cooldownPickerWidth", "cooldownPickerHeight", _cooldownFlyout);
         _cooldownFlyout.Show();
@@ -3249,6 +3249,23 @@ public partial class App : Application
 
         _cooldownFlyoutVisible = true;
         _cooldownFlyout.Present(true);
+        RefreshCooldownOverlay(services); // 배치 미리보기를 다음 틱(250ms)까지 비워 두지 않는다
+    }
+
+    private string? _cooldownOrderRaw;
+    private List<int> _cooldownOrder = [];
+
+    /// <summary>저장된 배치를 파싱해 둔 것. 틱(250ms)마다 같은 문자열을 다시 쪼개지 않도록 원문이 바뀔 때만 푼다.</summary>
+    private List<int> CooldownOrder()
+    {
+        string raw = _settings?.CooldownUiOrder ?? string.Empty;
+        if (!string.Equals(raw, _cooldownOrderRaw, StringComparison.Ordinal))
+        {
+            _cooldownOrderRaw = raw;
+            _cooldownOrder = WaffleMeter.App.Core.SkillCooldownOrder.Parse(raw);
+        }
+
+        return _cooldownOrder;
     }
 
     // Refresh the skill-cooldown overlay. Same two-layer shape as the buff overlay — the controller poll
@@ -3262,7 +3279,10 @@ public partial class App : Application
             return;
         }
 
-        if (!_settings.ShowCooldownUi)
+        // 배치 미리보기(스킬 고르기 창)는 오버레이가 꺼져 있어도 같은 목록이 필요하다 — 켜기 전에 순서를 잡아
+        // 두려는 사람이 있다. 둘 다 볼 사람이 없을 때만 계산을 건너뛴다.
+        bool pickerOpen = _cooldownFlyoutVisible && _cooldownPickerVm is not null;
+        if (!_settings.ShowCooldownUi && !pickerOpen)
         {
             _cooldownOverlay?.Fade();
             return;
@@ -3273,6 +3293,22 @@ public partial class App : Application
         if (_cooldownVisibility is { } picked)
         {
             rows = rows.Where(r => picked.IsVisible(r.GroupId)).ToList();
+        }
+
+        // 사용자 배치. 오버레이와 미리보기가 같은 정렬 결과를 받아야 "보이는 것이 곧 실제 순서"가 된다.
+        rows = WaffleMeter.App.Core.SkillCooldownOrder.Sort(rows, CooldownOrder());
+
+        if (pickerOpen)
+        {
+            // 직업은 매번 다시 읽는다 — 창을 연 뒤에 캐릭터가 인식돼도 미리보기가 채워지게. 같은 값이면 no-op.
+            _cooldownPickerVm!.OwnJobBand = services.Data.User(services.Data.ExecutorId())?.Job?.SkillBand() ?? 0;
+            _cooldownPickerVm.SetArrangeSource(rows, _settings.CooldownUiPerRow);
+        }
+
+        if (!_settings.ShowCooldownUi)
+        {
+            _cooldownOverlay?.Fade();
+            return;
         }
 
         _cooldownOverlayVm.ShowBackground = !_settings.CooldownUiTransparent;

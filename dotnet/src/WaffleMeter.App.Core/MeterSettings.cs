@@ -60,7 +60,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         nameof(_aetherCharacterNames), nameof(_aetherLastValue), nameof(_aetherPerCharacter), nameof(_barStyle),
         nameof(_buffUiHidden), nameof(_buffUiObserved), nameof(_buffUiPinned), nameof(_buffUiPresets),
         nameof(_buffUiSortMode), nameof(_buffUiTextColor), nameof(_buffUiVoice), nameof(_captureBackend),
-        nameof(_cooldownUiTextColor), nameof(_cooldownUiPresets),
+        nameof(_cooldownUiTextColor), nameof(_cooldownUiPresets), nameof(_cooldownUiOrder),
         nameof(_closeAction), nameof(_contributionMode), nameof(_customAlarms), nameof(_damageValueMode),
         nameof(_displayMode), nameof(_fieldBossDisabled), nameof(_fontFamily), nameof(_nameDisplay),
         nameof(_meterLayoutId), nameof(_nameFxMode), nameof(_overlayTheme), nameof(_rowDpsMetric), nameof(_targetInfoDisplayMode),
@@ -158,6 +158,7 @@ public sealed class MeterSettings : INotifyPropertyChanged
         _cooldownUiTransparent = ReadBool("cooldownUi.transparent", true);
         _cooldownUiPerRow = ReadInt("cooldownUi.perRow", 8);
         _cooldownUiPresets = _props.GetProperty("cooldownUi.presets") ?? "";
+        _cooldownUiOrder = _props.GetProperty("cooldownUi.order") ?? "";
         _aetherLastValue = _props.GetProperty("aether.lastValue") ?? "";
         _aetherPerCharacter = _props.GetProperty("aether.perCharacter") ?? "";
         _aetherCharacterNames = _props.GetProperty("aether.characterNames") ?? "";
@@ -588,6 +589,12 @@ public sealed class MeterSettings : INotifyPropertyChanged
     /// <summary>쿨타임 프리셋 3슬롯, Base64(JSON) 한 덩어리(<see cref="CooldownPresetCodec"/>). 한글 슬롯
     /// 이름이 설정 읽기의 EUC-KR 재디코드를 통과해야 해서 Base64 다.</summary>
     public string CooldownUiPresets { get => _cooldownUiPresets; set => SetProp(ref _cooldownUiPresets, "cooldownUi.presets", value); }
+
+    private string _cooldownUiOrder;
+    /// <summary>쿨타임 오버레이의 사용자 배치 — base 코드를 정한 순서대로 쉼표로 늘어놓은 것
+    /// (<see cref="SkillCooldownOrder"/>). 빈 값 = 기본 순서(직업 → 일반 → 스티그마). 표시 여부와 따로 저장해
+    /// 스킬을 껐다 켜도 자리가 남는다. 프리셋이 슬롯마다 들고 다닌다.</summary>
+    public string CooldownUiOrder { get => _cooldownUiOrder; set => SetProp(ref _cooldownUiOrder, "cooldownUi.order", value); }
 
     private int _cooldownUiPerRow;
     /// <summary>한 줄에 놓을 최대 아이콘 수(4~16). 이 값이 창의 폭 상한을 정하고, 폭 상한이 있어야만

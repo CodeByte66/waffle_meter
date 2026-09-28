@@ -25,6 +25,10 @@ public sealed record CooldownPreset
     /// 담으면 카탈로그 자산이 없는 실행 한 번이 세 슬롯의 선택을 전부 "숨긴 것 없음"으로 덮는다 — 쿨타임
     /// 카탈로그는 실제로 하루 만에 249에서 221로 움직였다.</para></summary>
     public string Hidden { get; init; } = "";
+
+    /// <summary>사용자 배치 — <c>cooldownUi.order</c> 원문(<see cref="SkillCooldownOrder"/>). 빈 값 = 기본 순서.
+    /// 이 필드가 생기기 전의 슬롯은 빈 값으로 읽혀 기본 순서가 된다.</summary>
+    public string Order { get; init; } = "";
 }
 
 /// <summary>슬롯 전부와 지금 적용된 슬롯. Base64(JSON) 한 값으로 저장된다 —

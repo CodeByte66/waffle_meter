@@ -2892,7 +2892,8 @@ public sealed class DataManager : ICaptureGameData
                     state.TotalMs,
                     state.IsReady,
                     info.Job,
-                    info.Order));
+                    info.Order,
+                    info.IsStigma));
             }
         }
 
@@ -2921,18 +2922,21 @@ public sealed class DataManager : ICaptureGameData
                 {
                     result.Add(new SkillCooldownView(
                         info.BaseCode, info.BaseCode, info.Name,
-                        shared.RemainingMs, shared.TotalMs, shared.IsReady, info.Job, info.Order));
+                        shared.RemainingMs, shared.TotalMs, shared.IsReady, info.Job, info.Order, info.IsStigma));
                     continue;
                 }
 
                 // TotalMs 0 = 아직 이 캐릭터의 실제 쿨 길이를 모른다(첫 시전이 알려 준다). 링을 그릴 일이
                 // 없으므로 분모가 없어도 무해하고, 클라 테이블 값으로 채우면 쿨감이 빠진 거짓 분모가 된다.
                 result.Add(new SkillCooldownView(
-                    info.BaseCode, info.BaseCode, info.Name, 0, 0, true, info.Job, info.Order));
+                    info.BaseCode, info.BaseCode, info.Name, 0, 0, true, info.Job, info.Order, info.IsStigma));
             }
         }
 
-        return result.OrderBy(r => r.Job).ThenBy(r => r.Order).ToList();
+        // 기본 순서: 직업 → 일반 → 스티그마 → 카탈로그 순서. 카탈로그 순서는 base 코드 오름차순이라 그것만으로는
+        // 일반과 스티그마가 뒤섞인다(직업마다 13~14개 스티그마가 사이사이에 낀다). 사용자가 정한 배치는 그
+        // 위에 App.Core 의 SkillCooldownOrder 가 얹는다.
+        return result.OrderBy(r => r.Job).ThenBy(r => r.IsStigma).ThenBy(r => r.Order).ToList();
     }
 
     // Buff-tracking diagnostics (see SaveUseBuff). Written on the single consumer thread only.

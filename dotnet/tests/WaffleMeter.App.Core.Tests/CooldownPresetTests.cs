@@ -165,6 +165,35 @@ public sealed class CooldownPresetTests : IDisposable
     }
 
     [Fact]
+    public void Each_slot_keeps_its_own_skill_arrangement()
+    {
+        PropertyHandler props = Props();
+        var settings = new MeterSettings(props);
+        var vis = new CooldownVisibility(props, Catalog(14_220_000, 14_310_000));
+        using var mgr = new CooldownPresetManager(settings, vis);
+
+        settings.CooldownUiOrder = "14310000,14220000"; // 슬롯 1: 바이젤을 앞으로
+        Assert.Equal("14310000,14220000", Blob(settings).Slots[0].Order);
+
+        mgr.SelectSlot(1);
+        Assert.Equal("", settings.CooldownUiOrder);     // 슬롯 2 는 시드 그대로(기본 순서)
+
+        mgr.SelectSlot(0);
+        Assert.Equal("14310000,14220000", settings.CooldownUiOrder);
+    }
+
+    [Fact]
+    public void A_slot_saved_before_arrangements_existed_reads_as_the_default_order()
+    {
+        // 이 필드가 생기기 전의 blob 에는 Order 키가 없다 — 빈 값(기본 순서)으로 읽혀야 하고 던지면 안 된다.
+        string legacy = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            "{\"Active\":0,\"Slots\":[{\"Name\":\"a\",\"Hidden\":\"\"},{\"Name\":\"b\"},{\"Name\":\"c\"}]}"));
+
+        CooldownPresetSet set = Assert.IsType<CooldownPresetSet>(CooldownPresetCodec.Decode(legacy));
+        Assert.All(set.Slots, s => Assert.Equal("", s.Order));
+    }
+
+    [Fact]
     public void The_hidden_string_is_stored_verbatim_not_recomputed()
     {
         // 🔑 여집합을 다시 계산해 담으면 (a) 프리셋이 '켠 목록' 저장소가 되고 (b) 카탈로그가 비어 있는 실행
