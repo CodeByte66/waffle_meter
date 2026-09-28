@@ -23,6 +23,8 @@ internal static class OverlayZOrder
 
     private const int GwlExStyle = -20;
     private const int WsExTopmost = 0x8;
+    private const int WsExTransparent = 0x20;
+    private const int WsExLayered = 0x80000;
     private const uint GwHwndPrev = 3;
     private const uint GwOwner = 4;
     private const int DwmwaCloaked = 14;
@@ -64,7 +66,8 @@ internal static class OverlayZOrder
 
     /// <summary>The first foreign window that is both above us in z-order AND actually overlaps us, or
     /// <see cref="IntPtr.Zero"/> when nothing covers us. Same-process windows (our tooltips, popups, sibling
-    /// panels) are skipped, as are cloaked windows and anything too small to cover anything.</summary>
+    /// panels) are skipped, as are cloaked windows, anything too small to cover anything, and other apps'
+    /// click-through overlays (see <see cref="IsClickThroughOverlay"/>).</summary>
     public static IntPtr FindOccluder(IntPtr handle)
     {
         if (!GetWindowRect(handle, out Rect self) || IsDegenerate(self))
@@ -78,7 +81,7 @@ internal static class OverlayZOrder
         for (IntPtr above = GetWindow(handle, GwHwndPrev); above != IntPtr.Zero; above = GetWindow(above, GwHwndPrev))
         {
             GetWindowThreadProcessId(above, out uint pid);
-            if ((int)pid == ownPid || !IsWindowVisible(above))
+            if ((int)pid == ownPid || !IsWindowVisible(above) || IsClickThroughOverlay(above))
             {
                 continue;
             }
@@ -111,6 +114,21 @@ internal static class OverlayZOrder
         }
 
         SetWindowPos(handle, HwndTopMost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+    }
+
+    /// <summary>
+    /// Another app's in-game overlay: layered (per-pixel alpha) and click-through. These are drawn over the game
+    /// for the same reason we are, and they keep themselves topmost by re-claiming the top whenever something
+    /// rises above them. Discord's overlay is a full-screen <c>Discord Overlay</c> window of exactly this shape.
+    /// Treating it as an occluder started a fight nobody can win: every poll we rose above it, it rose back
+    /// 15–110ms later, and <see cref="TopmostReasserter"/> scored each round a win because it judges right after
+    /// SetWindowPos — ~4 z-order swaps a second, each forcing DWM to recomposite, which users saw as flicker.
+    /// Such a window is mostly transparent, so we lose nothing by sitting under it.
+    /// </summary>
+    private static bool IsClickThroughOverlay(IntPtr handle)
+    {
+        int exStyle = GetWindowLong(handle, GwlExStyle);
+        return (exStyle & (WsExTransparent | WsExLayered)) == (WsExTransparent | WsExLayered);
     }
 
     // Cloaked = present in the z-order but not rendered (suspended UWP apps, virtual-desktop residents).
