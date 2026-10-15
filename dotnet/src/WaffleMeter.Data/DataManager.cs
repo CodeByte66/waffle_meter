@@ -2603,17 +2603,20 @@ public sealed class DataManager : ICaptureGameData
     //                    guess stops being a guess (see CastCooldownGraceMs)
     //   TotalMs          the character's real full cooldown, learned from the cast frame — the ring denominator
     //   DisplayCode      the last wire code seen for the group, for the icon
+    //   Charges          충전형 스킬의 보고 시점 남은 횟수, 충전형이 아니면 -1. 충전형이면 End = 다음 1회가 차는
+    //                    시각, TotalMs = 1회 재충전 시간(분모)이다 — 보고 뒤로 지나간 재충전은 ProjectCharges 가 굴린다.
+    //   MaxCharges       충전형의 최대 횟수(카탈로그 AutoLoadCount 를 사전값으로, 와이어가 말하면 와이어). 아니면 0.
     // Entries are never removed, so the key set doubles as "which skills this character has used this session" —
     // the overlay's learned display list. ClearOwnerBuffs wipes it on a real character switch, which is right:
     // the next character's skills are different.
-    private readonly Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode)> _cooldowns = new();
+    private readonly Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges)> _cooldowns = new();
     private readonly object _ownerBuffGate = new();
 
     // Cast frames that arrived before the executor was known. The self's own cooldowns are indistinguishable
     // from a party member's until then, and simply dropping them costs a lot: in one session 224 of 811 self
     // casts (27.6%, 17 distinct skills) landed in the 118 s before the own-nickname packet did. Staged per uid
     // and replayed the moment that uid is confirmed — same shape as _pendingSelfBuffs.
-    private readonly Dictionary<int, Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode)>> _pendingSelfCooldowns = new();
+    private readonly Dictionary<int, Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges)>> _pendingSelfCooldowns = new();
     private const int PendingSelfCooldownUidCap = 16;
 
     private CooldownCatalog _cooldownCatalog = CooldownCatalog.Empty;
@@ -2643,8 +2646,8 @@ public sealed class DataManager : ICaptureGameData
     {
         int executor = _userRepository.Executor();
         int groupId = CooldownGroupId(skillCode);
-        (long End, long ProvisionalUntil, long TotalMs, int DisplayCode) fresh =
-            (arrivedAt + Math.Max(0, remainingMs), fromCast ? arrivedAt + CastCooldownGraceMs : 0, Math.Max(0, remainingMs), skillCode);
+        (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) fresh =
+            (arrivedAt + Math.Max(0, remainingMs), fromCast ? arrivedAt + CastCooldownGraceMs : 0, Math.Max(0, remainingMs), skillCode, -1, 0);
 
         if (actorId != 0 && actorId != executor)
         {
@@ -2658,6 +2661,50 @@ public sealed class DataManager : ICaptureGameData
 
         lock (_ownerBuffGate)
         {
+            // 충전형 칸에 0x3847·0x5100 의 맨 쿨 값은 덮어쓰지 않는다. 두 패킷엔 충전 횟수를 말할 자리가 없고,
+            // 충전형의 정정은 서버가 0x3822 로 따로 보낸다. 특히 0x5100 은 같은 스킬의 base 레코드(충전 필드
+            // 없음)와 특화 레코드(충전 필드 있음)를 함께 싣는다 — 이 가드가 없으면 레코드 순서에 따라 충전형이
+            // 풀렸다 잡혔다 한다. 충전형을 푸는 것은 총 쿨이 실린 시전(특화를 바꿨다는 와이어 증거)뿐이다.
+            if (!fromCast
+                && _cooldowns.TryGetValue(groupId, out (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) prev)
+                && prev.Charges >= 0)
+            {
+                return;
+            }
+
+            Apply(groupId, fresh);
+        }
+    }
+
+    /// <summary>충전형 스킬 상태 — 0x3802 시전 꼬리, 0x3822 정정, 0x5100 스냅샷(<see cref="ICaptureGameData.SaveSkillCharges"/>).
+    /// <paramref name="charges"/>회 남았고 다음 1회가 <paramref name="rechargeRemainingMs"/> 뒤에 찬다(0 = 가득 참).
+    /// 쿨타임과 같은 저장소·같은 그룹 키·같은 본인 필터를 쓴다 — 버프 오버레이의 회색 베일도 그대로 따라온다
+    /// (<see cref="IsOnCooldown"/> 은 0회일 때만 참이다).
+    /// <para>시전 출처라도 잠정값으로 두지 않는다. 일반 쿨의 400ms 유예는 서버가 시전 직후 쿨을 초기화하는 일이
+    /// 잦아서인데, 충전형은 시전 뒤 정정이 횟수를 바꾼 적이 없다 — 2026-10-16 검성 2건은 같은 횟수에 타이머만
+    /// 100ms 짧았고, 2026-08-08 궁성은 시전 뒤 정정 없이 1회가 찰 때만 0x3822 가 왔다.</para>
+    /// Consumer-thread writer.</summary>
+    public void SaveSkillCharges(int skillCode, int charges, long rechargeRemainingMs, long arrivedAt, int actorId)
+    {
+        int executor = _userRepository.Executor();
+        int groupId = CooldownGroupId(skillCode);
+        long remaining = Math.Max(0, rechargeRemainingMs);
+        int catalogMax = _cooldownCatalog.TryGet(groupId, out CooldownSkillInfo info) ? info.AutoLoadCount : 0;
+        (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) fresh =
+            (arrivedAt + remaining, 0, remaining, skillCode, Math.Max(0, charges), catalogMax);
+
+        if (actorId != 0 && actorId != executor)
+        {
+            if (executor == 0)
+            {
+                StageSelfCooldownCandidate(actorId, groupId, fresh);
+            }
+
+            return; // 파티원의 충전 상태(또는 아직 모르는 본인) — 본인 오버레이 몫이 아니다
+        }
+
+        lock (_ownerBuffGate)
+        {
             Apply(groupId, fresh);
         }
     }
@@ -2665,17 +2712,57 @@ public sealed class DataManager : ICaptureGameData
     // Merge one cooldown report onto the store. The total is the one field a correction must NOT clobber: a
     // 0x3847 carries only what is LEFT, so taking it as the total would shrink the ring's denominator every
     // tick and make a 60 s cooldown look like a 3 s one. Only a larger value (or the first one seen) raises it.
+    // 충전형도 같다 — 1회 남은 상태의 시전·정정은 '돌고 있는 타이머의 잔여'를 실으므로 큰 값만 분모로 남는다.
+    // 다만 분모는 같은 모드끼리만 이어받는다: 일반 쿨과 1회 재충전 시간은 다른 양이고, 특화를 바꾸면 모드가 바뀐다.
     // Caller holds _ownerBuffGate.
-    private void Apply(int groupId, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode) fresh)
+    private void Apply(int groupId, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) fresh)
     {
+        bool sameMode = _cooldowns.TryGetValue(groupId, out (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) prev)
+            && (prev.Charges >= 0) == (fresh.Charges >= 0);
+
         long total = fresh.TotalMs;
-        if (_cooldowns.TryGetValue(groupId, out (long End, long ProvisionalUntil, long TotalMs, int DisplayCode) prev)
-            && prev.TotalMs > total)
+        if (sameMode && prev.TotalMs > total)
         {
             total = prev.TotalMs;
         }
 
-        _cooldowns[groupId] = (fresh.End, fresh.ProvisionalUntil, total, fresh.DisplayCode);
+        int maxCharges = 0;
+        if (fresh.Charges >= 0)
+        {
+            // 도는 충전이 없다 = 가득 찼다는 서버의 말이므로 그 횟수가 곧 최대치다(카탈로그보다 와이어가 이긴다).
+            // 타이머가 돌고 있으면 최대치는 적어도 지금 횟수 + 1 이다. 카탈로그 값은 와이어가 아무 말도 안 했을
+            // 때의 사전값으로만 쓴다 — 틀렸으면 마지막 1회가 찰 때 오는 0x3822 "가득 참"이 바로잡는다.
+            maxCharges = fresh.TotalMs == 0 && fresh.Charges > 0
+                ? fresh.Charges
+                : Math.Max(sameMode && prev.MaxCharges > 0 ? prev.MaxCharges : fresh.MaxCharges, fresh.Charges + 1);
+        }
+
+        _cooldowns[groupId] = (fresh.End, fresh.ProvisionalUntil, total, fresh.DisplayCode, fresh.Charges, maxCharges);
+    }
+
+    /// <summary>충전형 칸의 지금 상태. 저장값은 "보고 시점의 남은 횟수와 다음 1회가 차는 시각"이라, 그 뒤로 패킷 없이
+    /// 지나간 재충전을 여기서 앞으로 굴린다. 1회가 차면 다음 1회의 타이머가 그 순간 1회 재충전 시간으로 다시 돈다 —
+    /// 서버가 1회가 찰 때마다 보내는 0x3822 의 잔여가 매번 그 값이었다(14,250 · 7,900). 1회 재충전 시간을 아직
+    /// 모르면 한 번만 올리고 멈춘다(다음 1회가 언제 차는지 지어내지 않는다).</summary>
+    /// <returns>지금 남은 횟수와 다음 1회가 차는 시각(가득 찼거나 모르면 과거 시각).</returns>
+    private static (int Charges, long NextAt) ProjectCharges(
+        (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) cd, long nowMs)
+    {
+        int charges = cd.Charges;
+        long nextAt = cd.End;
+        int cap = cd.MaxCharges > 0 ? cd.MaxCharges : charges + 1;
+        while (charges < cap && nextAt <= nowMs)
+        {
+            charges++;
+            if (charges >= cap || cd.TotalMs <= 0)
+            {
+                break;
+            }
+
+            nextAt += cd.TotalMs;
+        }
+
+        return (charges, nextAt);
     }
 
     /// <summary>The shared-cooldown group a wire skill code belongs to. With no catalog loaded this is the old
@@ -2706,19 +2793,23 @@ public sealed class DataManager : ICaptureGameData
 
     /// <summary>True when <paramref name="groupId"/>'s skill should be drawn as on cooldown at
     /// <paramref name="nowMs"/> — i.e. the cooldown has not run out AND the value is no longer a cast's guess
-    /// waiting on its 0x3847 correction. Caller holds <see cref="_ownerBuffGate"/>.</summary>
+    /// waiting on its 0x3847 correction. Caller holds <see cref="_ownerBuffGate"/>.
+    /// <para>충전형은 <b>0회일 때만</b> 쿨이다 — 1회라도 남았으면 누를 수 있다. 0회로 보고된 칸은 End(다음 1회)가
+    /// 지나는 순간 1회가 되므로 이 식은 투영(<see cref="ProjectCharges"/>) 없이도 같은 답을 낸다. 일반 칸은 -1 이라
+    /// 이 조건이 항상 참 — 종전 판정 그대로다.</para></summary>
     private bool IsOnCooldown(int groupId, long nowMs) =>
-        _cooldowns.TryGetValue(groupId, out (long End, long ProvisionalUntil, long TotalMs, int DisplayCode) cd)
+        _cooldowns.TryGetValue(groupId, out (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) cd)
         && cd.End > nowMs
-        && nowMs >= cd.ProvisionalUntil;
+        && nowMs >= cd.ProvisionalUntil
+        && cd.Charges <= 0;
 
     // Hold a cast from an unconfirmed uid. Bounded like _pendingSelfBuffs: prune buffers whose every entry has
     // expired, then refuse to grow — a dropped cast costs one icon until the skill is used again.
-    private void StageSelfCooldownCandidate(int uid, int groupId, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode) entry)
+    private void StageSelfCooldownCandidate(int uid, int groupId, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) entry)
     {
         lock (_ownerBuffGate)
         {
-            if (!_pendingSelfCooldowns.TryGetValue(uid, out Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode)>? buffer))
+            if (!_pendingSelfCooldowns.TryGetValue(uid, out Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges)>? buffer))
             {
                 if (_pendingSelfCooldowns.Count >= PendingSelfCooldownUidCap)
                 {
@@ -2736,7 +2827,7 @@ public sealed class DataManager : ICaptureGameData
                     }
                 }
 
-                _pendingSelfCooldowns[uid] = buffer = new Dictionary<int, (long, long, long, int)>();
+                _pendingSelfCooldowns[uid] = buffer = new Dictionary<int, (long, long, long, int, int, int)>();
             }
 
             buffer[groupId] = entry;
@@ -2750,13 +2841,13 @@ public sealed class DataManager : ICaptureGameData
     {
         lock (_ownerBuffGate)
         {
-            if (!_pendingSelfCooldowns.Remove(uid, out Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode)>? buffer))
+            if (!_pendingSelfCooldowns.Remove(uid, out Dictionary<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges)>? buffer))
             {
                 return;
             }
 
             long now = Clock();
-            foreach (KeyValuePair<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode)> kv in buffer)
+            foreach (KeyValuePair<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges)> kv in buffer)
             {
                 if (kv.Value.End > now)
                 {
@@ -2825,11 +2916,41 @@ public sealed class DataManager : ICaptureGameData
             _learnedOwner = _userRepository.Executor();
         }
 
-        // 잔여 쿨은 그냥 흘려 보낸다 — SaveCooldown 이 그룹 키로 접고 멱등 병합이라 base+특화 중복 계상이
-        // 이미 방어돼 있다. 0 도 의미가 있다("준비됨").
+        // 잔여 쿨은 그냥 흘려 보낸다 — 그룹 키로 접고 멱등 병합이라 base+특화 중복 계상이 이미 방어돼 있다.
+        // 0 도 의미가 있다("준비됨").
+        //
+        // 충전형은 <b>그룹 단위</b>로 가른다. 같은 스킬의 base 레코드(충전 필드 없음)와 특화 레코드(충전 필드
+        // 있음)가 한 스냅샷에 함께 오기 때문이다. 충전 레코드가 있는 그룹은 그 레코드가 상태를 말하고(횟수 + 다음
+        // 1회까지 = _autoload_time — 충전형의 _cooltime 은 재충전 시간이 아니다), base 레코드는 건너뛴다. 충전
+        // 레코드가 하나도 없는 그룹은 스냅샷이 "지금 충전형이 아니다"라고 말하는 것이므로 충전형을 풀고 맨 쿨로
+        // 넣는다 — 특화를 해제한 뒤 남는 옛 횟수 배지를 여기서 지운다(SaveCooldown 은 충전형 칸을 못 덮으므로
+        // 그 가드를 거치지 않는 경로로). 첫 접속이면 한 번도 안 쓴 충전형 스킬에도 횟수가 뜬다(캐릭터 전환 때는
+        // 신원 확정이 저장소를 비우는 순서라 다음 시전·0x3822 까지 숫자가 없다 — 일반 쿨과 같은 처지다).
+        // 직업 밴드 밖 충전 레코드(예: 공용 4900202)는 종전대로 맨 쿨 경로다 — 다른 두 생산자도 밴드로 거른다.
+        var chargeGroups = new HashSet<int>();
         foreach (LearnedSkill s in skills)
         {
-            SaveCooldown(s.Code, s.CooltimeMs, arrivedAt, 0);
+            if (s.Charges >= 0 && s.Code is >= 11_000_000 and <= 19_999_999)
+            {
+                chargeGroups.Add(CooldownGroupId(s.Code));
+            }
+        }
+
+        foreach (LearnedSkill s in skills)
+        {
+            if (s.Charges >= 0 && s.Code is >= 11_000_000 and <= 19_999_999)
+            {
+                SaveSkillCharges(s.Code, s.Charges, s.AutoLoadTimeMs, arrivedAt, 0);
+            }
+            else if (!chargeGroups.Contains(CooldownGroupId(s.Code)))
+            {
+                int groupId = CooldownGroupId(s.Code);
+                long remaining = Math.Max(0, s.CooltimeMs);
+                lock (_ownerBuffGate)
+                {
+                    Apply(groupId, (arrivedAt + remaining, 0, remaining, s.Code, -1, 0));
+                }
+            }
         }
     }
 
@@ -2884,25 +3005,48 @@ public sealed class DataManager : ICaptureGameData
 
     public IReadOnlyList<SkillCooldownView> ActiveCooldowns(long nowMs)
     {
-        int band = User(_userRepository.Executor())?.Job?.SkillBand() ?? 0;
+        int executor = _userRepository.Executor();
+        int band = User(executor)?.Job?.SkillBand() ?? 0;
         var result = new List<SkillCooldownView>();
 
         // 그룹 키 -> 그 그룹의 현재 쿨 상태. 아래 프리필이 이 표를 봐야 같은 공유 쿨 그룹에 매달린 다른
         // 스킬 칸도 함께 쿨로 그려진다. 키 공간은 _cooldowns 와 같은 "그룹 대표 base 코드"다(CooldownGroupId).
-        var groupState = new Dictionary<int, (long RemainingMs, long TotalMs, bool IsReady)>();
+        var groupState = new Dictionary<int, (long RemainingMs, long TotalMs, bool IsReady, int Charges, int MaxCharges)>();
 
         lock (_ownerBuffGate)
         {
-            foreach (KeyValuePair<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode)> kv in _cooldowns)
+            foreach (KeyValuePair<int, (long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges)> kv in _cooldowns)
             {
                 if (!_cooldownCatalog.TryGet(kv.Key, out CooldownSkillInfo info))
                 {
                     continue; // outside the catalog — no name and no icon, so there is nothing to draw
                 }
 
+                // 본인이 확정되기 전에는 충전형 칸을 내보내지 않는다. 그동안 본인 시전(횟수를 깎는 쪽)은 누구 것인지
+                // 몰라 스테이징되는데, 본인 전용 0x3822(횟수를 채우는 쪽)는 바로 들어온다 — 둘 중 한쪽만 보면 0회가
+                // '1회·준비됨'으로 부풀려진다(2026-08-08 궁성 코퍼스 미확정 재생: 실제 0회 845틱 전부). 저장소는 그대로
+                // 두므로 확정되는 순간 스테이징된 시전이 얹혀 바로 맞는 값이 된다. 확정 전 화면은 어차피 "캐릭터 인식 후
+                // 표시"다(직업을 몰라 프리필도 없다).
+                if (kv.Value.Charges >= 0 && executor == 0)
+                {
+                    continue;
+                }
+
                 bool cooling = IsOnCooldown(kv.Key, nowMs);
-                (long RemainingMs, long TotalMs, bool IsReady) state =
-                    (cooling ? kv.Value.End - nowMs : 0, kv.Value.TotalMs, !cooling);
+                long remainingMs = cooling ? kv.Value.End - nowMs : 0;
+                int charges = -1, maxCharges = 0;
+                if (kv.Value.Charges >= 0)
+                {
+                    // 충전형: 1회라도 남았으면 누를 수 있지만 다음 1회는 여전히 차오르는 중일 수 있다 — 그 잔여는
+                    // '준비됨'과 함께 실어 보낸다(오버레이가 옅은 파이로 그린다). 0회일 때만 쿨이다.
+                    (charges, long nextAt) = ProjectCharges(kv.Value, nowMs);
+                    maxCharges = kv.Value.MaxCharges;
+                    remainingMs = nextAt > nowMs ? nextAt - nowMs : 0;
+                    cooling = charges == 0 && remainingMs > 0;
+                }
+
+                (long RemainingMs, long TotalMs, bool IsReady, int Charges, int MaxCharges) state =
+                    (remainingMs, kv.Value.TotalMs, !cooling, charges, maxCharges);
                 groupState[kv.Key] = state;
                 result.Add(new SkillCooldownView(
                     kv.Key,
@@ -2913,7 +3057,9 @@ public sealed class DataManager : ICaptureGameData
                     state.IsReady,
                     info.Job,
                     info.Order,
-                    info.IsStigma));
+                    info.IsStigma,
+                    state.Charges,
+                    state.MaxCharges));
             }
         }
 
@@ -2938,11 +3084,12 @@ public sealed class DataManager : ICaptureGameData
                 // 권성 7칸이 쿨 도는 내내 "준비됨"으로 밝게 남아, 정보가 없는 게 아니라 거짓말을 한다(M-15).
                 // 행 키(=픽커 키)는 반드시 이 스킬 자신의 BaseCode 여야 한다: 그룹 키로 바꾸면
                 // CooldownVisibility(_all 이 BaseCode 기준)의 칩과 어긋나 "껐는데 안 사라지는" 칸이 생긴다.
-                if (groupState.TryGetValue(info.GroupId, out (long RemainingMs, long TotalMs, bool IsReady) shared))
+                if (groupState.TryGetValue(info.GroupId, out (long RemainingMs, long TotalMs, bool IsReady, int Charges, int MaxCharges) shared))
                 {
                     result.Add(new SkillCooldownView(
                         info.BaseCode, info.BaseCode, info.Name,
-                        shared.RemainingMs, shared.TotalMs, shared.IsReady, info.Job, info.Order, info.IsStigma));
+                        shared.RemainingMs, shared.TotalMs, shared.IsReady, info.Job, info.Order, info.IsStigma,
+                        shared.Charges, shared.MaxCharges));
                     continue;
                 }
 
@@ -2976,7 +3123,7 @@ public sealed class DataManager : ICaptureGameData
         {
             storeCount = _ownerBuffs.Count;
             cdStore = _cooldowns.Count;
-            foreach ((long End, long ProvisionalUntil, long TotalMs, int DisplayCode) cd in _cooldowns.Values)
+            foreach ((long End, long ProvisionalUntil, long TotalMs, int DisplayCode, int Charges, int MaxCharges) cd in _cooldowns.Values)
             {
                 if (cd.End > nowMs)
                 {

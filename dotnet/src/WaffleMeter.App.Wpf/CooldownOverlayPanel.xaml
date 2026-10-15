@@ -71,8 +71,9 @@
                                          같이 보간을 HighQuality(Fant)로 지정한다. -->
                                     <Image Source="{Binding IconSource}" Stretch="Fill" Opacity="{Binding ReadyOpacity}"
                                            RenderOptions.BitmapScalingMode="HighQuality"/>
-                                    <!-- 쿨 잔여 파이. 12시에서 시계방향으로, 남은 비율만큼 덮었다가 사라진다. -->
-                                    <Path Data="{Binding Wipe}" Fill="#B2000000" Width="42" Height="42" Stretch="None"/>
+                                    <!-- 쿨 잔여 파이. 12시에서 시계방향으로, 남은 비율만큼 덮었다가 사라진다.
+                                         색은 VM 이 고른다: 진함 = 못 누름, 옅음 = 충전형이 1회 이상 남은 채 재충전 중. -->
+                                    <Path Data="{Binding Wipe}" Fill="{Binding WipeFill}" Width="42" Height="42" Stretch="None"/>
                                 </Grid>
                             </Border>
                             <!-- 장식띠 2겹. 파이보다 위, 남은시간 글씨보다 아래. 바깥 링은 아이콘 밖 1px 에
@@ -93,6 +94,17 @@
                                 <TextBlock Text="{Binding RemainingText}"
                                            Foreground="{Binding DataContext.TextBrush, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                            FontSize="13" FontWeight="Bold"
+                                           HorizontalAlignment="Center" TextAlignment="Center"/>
+                            </Border>
+                            <!-- 충전 횟수(충전형 스킬만). 아이콘 우하단 안쪽 — 가운데 남은 시간 알약과 겹치지 않는 자리다.
+                                 맨 위 z-order 라 파이·장식띠에 가려지지 않는다. 그림자 효과 대신 알약 배경을 쓰는 이유는
+                                 위 남은 시간과 같다(슬롯당 DropShadowEffect = 프레임레이트 비용). -->
+                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,3,3"
+                                    Background="#A6000000" CornerRadius="3" Padding="3,0" MinWidth="11"
+                                    Visibility="{Binding ChargeVisibility}">
+                                <TextBlock Text="{Binding ChargeText}"
+                                           Foreground="{Binding DataContext.TextBrush, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                           FontSize="11" FontWeight="Bold"
                                            HorizontalAlignment="Center" TextAlignment="Center"/>
                             </Border>
                         </Grid>
