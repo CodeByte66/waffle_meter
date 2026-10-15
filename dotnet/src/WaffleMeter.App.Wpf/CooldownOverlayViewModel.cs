@@ -169,6 +169,13 @@ public sealed class CooldownSlotVM : INotifyPropertyChanged
     private const double Center = Box / 2;
     private const double PieRadius = 31;
 
+    // 파이 두 가지. 진한 쪽 = 못 누름(쿨 / 충전 0회), 옅은 쪽 = 누를 수 있지만 다음 1회가 차오르는 중(충전형).
+    // 옅은 쪽을 진한 쪽과 헷갈리지 않을 만큼 떨어뜨리되, 밝은 아이콘 위에서도 진행이 보일 만큼은 남긴다.
+    private static readonly Brush CooldownFill = Freeze(new SolidColorBrush(Color.FromArgb(0xB2, 0, 0, 0)));
+    private static readonly Brush RechargeFill = Freeze(new SolidColorBrush(Color.FromArgb(0x66, 0, 0, 0)));
+
+    private static Brush Freeze(Brush b) { b.Freeze(); return b; }
+
     public CooldownSlotVM(SkillCooldownView row)
     {
         GroupId = row.GroupId;
@@ -196,8 +203,22 @@ public sealed class CooldownSlotVM : INotifyPropertyChanged
 
     private Geometry? _wipe;
     /// <summary>The dark pie over the icon: a clockwise wedge from 12 o'clock spanning the fraction of the
-    /// cooldown still to run, so it sweeps away to nothing as the skill becomes usable. Null when ready.</summary>
+    /// cooldown still to run, so it sweeps away to nothing as the skill becomes usable. Null when ready.
+    /// 충전형이 1회 이상 남은 채 다음 1회를 채우는 중이면 같은 쐐기를 <see cref="WipeFill"/> 의 옅은 색으로 그린다.</summary>
     public Geometry? Wipe { get => _wipe; private set => Set(ref _wipe, value); }
+
+    private Brush _wipeFill = CooldownFill;
+    /// <summary>파이 색. 진함 = 못 누름, 옅음 = 누를 수 있고 재충전 중. 얼린 브러시 둘 중 하나라 바인딩 비용만 든다.</summary>
+    public Brush WipeFill { get => _wipeFill; private set => Set(ref _wipeFill, value); }
+
+    private string _chargeText = string.Empty;
+    /// <summary>충전형 스킬의 남은 횟수(우하단 숫자).</summary>
+    public string ChargeText { get => _chargeText; private set => Set(ref _chargeText, value); }
+
+    private Visibility _chargeVisibility = Visibility.Collapsed;
+    /// <summary>와이어가 충전형이라고 말한 스킬에만 보인다 — 가득 찬 상태(예: 2)도 보여 준다. 숫자가 늘 같은
+    /// 자리에 있어야 "이 칸은 충전형"으로 읽힌다.</summary>
+    public Visibility ChargeVisibility { get => _chargeVisibility; private set => Set(ref _chargeVisibility, value); }
 
     private double _readyOpacity = 1.0;
     /// <summary>Slight lift for a ready skill so a full row of them still reads as "all up" at a glance without
@@ -207,12 +228,29 @@ public sealed class CooldownSlotVM : INotifyPropertyChanged
     public void Update(SkillCooldownView row)
     {
         Name = row.Name;
+
+        bool charge = row.Charges >= 0;
+        ChargeText = charge ? row.Charges.ToString(Inv) : string.Empty;
+        ChargeVisibility = charge ? Visibility.Visible : Visibility.Collapsed;
+
         if (row.IsReady || row.RemainingMs <= 0)
         {
             RemainingText = string.Empty;
             TextVisibility = Visibility.Collapsed;
-            Wipe = null;
             ReadyOpacity = 1.0;
+
+            // 충전형이 1회 이상 남았는데 다음 1회가 차오르는 중: 옅은 파이로 진행만 보인다. 가운데 숫자는 띄우지
+            // 않는다 — 이 창에서 가운데 숫자는 "지금 못 누른다"는 표식이고, 이 칸은 누를 수 있다.
+            if (charge && row.RemainingMs > 0 && row.TotalMs > 0)
+            {
+                WipeFill = RechargeFill;
+                Wipe = BuildWipe(Math.Clamp((double)row.RemainingMs / row.TotalMs, 0, 1));
+            }
+            else
+            {
+                Wipe = null;
+            }
+
             return;
         }
 
@@ -220,6 +258,7 @@ public sealed class CooldownSlotVM : INotifyPropertyChanged
         RemainingText = s >= 60 ? $"{s / 60}:{s % 60:D2}" : s.ToString(Inv);
         TextVisibility = Visibility.Visible;
         ReadyOpacity = 0.85;
+        WipeFill = CooldownFill;
 
         // The denominator can be unknown (a correction arrived before any cast of this skill was seen). Draw a
         // full wipe then — "on cooldown, share unknown" — rather than guessing a total and animating a lie.

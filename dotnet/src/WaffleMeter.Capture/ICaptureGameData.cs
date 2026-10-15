@@ -95,6 +95,16 @@ public interface ICaptureGameData
     /// correction that is already in flight never shows up as a flicker.</para></summary>
     void SaveCooldown(int skillCode, long remainingMs, long arrivedAt, int actorId, bool fromCast = false) { }
 
+    /// <summary>충전형 스킬(특화로 2~3회 충전이 되는 스킬)의 상태: 지금 <paramref name="charges"/>회 남았고,
+    /// 다음 1회가 <paramref name="rechargeRemainingMs"/> 뒤에 찬다(0 = 돌고 있는 충전이 없다 = 가득 참).
+    /// <para>충전형은 쿨타임 경로(<see cref="SaveCooldown"/>)로 오지 않는다 — 시전 프레임의 총 쿨이 0이고
+    /// 0x3847 도 안 온다. 대신 세 곳에 실린다: 0x3802 시전 프레임의 꼬리(flag 0x04 = 남은 횟수, 0x08 = 재충전
+    /// 잔여), 0x3822 정정 통지(본인 전용, actor 없음), 0x5100 배운 스킬 스냅샷(mask 0x04 = 현재 횟수, 0x08 = 다음 1회까지).
+    /// <paramref name="actorId"/> 0 = 본인 전용 패킷이라 필터가 필요 없다는 뜻이고, 시전 프레임이면 시전자다
+    /// (파티원 것도 오므로 본인 필터는 데이터 계층이 건다).</para>
+    /// 기본 no-op(캡처 전용 모드).</summary>
+    void SaveSkillCharges(int skillCode, int charges, long rechargeRemainingMs, long arrivedAt, int actorId) { }
+
     /// <summary>스킬 시전 1회(0x3802). <paramref name="actorId"/>는 시전자 엔티티 id(파티원 포함),
     /// <paramref name="arrivedAt"/>는 캡처 시각(ms).
     /// <para>⚠️ 쿨타임과 달리 <b>self 필터를 걸지 않는다</b> — 전투 상세창은 클릭한 아무 행이나 그리므로,
@@ -331,5 +341,11 @@ public sealed class NullCaptureGameData : ICaptureGameData
 /// <param name="Code">스킬 코드(특화 변형 포함 원본).</param>
 /// <param name="Level">현재 레벨. <c>Original + 증가분 5축</c> 과 항상 일치한다(실측 4538/4538).</param>
 /// <param name="CooltimeMs">이 스냅샷이 도착한 순간의 <b>잔여</b> 쿨타임(0 = 준비됨). 총 쿨이 아니다.</param>
+/// <param name="Charges">충전형 스킬의 현재 충전 횟수(스키마 <c>_autoload_count</c>, mask 0x04 의 u8). 0x04·0x08
+/// 둘 다 없으면 충전형 레코드가 아니라 -1, 0x08 만 있으면 0회(0은 생략된다). 실측: 검성 집중 막기 특화
+/// 변종(11110020)이 2 — 같은 세션의 0x3822 "가득 참 2회"와 일치. 같은 스냅샷의 base 레코드(11110000)는 충전
+/// 필드가 없어 -1 이다 — 그래서 한 레코드의 -1 을 '그 스킬은 충전형 아님'의 근거로 쓰면 안 된다(그룹 단위로 본다).</param>
+/// <param name="AutoLoadTimeMs">다음 1회가 차기까지 ms(스키마 <c>_autoload_time</c>, mask 0x08). 없으면 0 = 돌고 있는
+/// 충전이 없다. 충전형 레코드의 <see cref="CooltimeMs"/> 는 재충전 시간이 아니다(충전형은 총 쿨이 0이다).</param>
 /// </summary>
-public readonly record struct LearnedSkill(int Code, int Level, long CooltimeMs);
+public readonly record struct LearnedSkill(int Code, int Level, long CooltimeMs, int Charges = -1, long AutoLoadTimeMs = 0);

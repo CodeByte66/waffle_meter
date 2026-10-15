@@ -112,6 +112,9 @@ public sealed class StreamProcessor
     // periodic 0x3847 snapshot catches up. remaining = the frame's LAST varint (ground-truth verified: 바이젤/
     // 지원사격 39100ms, 축복의활 78200ms). Filtered to self.
     private const int CooldownStartKey = 0x02 | (0x38 << 8);   // 0x3802
+    // 충전형 스킬 상태 통지(본인 전용, actor 없음) — 충전형에게는 0x3847 의 자리다. 시전 ~350ms 뒤의 정정과
+    // 1회가 다시 찰 때마다 온다. 레이아웃은 ParseSkillChargePacket 참조.
+    private const int SkillChargeKey = 0x22 | (0x38 << 8);     // 0x3822
     // 캐릭터 스탯 사전. 0x364A = 변경분(엔티티 id 포함), 0x3649 = 전체 스냅샷(엔티티 id 없음 — 본인 것이고
     // 수신 측이 현재 본인 uid에 묶는다). 2026-06-10 패치의 0x36 시프트(첫 바이트 ≥0x40이면 +1) 이전 번호는
     // 각각 0x3649 / 0x3648 이었다. 레이아웃은 아래 ParseStatSheet 참조.
@@ -293,6 +296,7 @@ public sealed class StreamProcessor
         [CooldownKey] = "Cooldown",
         [MySkillListKey] = "MySkillList",
         [CooldownStartKey] = "CooldownStart",
+        [SkillChargeKey] = "SkillCharge",
         [BattleToggleKey] = "BattleToggle",
         [StatSheetDeltaKey] = "StatSheet",
         [StatSheetFullKey] = "StatSheetFull",
@@ -524,6 +528,9 @@ public sealed class StreamProcessor
                     break;
                 case CooldownStartKey:
                     ParseCooldownStartPacket(packet, lengthInfo, extraFlag, arrivedAt);
+                    break;
+                case SkillChargeKey:
+                    ParseSkillChargePacket(packet, lengthInfo, extraFlag, arrivedAt);
                     break;
                 case JoinRequestKey:
                     ParseJoinRequest(packet, lengthInfo, extraFlag, arrivedAt);
@@ -2664,6 +2671,10 @@ public sealed class StreamProcessor
     ///   + [3바이트 고정, 실측 4538/4538 전부 0]
     ///   + (mask &amp; 0x02 ? varint) + (mask &amp; 0x04 ? u8) + (mask &amp; 0x08 ? varint)
     /// </code>
+    /// <para>뒤의 세 선택 필드는 패킷 스키마(usmap <c>DevPacketData_Common_Skill</c>)의 <c>_auto_using_cooltime</c>
+    /// · <c>_autoload_count</c>(Byte) · <c>_autoload_time</c>(Int) 다 — 0x3802 시전 꼬리의 충전 필드, 0x3822
+    /// (<c>SkillAutoLoadUpdate_NT</c>)와 같은 이름이고 같은 뜻(남은 충전 횟수 · 다음 1회까지 ms)이다. 그래서
+    /// 0x04·0x08 중 하나라도 있으면 충전형 레코드이고, 0x04 가 없으면 0회다(0x3802·0x3822 처럼 0은 생략된다).</para>
     /// <para>🔴 <c>cooltime</c> 을 고정 u32 로 읽으면 <b>86% 의 스냅샷에서는 멀쩡히 통과한다</b> — 잔여 쿨이
     /// 실린 레코드가 57스냅샷 중 8개뿐이라서다. 그 8개에서만 어긋나고, 값도 그럴듯해서 눈에 안 띈다
     /// (흡혈의 검 실측: 고정 u32 는 183,250 을 내는데 그 스킬의 카탈로그 쿨은 90,000, 정답은 42,450).</para>
@@ -2736,6 +2747,8 @@ public sealed class StreamProcessor
                     o += v.Length;
                 }
 
+                // _autoload_count / _autoload_time — 충전형 레코드에만 있다. 0회면 횟수 필드가 생략된다.
+                int charges = (mask & 0x0C) != 0 ? 0 : -1;
                 if ((mask & 0x04) != 0)
                 {
                     if (o >= packet.Length)
@@ -2743,9 +2756,11 @@ public sealed class StreamProcessor
                         return;
                     }
 
+                    charges = packet[o];
                     o++;
                 }
 
+                long autoLoadTime = 0;
                 if ((mask & 0x08) != 0)
                 {
                     VarIntOutput v = PacketPrimitives.ReadVarInt(packet, o);
@@ -2754,6 +2769,7 @@ public sealed class StreamProcessor
                         return;
                     }
 
+                    autoLoadTime = v.Value;
                     o += v.Length;
                 }
 
@@ -2770,7 +2786,7 @@ public sealed class StreamProcessor
                     _sink.ParserError("my_skill_list", "bit1_cooltime_mismatch");
                 }
 
-                learned.Add(new LearnedSkill(code, level, cooltime));
+                learned.Add(new LearnedSkill(code, level, cooltime, charges, autoLoadTime));
             }
 
             // ★ 진짜 안전망. 앞의 가드를 다 통과해도 여기서 안 맞으면 레이아웃이 바뀐 것이다.
@@ -2840,13 +2856,18 @@ public sealed class StreamProcessor
     /// frames, the full cooldown on a cast — ground-truth: 바이젤/지원사격 39100ms, 축복의활 78200ms). Only cast
     /// frames (remaining &gt; 0) are stored, filtered to self; 0x3847 handles the accurate decay/clear after.
     /// <para>The byte after the actor varint — long documented here as a literal <c>[00]</c> — is a FLAG. When
-    /// bit 0x04 or 0x08 is set the frame carries an extra trailing varint (a buff/charge remainder), so the
-    /// "last varint" walk below reads THAT and stores a duration as if it were a cooldown. Every such frame in
-    /// the corpus belongs to a charge-type skill whose real cooldown is 0, i.e. the skill is ready — the exact
-    /// opposite of what gets stored. Measured over five packet corpora: 165/165 mis-stores are removed by the
-    /// guard and nothing real is lost (all 165 carry cooldown 0, which the <c>remaining &lt;= 0</c> guard below
-    /// would have dropped anyway). Symptom it fixes: 쾌유의 주문(호법성)·표적 화살(궁성)·지면 강타(권성) sat
-    /// grayed for the full 8.0 s their buff was on screen.</para></summary>
+    /// bit 0x04 or 0x08 is set the frame carries extra trailing varints, so the "last varint" walk below would
+    /// read one of THOSE as the cooldown. Every such frame belongs to a charge-type skill whose cooldown field is
+    /// 0, so those frames never go down the cooldown path (165/165 mis-stores over five corpora were removed by
+    /// that guard — 쾌유의 주문·표적 화살·지면 강타 used to sit grayed while a charge was still left).</para>
+    /// <para>What the two extras actually are (2026-10-16, 검성 집중 막기 2회→0회 캡처 + 궁성 표적 화살 세션,
+    /// cross-checked against every 0x3822 that followed): <b>0x04 = charges left after this cast</b> (absent =
+    /// 0) and <b>0x08 = ms until the next charge comes back</b>. The second number is one running timer, not a
+    /// buff: a second cast 10.05 s after the first carried 4,100 against the first one's 14,250. Those frames go
+    /// to <see cref="ICaptureGameData.SaveSkillCharges"/> instead. Full layout, exact-consume on 10,761/10,761
+    /// frames across four corpora: <c>[actor v][flag u8][u32 skill][ctr u8][posFlag u8][target v][f32 facing]
+    /// [(posFlag&amp;2) f32×3][varint A][varint B][varint C=total cooldown][(flag&amp;4) varint charges]
+    /// [(flag&amp;8) varint recharge][(flag&amp;0x20) n×(uid v, f32×3)]</c>.</para></summary>
     private void ParseCooldownStartPacket(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, long arrivedAt)
     {
         try
@@ -2888,8 +2909,9 @@ public sealed class StreamProcessor
             if ((packet[flagOff] & 0x0C) == 0)
             {
                 // remaining = the LAST varint of the frame. Walk back from the terminal byte over continuation bytes.
-                // (flag 0x04/0x08 이 켜진 프레임은 꼬리에 varint 가 하나 더 붙어 이 워크가 지속시간을 쿨로
-                //  오독한다 — 그래서 그 프레임은 애초에 잔여시간을 읽지 않는다. 실측 오저장 165건 가드.)
+                // (flag 0x04/0x08 이 켜진 프레임은 꼬리에 충전 필드(남은 횟수·다음 1회까지 ms)가 붙어 이 워크가 그
+                //  값을 쿨로 오독한다 — 그래서 그 프레임은 여기서 잔여시간을 읽지 않고 아래 충전 경로로 보낸다. 실측
+                //  오저장 165건 가드.)
                 int start = packet.Length - 1;
                 int floor = Math.Max(skillOff + 4, packet.Length - 5);
                 while (start > floor && (packet[start - 1] & 0x80) != 0)
@@ -2909,6 +2931,19 @@ public sealed class StreamProcessor
             _data.SaveSkillCast(actor.Value, skillCode, arrivedAt, startsCooldown);
             _sink.Meta("skill_cast", ("actor", actor.Value), ("skill", skillCode), ("cd", startsCooldown ? 1 : 0));
 
+            // 충전형 시전 — 쿨타임이 아니라 충전 상태를 싣는다. 꼬리를 앞에서부터 정확히 걸어야 한다: 뒤에서
+            // 거꾸로 세면 flag 0x20(다중 대상 좌표)이 붙은 프레임에서 좌표 바이트를 숫자로 읽는다.
+            if ((packet[flagOff] & 0x0C) != 0)
+            {
+                if (TryReadChargeTail(packet, skillOff + 4, packet[flagOff], out int charges, out long rechargeMs))
+                {
+                    _data.SaveSkillCharges(skillCode, charges, rechargeMs, arrivedAt, actor.Value);
+                    _sink.Meta("skill_charge", ("actor", actor.Value), ("skill", skillCode), ("charges", charges), ("recharge", rechargeMs));
+                }
+
+                return;
+            }
+
             if (!startsCooldown)
             {
                 return; // ready/non-cast (0) or implausible — only cooldown STARTS gray instantly
@@ -2919,6 +2954,181 @@ public sealed class StreamProcessor
         catch
         {
             // swallowed — a short/garbage buffer must never crash the consumer
+        }
+    }
+
+    /// <summary>0x3802 꼬리를 스킬 코드 바로 뒤(<paramref name="o"/>)부터 끝까지 걸어 충전 필드를 꺼낸다.
+    /// 레이아웃은 <see cref="ParseCooldownStartPacket"/> 주석. 프레임을 정확히 소진하지 못하면 false — 아는 형태가
+    /// 아니니 아무것도 저장하지 않는다(부분 채택 금지, 다른 0x38 파서와 같은 정책).</summary>
+    private static bool TryReadChargeTail(byte[] packet, int o, byte flag, out int charges, out long rechargeMs)
+    {
+        charges = 0;
+        rechargeMs = 0;
+
+        if (o + 2 > packet.Length)
+        {
+            return false;
+        }
+
+        byte posFlag = packet[o + 1];
+        o += 2; // ctr, posFlag
+
+        VarIntOutput target = PacketPrimitives.ReadVarInt(packet, o);
+        if (target.Length <= 0)
+        {
+            return false;
+        }
+
+        o += target.Length + 4; // target, f32 facing
+        if ((posFlag & 0x02) != 0)
+        {
+            o += 12; // f32 XYZ
+        }
+
+        for (int i = 0; i < 3; i++) // A, B, C(총 쿨 — 충전형은 0)
+        {
+            if (!Skip(packet, ref o))
+            {
+                return false;
+            }
+        }
+
+        if ((flag & 0x04) != 0)
+        {
+            VarIntOutput c = PacketPrimitives.ReadVarInt(packet, o);
+            if (c.Length <= 0)
+            {
+                return false;
+            }
+
+            charges = c.Value;
+            o += c.Length;
+        }
+
+        if ((flag & 0x08) != 0)
+        {
+            VarIntOutput r = PacketPrimitives.ReadVarInt(packet, o);
+            if (r.Length <= 0)
+            {
+                return false;
+            }
+
+            rechargeMs = r.Value;
+            o += r.Length;
+        }
+
+        if ((flag & 0x20) != 0)
+        {
+            VarIntOutput n = PacketPrimitives.ReadVarInt(packet, o);
+            if (n.Length <= 0 || n.Value is < 0 or > 64)
+            {
+                return false;
+            }
+
+            o += n.Length;
+            for (int i = 0; i < n.Value; i++)
+            {
+                if (!Skip(packet, ref o))
+                {
+                    return false;
+                }
+
+                o += 12;
+            }
+        }
+
+        return o == packet.Length && charges is >= 0 and <= 9 && rechargeMs is >= 0 and <= 3_600_000;
+
+        static bool Skip(byte[] p, ref int at)
+        {
+            VarIntOutput v = PacketPrimitives.ReadVarInt(p, at);
+            if (v.Length <= 0)
+            {
+                return false;
+            }
+
+            at += v.Length;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 0x3822 — 충전형 스킬 상태 통지. 본인 전용(actor 필드가 없다 = 0x3847 과 같은 성격).
+    /// <code>
+    /// [mask u8][u32 LE skillCode]
+    ///   + (mask &amp; 0x01 ? varint 남은 충전 횟수)   ← 없으면 0회
+    ///   + (mask &amp; 0x02 ? varint 다음 충전까지 ms)  ← 없으면 돌고 있는 충전이 없다 = 가득 참
+    /// </code>
+    /// <para>실측 세 모양이 전부다(2026-10-16 검성 집중 막기 + 2026-08-08 궁성 표적 화살 14프레임 + 2026-10-07 검성):
+    /// mask 3 = "1회 남음, 다음 충전 X ms"(시전 ~350ms 뒤 정정 / 1회가 막 찼을 때), mask 2 = "0회, X ms",
+    /// mask 1 = "가득 참 N회"(마지막 1회가 찼을 때). 패킷 스키마 이름은 <c>SkillAutoLoadUpdate_NT</c>
+    /// (<c>_skill_id</c> · <c>_autoload_count</c> · <c>_autoload_time</c>). 1회가 찬 직후의 잔여는 그 순간의 1회 재충전
+    /// 시간 전체다(14,250 / 7,900 — 쿨감 효과 중엔 짧아진다: 2026-07-27 호법성 같은 스킬 8,800 → 6,400).</para>
+    /// <para>모르는 비트가 켜졌거나 프레임을 정확히 소진하지 못하면 버린다 — 클라 아웃바운드 스트림에서 같은
+    /// 바이트 모양이 우연히 잡힌 예(mask 0x95)가 실제로 있다.</para>
+    /// </summary>
+    private void ParseSkillChargePacket(byte[] packet, VarIntOutput lengthInfo, bool extraFlag, long arrivedAt)
+    {
+        try
+        {
+            int o = lengthInfo.Length + (extraFlag ? 1 : 0);
+            if (o + 7 > packet.Length || packet[o] != 0x22 || packet[o + 1] != 0x38)
+            {
+                return;
+            }
+
+            o += 2;
+            byte mask = packet[o];
+            if ((mask & ~0x03) != 0 || mask == 0)
+            {
+                return;
+            }
+
+            int skillCode = PacketPrimitives.ParseUInt32Le(packet, o + 1);
+            if (skillCode is < 11_000_000 or > 19_999_999)
+            {
+                return; // 직업 스킬만 — 쿨타임 오버레이가 그리는 밴드
+            }
+
+            o += 5;
+
+            int charges = 0;
+            if ((mask & 0x01) != 0)
+            {
+                VarIntOutput c = PacketPrimitives.ReadVarInt(packet, o);
+                if (c.Length <= 0 || c.Value is < 0 or > 9)
+                {
+                    return;
+                }
+
+                charges = c.Value;
+                o += c.Length;
+            }
+
+            long rechargeMs = 0;
+            if ((mask & 0x02) != 0)
+            {
+                VarIntOutput r = PacketPrimitives.ReadVarInt(packet, o);
+                if (r.Length <= 0 || r.Value is < 0 or > 3_600_000)
+                {
+                    return;
+                }
+
+                rechargeMs = r.Value;
+                o += r.Length;
+            }
+
+            if (o != packet.Length)
+            {
+                return;
+            }
+
+            _data.SaveSkillCharges(skillCode, charges, rechargeMs, arrivedAt, 0);
+            _sink.Meta("skill_charge", ("actor", 0), ("skill", skillCode), ("charges", charges), ("recharge", rechargeMs));
+        }
+        catch
+        {
+            // 다른 0x38 파서와 같은 정책 — 예외를 위로 던지지 않는다.
         }
     }
 

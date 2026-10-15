@@ -214,6 +214,62 @@ public sealed class MySkillListParsingTests
     }
 
     [Fact]
+    public void The_charge_byte_is_read_as_the_current_charge_count()
+    {
+        // 실측 바이트 그대로(20261007-000116, 검성). 같은 스킬의 base 레코드와 특화 레코드가 함께 온다:
+        //   01 | 70 86 a9 00 | 0d 0d | 00×5 | 00 | 00 00 00            ← 집중 막기 base(11110000), 충전 필드 없음
+        //   05 | 84 86 a9 00 | 0d 0d | 00×5 | 00 | 00 00 00 | 02       ← 특화 변종(11110020), mask 0x04 → 2회
+        // 같은 세션에서 곧이어 온 0x3822 가 "11110020 가득 참 2회"였다.
+        byte[] body =
+        [
+            0x00, 0x51,
+            0x02,
+            0x01, 0x70, 0x86, 0xA9, 0x00, 0x0D, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x05, 0x84, 0x86, 0xA9, 0x00, 0x0D, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+        ];
+
+        var frame = new List<byte>();
+        WriteVarInt(frame, body.Length + 3);
+        frame.AddRange(body);
+
+        IReadOnlyList<LearnedSkill> snap = Assert.Single(Feed(frame.ToArray()).Snapshots);
+        Assert.Equal(2, snap.Count);
+        Assert.Equal(new LearnedSkill(11_110_000, 13, 0, -1), snap[0]); // 필드 없음 = 모름(-1), 0회가 아니다
+        Assert.Equal(new LearnedSkill(11_110_020, 13, 0, 2), snap[1]);
+    }
+
+    [Theory]
+    // 스키마(DevPacketData_Common_Skill) 모양: _cooltime(0x01) · _autoload_count(0x04, u8) · _autoload_time(0x08).
+    [InlineData(0x0D, 1, 9_000)]  // 1회 남음, 다음 1회까지 9초
+    [InlineData(0x09, 0, 9_000)]  // 0회 — 횟수 필드가 생략된다(0x3802·0x3822 와 같은 관례)
+    [InlineData(0x05, 2, 0)]      // 가득 참(실측 모양) — 시간 필드 없음
+    public void The_autoload_fields_carry_charges_and_the_time_to_the_next_charge(byte mask, int charges, long autoLoadTime)
+    {
+        var body = new List<byte> { 0x00, 0x51, 0x01, mask, 0x84, 0x86, 0xA9, 0x00, 0x0D, 0x0D, 0, 0, 0, 0, 0 };
+        body.Add(0x00);                        // _cooltime = 0 (충전형은 총 쿨이 0이다)
+        body.AddRange(new byte[3]);            // 고정 3바이트
+        if ((mask & 0x04) != 0)
+        {
+            body.Add((byte)charges);
+        }
+
+        if ((mask & 0x08) != 0)
+        {
+            WriteVarInt(body, autoLoadTime);
+        }
+
+        var frame = new List<byte>();
+        WriteVarInt(frame, body.Count + 3);
+        frame.AddRange(body);
+
+        LearnedSkill s = Assert.Single(Assert.Single(Feed(frame.ToArray()).Snapshots));
+        Assert.Equal(11_110_020, s.Code);
+        Assert.Equal(charges, s.Charges);
+        Assert.Equal(autoLoadTime, s.AutoLoadTimeMs);
+        Assert.Equal(0, s.CooltimeMs);
+    }
+
+    [Fact]
     public void The_opcode_is_registered_so_the_parser_is_actually_reachable()
     {
         // OpcodeNames 등록이 사실상의 활성화 스위치다 — 상수와 switch 만 넣으면 파서가 한 번도 안 불린다.

@@ -10,8 +10,9 @@ namespace WaffleMeter.Data;
 /// class remarks — only to decide "does this skill have a cooldown at all" and as a sanity ceiling.</param>
 /// <param name="GroupId">Shared-cooldown group. Two skills with the same value share one cooldown.</param>
 /// <param name="AutoLoadCount">Charge stacks (2–3) when a specialization turns the skill into a charge type,
-/// 0 otherwise. Never drawn — the wire carries no stack count — but it marks the rows whose single-expiry
-/// model is an approximation.</param>
+/// 0 otherwise. Only a prior for the maximum: whether the character actually runs the skill as a charge type,
+/// and how many charges it has right now, comes off the wire (0x3802 tail, 0x3822, 0x5100) — and a "full at N"
+/// from the server overrides this value.</param>
 /// <param name="Order">Stable position inside the job (base code ascending).</param>
 /// <param name="IsStigma">스티그마 스킬인가 — 픽커가 직업 안에서 일반/스티그마 두 묶음으로 나눠 보여 준다.</param>
 public readonly record struct CooldownSkillInfo(
