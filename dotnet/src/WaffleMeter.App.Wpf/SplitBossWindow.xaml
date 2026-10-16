@@ -40,7 +40,9 @@
         <Grid>
             <!-- TrailingInset 이 카드 **안쪽**에 컨트롤 자리를 비운다. 배경은 창 끝까지 그대로 가므로
                  무대처럼 카드가 창을 가득 채우는 레이아웃에서도 이음매가 생기지 않는다. -->
-            <controls:BossBarView TrailingInset="0,0,52,0"/>
+            <!-- IdleCardMinHeight 58: 이 창은 자동 높이라 대기 카드의 하한이 곧 카드 높이다 — 직업 문장(44)에 위아래 여백을
+                 준다. 본체는 기본값(46)을 쓴다(BossBarView.IdleCardMinHeight 참고). -->
+            <controls:BossBarView TrailingInset="0,0,52,0" IdleCardMinHeight="58"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
                         Margin="0,3,6,0" Panel.ZIndex="5">
                 <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="#FFD400"

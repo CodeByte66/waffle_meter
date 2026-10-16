@@ -76,7 +76,8 @@
 
     <!--
         브랜드 마크 — 앱 아이콘(와플)의 단색 선화. 물결 테두리 + 위아래로 엮인 대각 격자를 한 굵기·둥근 끝으로 그린다.
-        인식 전 미터 본문(MeterRowsView 의 RecognitionWaitBlock)이 쓴다.
+        인식 전 미터 본문(MeterRowsView 의 RecognitionWaitBlock)과, 직업을 아직 모를 때의 대기 카드(BossBarView 의
+        직업 문장 자리, 같은 44 Viewbox)가 쓴다.
         🔑 100×100 캔버스 좌표다. 쓰는 쪽이 Viewbox(44×44) > Canvas 100×100 > Path 로 크기를 정한다 —
            Path.Stretch 로 키우면 굵기는 안 따라오고 기준 틀이 도형 외곽으로 바뀐다.
         🔑 굵기 5.5 는 44 DIP 에서 2.42px — 1x 에서 끊김(엇갈림 틈)이 뭉개지지 않는 하한이다. 끊긴 끝점은 교차점에서
