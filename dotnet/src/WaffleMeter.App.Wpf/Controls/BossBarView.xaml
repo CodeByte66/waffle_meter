@@ -63,12 +63,16 @@
                         <Setter Property="CornerRadius" Value="0"/>
                         <Setter Property="Padding" Value="11,0"/>
                     </DataTrigger>
-                    <!-- 대기 카드는 전투 구성보다 낮다. 전장의 84px 를 그대로 쓰면 카드가 허공에 뜬다. -->
-                    <!-- 대기 카드는 고정 높이를 풀고 남은 공간을 채운다(행 영역이 비어 있다).
-                         MinHeight 로 하한만 잡아 창을 아주 낮게 줄여도 카드가 뭉개지지 않게 한다. -->
+                    <!-- 대기 카드는 고정 높이(BossHeight)를 풀고 남은 공간을 채운다(행 영역이 비어 있다) — 전장의 전투
+                         높이(84)를 그대로 쓰면 카드가 허공에 뜬다. 하한만 둬서 창을 아주 낮게 줄여도 카드가 뭉개지지 않게 한다.
+                         하한은 이 칸을 얹는 창이 정한다(IdleCardMinHeight): 본체 46, 분리 보스 창 58(= 직업 문장 칸 44 + 위아래
+                         6 + 테두리 2 — 자동 높이라 이게 곧 카드 높이다. 46 이면 문장이 카드 위아래 테두리에 닿는다).
+                         🔑 58 을 모든 창에 걸지 마라. 본체는 보스 행이 * 라 평소 58 이상을 받는데, 배율 125~130% 에서 높이를
+                            최소(150)로 고정하면 칸이 58 보다 좁아져 카드 아래 테두리와 문장 끝이 잘렸다. -->
                     <DataTrigger Binding="{Binding IdleCardVisibility}" Value="Visible">
                         <Setter Property="Height" Value="Auto"/>
-                        <Setter Property="MinHeight" Value="46"/>
+                        <Setter Property="MinHeight"
+                                Value="{Binding IdleCardMinHeight, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"/>
                         <Setter Property="VerticalAlignment" Value="Stretch"/>
                     </DataTrigger>
                 </Style.Triggers>
@@ -325,17 +329,47 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Border Grid.Column="0" Width="3" CornerRadius="2" Margin="0,5,8,5" Background="{Binding SelfJobBrush}"/>
-                <Border Grid.Column="1" Width="24" Height="24" CornerRadius="12" Margin="0,0,8,0" VerticalAlignment="Center"
-                        Background="{DynamicResource Skin.StatBg}" BorderThickness="1.5" BorderBrush="{Binding SelfJobBrush}">
-                    <Image Source="{Binding SelfJobIcon}" Stretch="Uniform" Margin="2"/>
-                </Border>
-                <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding SelfNicknameText}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
+                <!-- 직업 문장. 테두리 원·배경판 없이 원본 그대로 둔다 — 24px 원 안에 줄여 넣었던 판은 문장이 뭉개져
+                     무슨 직업인지 잘 안 읽혔다. 칸은 인식 전 화면의 와플 마크와 같은 44 이고, 그림은 원본 픽셀 크기(40×42)다.
+                     🔑 그림을 44 로 키우지 마라 — 약 1.05 배(44/42) 재표본이라 1x 에서 선이 흐려진다. 칸만 마크와 맞추고
+                        그림은 원본 크기로 둔다.
+                     🔑 직업을 아직 모르면(SelfJobIcon = null) 인식 전 화면의 와플 마크를 그 자리에 그대로 둔다. 빈 칸이나
+                        빈 테두리가 남으면 깨진 아바타로 읽힌다. 크기·굵기는 브랜드 블록과 같은 44 / WaffleMarkPath 다
+                        (굵기와 크기는 한 쌍 — MeterChrome 참고). -->
+                <Grid Grid.Column="1" Width="44" Height="44" Margin="0,0,10,0" VerticalAlignment="Center">
+                    <Image Source="{Binding SelfJobIcon}" Width="40" Height="42" Stretch="Uniform"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <Viewbox>
+                        <Viewbox.Style>
+                            <Style TargetType="Viewbox">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelfJobIcon}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Viewbox.Style>
+                        <Canvas Width="100" Height="100">
+                            <Path Style="{StaticResource WaffleMarkPath}"/>
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+                <!-- 오른쪽 8: 폭이 모자라 글자가 말줄임될 때 전투력 숫자에 바로 붙지 않게 한다. -->
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <!-- 닉네임 [티어 칩]. 가로 StackPanel 이면 폭 제약이 안 내려가 TextTrimming 이 한 번도 안 돌고 글자 중간에서
+                         잘렸다(아이콘 칸이 44 로 넓어진 뒤 좁은 분리 보스 창에서 드러났다). (* | Auto) 열 + Left 정렬이라 칩은
+                         닉네임 바로 뒤에 붙고, 모자라면 닉네임이 말줄임된다. -->
+                    <Grid HorizontalAlignment="Left">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding SelfNicknameText}" Foreground="{DynamicResource Skin.Fg}" FontWeight="SemiBold"
                                    FontSize="14" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                         <!-- 직전 전투에서 산출된 티어. 티어는 DPS 로 매겨지므로 전투를 한 번도 안 했으면
                              보여줄 근거가 없다 — 그때는 조용히 접힌다(없는 값을 지어내지 않는다). -->
-                        <Border CornerRadius="4" Padding="5,0" Margin="7,0,0,0" VerticalAlignment="Center"
+                        <Border Grid.Column="1" CornerRadius="4" Padding="5,0" Margin="7,0,0,0" VerticalAlignment="Center"
                                 BorderThickness="1" SnapsToDevicePixels="True"
                                 Background="{Binding SelfTierChipBg}" BorderBrush="{Binding SelfTierChipRing}"
                                 ToolTip="{Binding SelfTierChipToolTip}"
@@ -343,8 +377,9 @@
                             <TextBlock Text="{Binding SelfTierChipText}" Foreground="{Binding SelfTierChipFg}"
                                        FontSize="10" FontWeight="SemiBold"/>
                         </Border>
-                    </StackPanel>
-                    <TextBlock Text="{Binding SelfMetaText}" Foreground="{DynamicResource Skin.MutedFg}" FontSize="10" Margin="0,1,0,0"/>
+                    </Grid>
+                    <TextBlock Text="{Binding SelfMetaText}" Foreground="{DynamicResource Skin.MutedFg}" FontSize="10" Margin="0,1,0,0"
+                               TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
                 <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right"
                             Visibility="{Binding SelfPowerVisibility}">

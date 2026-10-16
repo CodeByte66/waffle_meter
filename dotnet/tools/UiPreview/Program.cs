@@ -47,17 +47,23 @@ internal static class Program
         var props = new PropertyHandler();
         var settings = new MeterSettings(props);
         var theme = new MeterColorTheme(props);
+
+        // Preload skin palettes once (re-sourcing a ResourceDictionary mid-run is flaky).
+        var skins = new[] { "Dark", "Midnight", "Slate", "Light" }.ToDictionary(
+            s => s,
+            s => new ResourceDictionary { Source = new Uri($"pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/Skin.{s}.xaml") });
+
+        // ⚠️ `now` 보다 앞에 둔다. 파티 신청 샘플은 `now` 기준 20초 뒤 만료라, 그 사이에 캡처를 끼우면 Light 차례의
+        // join_tier 캡처가 죽는다(이 캡처들이 없어도 3번 중 2번 재현되는 기존 결함이다).
+        CaptureRecognitionWait(skins, settings, theme, outDir);
+        CaptureIdleCard(skins, settings, theme, outDir);
+
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         // 난이도 칩·서브라인은 인카운터 카탈로그가 있어야 그려진다. 안 넘기면 EncounterCatalog.Empty 가
         // 되어 모든 코드가 미등록으로 나오고, 시안 대조에서 "칩이 안 뜬다"로 오인하게 된다.
         var encounterCatalog = WaffleMeter.Data.EncounterCatalog.Load(
             Path.Combine(AppContext.BaseDirectory, "json", "encounters.json"));
-
-        // Preload skin palettes once (re-sourcing a ResourceDictionary mid-run is flaky).
-        var skins = new[] { "Dark", "Midnight", "Slate", "Light" }.ToDictionary(
-            s => s,
-            s => new ResourceDictionary { Source = new Uri($"pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/Skin.{s}.xaml") });
 
         // 게이지 장식 비교 시트 — 5종을 같은 막대·같은 길이·세 위상으로. 실제 GaugeFxLayer 로 그린다.
         CaptureGaugeSheet(outDir, light: false, skins["Dark"]);
@@ -447,12 +453,94 @@ internal static class Program
         CaptureReplay(LoadRealOrSynthetic(now), Path.Combine(outDir, "replay.png"), "replay.png");
         CaptureReplay(SampleMapReplay(now), Path.Combine(outDir, "replay-map.png"), "replay-map.png");
         CaptureMechanics(outDir);
-        // ⚠️ 맨 끝에 둔다 — 스킨 루프 안에 넣으면 실행이 길어져, 시작 시각에 고정된 파티 신청 샘플이 Light 차례 전에
-        // 만료되어 join_tier 캡처가 죽는다.
-        CaptureRecognitionWait(skins, settings, theme, outDir);
 
         Console.WriteLine(outDir);
         app.Shutdown();
+    }
+
+    /// <summary>
+    /// 인식된 대기 카드. 실제 창은 MinHeight 150 이라 카드가 보스칸(*)을 채워 늘어난다 — 콘텐츠 높이로만 찍으면
+    /// 사용자가 보는 모습(위아래가 빈 큰 카드)이 안 나온다. 그래서 150 고정으로 찍는다.
+    /// 레이아웃 3 × 스킨 4, 분리 보스 창·최소 폭 + 긴 닉네임은 Dark.
+    /// </summary>
+    private static void CaptureIdleCard(
+        Dictionary<string, ResourceDictionary> skins, MeterSettings settings, MeterColorTheme theme, string outDir)
+    {
+        string savedLayout = settings.MeterLayoutId;
+        int savedRow = settings.RowHeight;
+        foreach ((string skin, ResourceDictionary palette) in skins)
+        {
+            foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+            {
+                settings.MeterLayoutId = lay.Id;
+                settings.RowHeight = lay.DefaultRowHeight;
+                var vm = new OverlayViewModel("1.7.8", settings, theme, () => skin == "Light") { Status = "캡처 중" };
+                vm.SetRecognized(true, "콘팡", selfId: 7, server: 1001,
+                    job: WaffleMeter.Data.JobClass.RANGER, power: 1_100_400);
+                vm.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                Capture(() => new OverlayWindow { DataContext = vm }, palette,
+                    Path.Combine(outDir, $"idlecard_{lay.Id}_{skin}.png"), exactHeight: 150);
+                if (skin is "Dark" or "Light")
+                {
+                    // 높이를 크게 고정한 창 — 카드가 더 늘어나도 내용은 가운데에 크기 그대로 남아야 한다.
+                    Capture(() => new OverlayWindow { DataContext = vm }, palette,
+                        Path.Combine(outDir, $"idlecard_h300_{lay.Id}_{skin}.png"), exactHeight: 300);
+                }
+
+                if (skin != "Dark")
+                {
+                    continue;
+                }
+
+                Capture(() => new SplitBossWindow { DataContext = vm }, palette,
+                    Path.Combine(outDir, $"idlecard_split_{lay.Id}_Dark.png"));
+                // 본체 배율 130% + 높이를 최소(150)로 고정: 보스 행이 가장 좁아지는 경우 — 대기 카드(본체 하한 46)가
+                // 칸 안에 온전해야 한다. 분리 창의 하한 58 을 본체에도 걸면 여기서 아래가 잘렸다.
+                vm.LiveScalePercent = 130;
+                Capture(() => new OverlayWindow { DataContext = vm }, palette,
+                    Path.Combine(outDir, $"idlecard_scale130_h150_{lay.Id}_Dark.png"), exactHeight: 150);
+                vm.LiveScalePercent = null;
+
+                // 전투 전 로스터 행이 카드 아래에 있고 직전 티어가 있어 닉네임 옆 칩이 보이는 드문 경우.
+                bool tShow = settings.TierShow, tChip = settings.TierShowSelfChip, tRoster = settings.ShowPreCombatRoster;
+                string tFx = settings.TierEffects;
+                settings.TierShow = true; settings.TierShowSelfChip = true; settings.TierEffects = "static";
+                settings.ShowPreCombatRoster = true;
+                var tierVm = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+                tierVm.TierResolver = _ => new Dictionary<int, RowTier> { [7] = new RowTier(5, 12.3, "무스펠의 성배 · 어려움") };
+                tierVm.SetRoster([
+                    new User(7, "콘팡", 1001, WaffleMeter.Data.JobClass.RANGER, isExecutor: true, power: 1_100_400),
+                    new User(8, "쌈", 1001, WaffleMeter.Data.JobClass.GLADIATOR, power: 663_400),
+                ]);
+                tierVm.SetRecognized(true, "콘팡", selfId: 7, server: 1001,
+                    job: WaffleMeter.Data.JobClass.RANGER, power: 1_100_400);
+                tierVm.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                Capture(() => new OverlayWindow { DataContext = tierVm }, palette,
+                    Path.Combine(outDir, $"idlecard_roster_tier_{lay.Id}_Dark.png"));
+                settings.TierShow = tShow; settings.TierShowSelfChip = tChip; settings.TierEffects = tFx;
+                settings.ShowPreCombatRoster = tRoster;
+                var longName = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+                longName.SetRecognized(true, "가나다라마바사아자차", selfId: 7, server: 1001,
+                    job: WaffleMeter.Data.JobClass.SORCERER, power: 2_345_600);
+                longName.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                Capture(() => new OverlayWindow { DataContext = longName, Width = 320 }, palette,
+                    Path.Combine(outDir, $"idlecard_w320_long_{lay.Id}_Dark.png"), exactHeight: 150);
+                // 가장 좁은 자리 — 분리 보스 창 최소 폭 280 에서 우상단 버튼 자리(52)까지 빼면 닉네임이 말줄임으로 줄고
+                // 전투력은 통째로 남아야 한다.
+                Capture(() => new SplitBossWindow { DataContext = longName, Width = 280 }, palette,
+                    Path.Combine(outDir, $"idlecard_split_w280_long_{lay.Id}_Dark.png"));
+                // 직업·서버·전투력을 아직 모를 때 — 직업 아이콘 자리에 인식 전 화면의 와플 마크가 그대로 남아야 한다
+                // (빈 칸이나 빈 테두리가 남으면 깨진 아바타로 읽힌다).
+                var bare = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+                bare.SetRecognized(true, "콘팡", selfId: 7);
+                bare.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                Capture(() => new SplitBossWindow { DataContext = bare }, palette,
+                    Path.Combine(outDir, $"idlecard_split_bare_{lay.Id}_Dark.png"));
+            }
+        }
+
+        settings.MeterLayoutId = savedLayout;
+        settings.RowHeight = savedRow;
     }
 
     /// <summary>

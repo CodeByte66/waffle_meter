@@ -30,4 +30,21 @@ public partial class BossBarView : UserControl
         get => (Thickness)GetValue(TrailingInsetProperty);
         set => SetValue(TrailingInsetProperty, value);
     }
+
+    /// <summary>
+    /// 대기 카드(인식된 본인 캐릭터)의 높이 하한. 본체는 기본값 46 이고, 분리모드의 보스칸 창이 58 을 준다.
+    ///
+    /// <para>왜 창마다 다른가: 분리 보스 창은 자동 높이라 이 하한이 곧 카드 높이다 — 직업 문장 칸(44)에 위아래
+    /// 여백을 주려면 58 이 필요하다. 본체는 보스 행이 * 라 평소 그보다 넓은 칸을 받으므로 하한이 클 이유가 없고,
+    /// 58 을 걸면 배율 125~130% 에서 높이를 최소로 고정했을 때 카드가 칸보다 커져 아래가 잘렸다.</para>
+    /// </summary>
+    public static readonly DependencyProperty IdleCardMinHeightProperty =
+        DependencyProperty.Register(
+            nameof(IdleCardMinHeight), typeof(double), typeof(BossBarView), new PropertyMetadata(46.0));
+
+    public double IdleCardMinHeight
+    {
+        get => (double)GetValue(IdleCardMinHeightProperty);
+        set => SetValue(IdleCardMinHeightProperty, value);
+    }
 }
