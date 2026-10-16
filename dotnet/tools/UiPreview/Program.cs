@@ -47,17 +47,23 @@ internal static class Program
         var props = new PropertyHandler();
         var settings = new MeterSettings(props);
         var theme = new MeterColorTheme(props);
+
+        // Preload skin palettes once (re-sourcing a ResourceDictionary mid-run is flaky).
+        var skins = new[] { "Dark", "Midnight", "Slate", "Light" }.ToDictionary(
+            s => s,
+            s => new ResourceDictionary { Source = new Uri($"pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/Skin.{s}.xaml") });
+
+        // ⚠️ `now` 보다 앞에 둔다. 파티 신청 샘플은 `now` 기준 20초 뒤 만료라, 그 사이에 캡처를 끼우면 Light 차례의
+        // join_tier 캡처가 죽는다(이 캡처들이 없어도 3번 중 2번 재현되는 기존 결함이다).
+        CaptureRecognitionWait(skins, settings, theme, outDir);
+        CaptureIdleCard(skins, settings, theme, outDir);
+
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         // 난이도 칩·서브라인은 인카운터 카탈로그가 있어야 그려진다. 안 넘기면 EncounterCatalog.Empty 가
         // 되어 모든 코드가 미등록으로 나오고, 시안 대조에서 "칩이 안 뜬다"로 오인하게 된다.
         var encounterCatalog = WaffleMeter.Data.EncounterCatalog.Load(
             Path.Combine(AppContext.BaseDirectory, "json", "encounters.json"));
-
-        // Preload skin palettes once (re-sourcing a ResourceDictionary mid-run is flaky).
-        var skins = new[] { "Dark", "Midnight", "Slate", "Light" }.ToDictionary(
-            s => s,
-            s => new ResourceDictionary { Source = new Uri($"pack://application:,,,/WaffleMeter.App.Wpf;component/Themes/Skin.{s}.xaml") });
 
         // 게이지 장식 비교 시트 — 5종을 같은 막대·같은 길이·세 위상으로. 실제 GaugeFxLayer 로 그린다.
         CaptureGaugeSheet(outDir, light: false, skins["Dark"]);
@@ -447,12 +453,51 @@ internal static class Program
         CaptureReplay(LoadRealOrSynthetic(now), Path.Combine(outDir, "replay.png"), "replay.png");
         CaptureReplay(SampleMapReplay(now), Path.Combine(outDir, "replay-map.png"), "replay-map.png");
         CaptureMechanics(outDir);
-        // ⚠️ 맨 끝에 둔다 — 스킨 루프 안에 넣으면 실행이 길어져, 시작 시각에 고정된 파티 신청 샘플이 Light 차례 전에
-        // 만료되어 join_tier 캡처가 죽는다.
-        CaptureRecognitionWait(skins, settings, theme, outDir);
 
         Console.WriteLine(outDir);
         app.Shutdown();
+    }
+
+    /// <summary>
+    /// 인식된 대기 카드. 실제 창은 MinHeight 150 이라 카드가 보스칸(*)을 채워 늘어난다 — 콘텐츠 높이로만 찍으면
+    /// 사용자가 보는 모습(위아래가 빈 큰 카드)이 안 나온다. 그래서 150 고정으로 찍는다.
+    /// 레이아웃 3 × 스킨 4, 분리 보스 창·최소 폭 + 긴 닉네임은 Dark.
+    /// </summary>
+    private static void CaptureIdleCard(
+        Dictionary<string, ResourceDictionary> skins, MeterSettings settings, MeterColorTheme theme, string outDir)
+    {
+        string savedLayout = settings.MeterLayoutId;
+        int savedRow = settings.RowHeight;
+        foreach ((string skin, ResourceDictionary palette) in skins)
+        {
+            foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+            {
+                settings.MeterLayoutId = lay.Id;
+                settings.RowHeight = lay.DefaultRowHeight;
+                var vm = new OverlayViewModel("1.7.8", settings, theme, () => skin == "Light") { Status = "캡처 중" };
+                vm.SetRecognized(true, "콘팡", selfId: 7, server: 1001,
+                    job: WaffleMeter.Data.JobClass.RANGER, power: 1_100_400);
+                vm.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                Capture(() => new OverlayWindow { DataContext = vm }, palette,
+                    Path.Combine(outDir, $"idlecard_{lay.Id}_{skin}.png"), exactHeight: 150);
+                if (skin != "Dark")
+                {
+                    continue;
+                }
+
+                Capture(() => new SplitBossWindow { DataContext = vm }, palette,
+                    Path.Combine(outDir, $"idlecard_split_{lay.Id}_Dark.png"));
+                var longName = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+                longName.SetRecognized(true, "가나다라마바사아자차", selfId: 7, server: 1001,
+                    job: WaffleMeter.Data.JobClass.SORCERER, power: 2_345_600);
+                longName.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+                Capture(() => new OverlayWindow { DataContext = longName, Width = 320 }, palette,
+                    Path.Combine(outDir, $"idlecard_w320_long_{lay.Id}_Dark.png"), exactHeight: 150);
+            }
+        }
+
+        settings.MeterLayoutId = savedLayout;
+        settings.RowHeight = savedRow;
     }
 
     /// <summary>
