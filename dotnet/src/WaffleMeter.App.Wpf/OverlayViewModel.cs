@@ -468,6 +468,9 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     private JobClass? _selfJob;
     private int _selfPower;
 
+    // 본인 캐릭터가 인식됐는가(StatsBuilder.OwnCharacter().Detected 그대로). 인식 전 브랜드 블록의 재료.
+    private bool _ownDetected;
+
     private IReadOnlyList<User> _roster = [];
 
     /// <summary>App supplies the pre-combat party roster (recently-seen known players) each tick. It is
@@ -513,6 +516,7 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         _selfServer = detected ? server : 0;
         _selfJob = detected ? job : null;
         _selfPower = detected ? power : 0;
+        _ownDetected = detected;
         RecognizedVisibility = detected ? Visibility.Visible : Visibility.Collapsed;
         RecognizedStatus = !detected
             ? string.Empty
@@ -552,6 +556,18 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
     /// </summary>
     public Visibility IdleCardVisibility { get => _idleCardVisibility; private set => Set(ref _idleCardVisibility, value); }
 
+    private Visibility _recognitionWaitVisibility = Visibility.Visible;
+
+    /// <summary>
+    /// 캐릭터 인식 전 미터 본문의 브랜드 블록(와플 마크 + WAFFLE METER + "캐릭터 인식 대기 중"). 행이 하나도 없고
+    /// <b>본인이 아직 인식되지 않았을 때만</b> 보인다 — 인식되면 보스칸의 대기 카드가, 행이 생기면 행이 넘겨받는다.
+    /// <para>기본값이 Visible 인 이유: 캡처 헬퍼가 안 붙으면 리포트가 한 번도 안 와 Update·SetRecognized 가 영영 안
+    /// 불린다. 그 화면이 곧 '인식 전'이다(<see cref="PlaceholderVisibility"/> 의 기본값과 같은 이유).</para>
+    /// <para>MeterRowsView 의 옛 플레이스홀더는 이게 Visible 인 동안 접힌다. 옛 것은 지우지 마라 — 분리모드 행 창이
+    /// 인식 후 대기 상태에서 계속 쓴다.</para>
+    /// </summary>
+    public Visibility RecognitionWaitVisibility { get => _recognitionWaitVisibility; private set => Set(ref _recognitionWaitVisibility, value); }
+
     private GridLength _bossRowHeight = GridLength.Auto;
 
     /// <summary>
@@ -584,6 +600,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         bool idleCard = IdleCardVisibility == Visibility.Visible;
         BossRowHeight = idleCard ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
         RowsRowHeight = idleCard ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+        // 행 수(Update)와 인식 여부(SetRecognized)가 각각 다른 경로로 바뀌므로 둘 다 거치는 여기서 정한다.
+        RecognitionWaitVisibility = Rows.Count == 0 && !_ownDetected ? Visibility.Visible : Visibility.Collapsed;
 
         if (!known)
         {
