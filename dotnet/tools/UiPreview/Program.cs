@@ -447,9 +447,79 @@ internal static class Program
         CaptureReplay(LoadRealOrSynthetic(now), Path.Combine(outDir, "replay.png"), "replay.png");
         CaptureReplay(SampleMapReplay(now), Path.Combine(outDir, "replay-map.png"), "replay-map.png");
         CaptureMechanics(outDir);
+        // ⚠️ 맨 끝에 둔다 — 스킨 루프 안에 넣으면 실행이 길어져, 시작 시각에 고정된 파티 신청 샘플이 Light 차례 전에
+        // 만료되어 join_tier 캡처가 죽는다.
+        CaptureRecognitionWait(skins, settings, theme, outDir);
 
         Console.WriteLine(outDir);
         app.Shutdown();
+    }
+
+    /// <summary>
+    /// 인식 전 브랜드 블록. SetRecognized 를 **부르지 않는 것**이 곧 '인식 전'이다(앱도 캡처 헬퍼가 없으면 안 부른다).
+    /// 자동 높이(본체·분리 행 창) × 레이아웃 3 × 스킨 4, 고정 높이 300(가운데 정렬)은 Dark/Light,
+    /// 150(MinHeight — 블록이 크기 그대로 들어간다)·분리 보스 창·인식 전환은 Dark.
+    /// </summary>
+    private static void CaptureRecognitionWait(
+        Dictionary<string, ResourceDictionary> skins, MeterSettings settings, MeterColorTheme theme, string outDir)
+    {
+        string savedLayout = settings.MeterLayoutId;
+        int savedRow = settings.RowHeight;
+        foreach ((string skin, ResourceDictionary palette) in skins)
+        {
+            foreach (var lay in WaffleMeter.App.Core.MeterLayout.All)
+            {
+                settings.MeterLayoutId = lay.Id;
+                settings.RowHeight = lay.DefaultRowHeight;
+                var rw = new OverlayViewModel("1.7.8", settings, theme, () => skin == "Light") { Status = "캡처 중" };
+                rw.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 }); // 레이아웃 반영 + 행 0
+                Capture(() => new OverlayWindow { DataContext = rw }, palette, Path.Combine(outDir, $"recog_wait_{lay.Id}_{skin}.png"));
+                Capture(() => new SplitRowsWindow { DataContext = rw }, palette, Path.Combine(outDir, $"split_recog_wait_rows_{lay.Id}_{skin}.png"));
+                if (skin is "Dark" or "Light")
+                {
+                    Capture(() => new OverlayWindow { DataContext = rw }, palette,
+                        Path.Combine(outDir, $"recog_wait_h300_{lay.Id}_{skin}.png"), exactHeight: 300);
+                }
+
+                if (skin == "Dark")
+                {
+                    Capture(() => new OverlayWindow { DataContext = rw }, palette,
+                        Path.Combine(outDir, $"recog_wait_h150_{lay.Id}_Dark.png"), exactHeight: 150);
+                    Capture(() => new SplitRowsWindow { DataContext = rw }, palette,
+                        Path.Combine(outDir, $"split_recog_wait_rows_h260_{lay.Id}_Dark.png"), exactHeight: 260);
+                    Capture(() => new SplitBossWindow { DataContext = rw }, palette,
+                        Path.Combine(outDir, $"split_recog_wait_boss_{lay.Id}_Dark.png"));
+                    // 최소 폭: 가로 배치가 넘치지 않고 안내 문구가 줄바꿈되어야 한다.
+                    Capture(() => new OverlayWindow { DataContext = rw, Width = 320 }, palette,
+                        Path.Combine(outDir, $"recog_wait_w320_{lay.Id}_Dark.png"), exactHeight: 150);
+                    Capture(() => new SplitRowsWindow { DataContext = rw, Width = 280 }, palette,
+                        Path.Combine(outDir, $"split_recog_wait_rows_w280_{lay.Id}_Dark.png"));
+                    // 행 칸이 블록(64)보다 낮을 때: 잘리는 건 바깥 여백이어야지 마크·글자가 아니다.
+                    Capture(() => new SplitRowsWindow { DataContext = rw }, palette,
+                        Path.Combine(outDir, $"split_recog_wait_rows_h64_{lay.Id}_Dark.png"), exactHeight: 64);
+                    rw.LiveScalePercent = 130;
+                    Capture(() => new OverlayWindow { DataContext = rw }, palette,
+                        Path.Combine(outDir, $"recog_wait_scale130_h150_{lay.Id}_Dark.png"), exactHeight: 150);
+                    rw.LiveScalePercent = null;
+                    // 인식되는 순간 같은 VM 에서 블록이 접히고 대기 카드가 떠야 한다(잔상·겹침 없음).
+                    rw.SetRecognized(true, "와플구이", selfId: 7, server: 1001,
+                        job: WaffleMeter.Data.JobClass.FIGHTER, power: 780_000);
+                    Capture(() => new OverlayWindow { DataContext = rw }, palette,
+                        Path.Combine(outDir, $"recog_wait_then_idle_{lay.Id}_Dark.png"));
+                }
+            }
+        }
+
+        settings.MeterLayoutId = savedLayout;
+        settings.RowHeight = savedRow;
+
+        // 한글 두 줄은 사용자 글꼴을 따르고 WAFFLE METER 는 Segoe UI 그대로여야 한다.
+        string savedFont = settings.FontFamily;
+        settings.FontFamily = "Tmoney RoundWind ExtraBold";
+        var rwFont = new OverlayViewModel("1.7.8", settings, theme) { Status = "캡처 중" };
+        rwFont.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+        Capture(() => new OverlayWindow { DataContext = rwFont }, skins["Dark"], Path.Combine(outDir, "recog_wait_font_Dark.png"));
+        settings.FontFamily = savedFont;
     }
 
     /// <summary>
@@ -1259,6 +1329,7 @@ internal static class Program
         // gaugeId 를 받아 주고 새 id 두 개를 알아야 실제로 저장된다 — 그 전까지 이 목록은 골라도
         // 거절당한다(SubmitChoice 는 서버 응답만 신뢰한다).
         VerifySplitRowsChrome(settings, theme, Check);
+        VerifyRecognitionWait(settings, theme, Check);
         VerifyGaugeFx(settings, offVm, Check);
 
         Check("게이지도 계열별로 갈린다",
@@ -2017,6 +2088,168 @@ internal static class Program
         settings.RowHeight = savedRow;
     }
 
+    /// <summary>
+    /// 인식 전 브랜드 블록의 계약 — ① 행 0 + 미인식일 때만 뜬다 ② MeterRowsView 의 ScrollViewer 는 그대로다(v2.8.1 오진
+    /// 재발 방지) ③ 옛 '전투 대기 중'은 본체·분리 행 창 모두에서 접힌다 ④ 높이를 고정하면 가운데, MinHeight 까지 줄여도 안 잘리고
+    /// 글자는 원래 크기다(통째로 줄이던 첫 판은 안내 문구가 6.8px 로 뭉개졌다) ⑤ 본체는 자동 높이가 MinHeight 바닥까지 내려간다
+    /// (가로 배치의 존재 이유 — 세로로 쌓던 판은 창을 193 까지 키웠다).
+    /// </summary>
+    private static void VerifyRecognitionWait(MeterSettings settings, MeterColorTheme theme, Action<string, bool> Check)
+    {
+        var fresh = new OverlayViewModel("1.7.8", settings, theme, preview: true);
+        Check("인식 전 블록: 리포트가 한 번도 안 와도 보인다", fresh.RecognitionWaitVisibility == Visibility.Visible);
+        fresh.Detach();
+
+        var combat = new OverlayViewModel("1.7.8", settings, theme, preview: true);
+        combat.Update(SampleMeterReport(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        Check("인식 전 블록: 미인식이어도 행이 있으면 접힌다",
+            combat.Rows.Count > 0 && combat.RecognitionWaitVisibility == Visibility.Collapsed);
+        combat.Detach();
+
+        string savedLayout = settings.MeterLayoutId;
+        int savedRow = settings.RowHeight;
+        foreach (WaffleMeter.App.Core.MeterLayout lay in WaffleMeter.App.Core.MeterLayout.All)
+        {
+            settings.MeterLayoutId = lay.Id;
+            settings.RowHeight = lay.DefaultRowHeight;
+            var vm = new OverlayViewModel("1.7.8", settings, theme, preview: true);
+            vm.Update(new DpsReport { BattleStart = 0, BattleEnd = 5000 });
+            Check($"{lay.Id}: 행 0 + 미인식 → 블록", vm.RecognitionWaitVisibility == Visibility.Visible);
+
+            foreach (Func<Window> make in new Func<Window>[]
+                     { () => new OverlayWindow { DataContext = vm }, () => new SplitRowsWindow { DataContext = vm } })
+            {
+                Window win = make();
+                win.Left = -10000;
+                win.Top = -10000;
+                string where = $"{lay.Id}/{win.GetType().Name}";
+                try
+                {
+                    win.Show();
+                    Drain(win.Dispatcher);
+                    var content = (FrameworkElement)win.Content;
+                    double w = win.Width;
+                    MeterRowsView rows = Descendants(win).OfType<MeterRowsView>().First();
+                    var block = (FrameworkElement)rows.FindName("RecognitionWaitBlock");
+
+                    content.Measure(new Size(w, double.PositiveInfinity));
+                    content.Arrange(new Rect(0, 0, w, content.DesiredSize.Height));
+                    content.UpdateLayout();
+                    Check($"{where}: ScrollViewer 가 그대로다(세로 Disabled)",
+                        Descendants(rows).OfType<ScrollViewer>()
+                            .Any(s => s.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled));
+                    Check($"{where}: 블록이 보이고 옛 '전투 대기 중'은 접힌다",
+                        block.IsVisible && !Descendants(rows).OfType<TextBlock>()
+                            .Any(t => t.Text == "전투 대기 중" && t.IsVisible));
+                    if (win is OverlayWindow)
+                    {
+                        Check($"{where}: 자동 높이 {content.DesiredSize.Height:0} ≤ MinHeight {win.MinHeight:0}(창이 바닥까지 준다)",
+                            content.DesiredSize.Height <= win.MinHeight);
+                    }
+
+                    // 분리 행 창 64 = 행 칸 48 — 자동 높이(80)보다 낮게 고정한 경우.
+                    foreach (double h in win is SplitRowsWindow ? new[] { 320.0, 150.0, 64.0 } : new[] { 320.0, 150.0 })
+                    {
+                        content.Measure(new Size(w, h));
+                        content.Arrange(new Rect(0, 0, w, h));
+                        content.UpdateLayout();
+                        CheckRecognitionWaitPinned($"{where} 고정 {h:0}", win, h, rows, block, Check);
+                    }
+
+                    if (win is OverlayWindow)
+                    {
+                        // 배율 130% + 최소 높이 150 = 행 칸 약 54. MinHeight 는 배율을 안 따라가서 가장 좁아지는 경우다.
+                        vm.LiveScalePercent = 130;
+                        Drain(win.Dispatcher);
+                        content.Measure(new Size(w, win.MinHeight));
+                        content.Arrange(new Rect(0, 0, w, win.MinHeight));
+                        content.UpdateLayout();
+                        CheckRecognitionWaitPinned($"{where} 배율 130% 고정 {win.MinHeight:0}", win, win.MinHeight, rows, block, Check);
+                        vm.LiveScalePercent = null;
+                    }
+                }
+                finally
+                {
+                    win.Close();
+                }
+
+                // 최소 폭: 가로 배치(약 276~305 DIP, 글꼴에 따라)가 좌우로 넘치지 않는다 — 안내 문구가 줄바꿈으로 받아낸다.
+                // ⚠️ 창 폭을 **열기 전에** 줄여야 한다. 측정만 좁게 하면 창 레이아웃이 원래 폭으로 다시 잡아 검사가 헛돈다.
+                Window narrow = make();
+                narrow.Width = narrow.MinWidth;
+                narrow.Left = -10000;
+                narrow.Top = -10000;
+                try
+                {
+                    narrow.Show();
+                    Drain(narrow.Dispatcher);
+                    narrow.UpdateLayout();
+                    MeterRowsView rows = Descendants(narrow).OfType<MeterRowsView>().First();
+                    var block = (FrameworkElement)rows.FindName("RecognitionWaitBlock");
+                    double left = block.TranslatePoint(new Point(0, 0), rows).X;
+                    Thickness m = block.Margin;
+                    // 레이아웃 클립까지 본다 — 블록 상자가 칸 안이어도 안내 문구가 제 폭보다 좁게 배치되면 잘린다.
+                    bool unclipped = Descendants(block).OfType<FrameworkElement>().Prepend(block)
+                        .All(e => System.Windows.Controls.Primitives.LayoutInformation.GetLayoutClip(e) is null);
+                    Check($"{where} 최소 폭 {narrow.MinWidth:0}: 좌우로 넘치지 않는다({left:0.0}~{left + block.ActualWidth:0.0} / {rows.ActualWidth:0.0})",
+                        rows.ActualWidth <= narrow.MinWidth + 0.5 && left >= m.Left - 0.5
+                        && left + block.ActualWidth <= rows.ActualWidth - m.Right + 0.5 && unclipped);
+                }
+                finally
+                {
+                    narrow.Close();
+                }
+            }
+
+            vm.SetRecognized(true, "와플구이", selfId: 7, server: 1001,
+                job: WaffleMeter.Data.JobClass.FIGHTER, power: 780_000);
+            Check($"{lay.Id}: 인식되면 블록이 접히고 대기 카드가 넘겨받는다",
+                vm.RecognitionWaitVisibility == Visibility.Collapsed && vm.IdleCardVisibility == Visibility.Visible);
+            vm.SetRecognized(false, null);
+            Check($"{lay.Id}: 인식이 풀리면(행 0) 다시 뜬다", vm.RecognitionWaitVisibility == Visibility.Visible);
+            vm.Detach();
+        }
+
+        settings.MeterLayoutId = savedLayout;
+        settings.RowHeight = savedRow;
+    }
+
+    /// <summary>
+    /// 높이가 고정된 창에서 인식 전 블록이 행 칸 가운데이고, **그려지는 것**(마크·글자)이 실제로 보이며, 글자가 축소되지 않는지.
+    /// ⚠️ 블록·행 뷰 자기 상자로 재지 마라. 블록은 칸에 맞춰 줄어든 채로 자식이 음수 y 에 그려질 수 있고(여백을 Margin 으로
+    /// 주던 판), 블록 MinHeight 가 칸보다 크면 행 뷰가 통째로 커져 넘친 만큼이 **조상**(창 루트)에서 잘린다 — 둘 다 자기
+    /// 상자 기준으로는 대칭·무클립으로 재어져 통과해 버렸다. 그래서 창 좌표에서, 조상들의 레이아웃 클립을 전부 겹쳐 본다.
+    /// </summary>
+    private static void CheckRecognitionWaitPinned(string where, Window win, double windowHeight, MeterRowsView rows,
+        FrameworkElement block, Action<string, bool> Check)
+    {
+        double top = block.TranslatePoint(new Point(0, 0), rows).Y;
+        double off = top + block.ActualHeight / 2 - rows.ActualHeight / 2;
+        var parts = new FrameworkElement[]
+        {
+            Descendants(block).OfType<Viewbox>().First(), Descendants(block).OfType<StackPanel>().First(),
+        };
+        bool inside = parts.All(p =>
+        {
+            Rect drawn = p.TransformToAncestor(win).TransformBounds(new Rect(0, 0, p.ActualWidth, p.ActualHeight));
+            Rect visible = new(0, 0, win.Width, windowHeight);
+            for (DependencyObject? a = p; a is not null && a != win; a = VisualTreeHelper.GetParent(a))
+            {
+                if (a is FrameworkElement fe
+                    && System.Windows.Controls.Primitives.LayoutInformation.GetLayoutClip(fe) is Geometry clip)
+                {
+                    visible.Intersect(fe.TransformToAncestor(win).TransformBounds(clip.Bounds));
+                }
+            }
+
+            return !visible.IsEmpty && drawn.Top >= visible.Top - 0.5 && drawn.Bottom <= visible.Bottom + 0.5;
+        });
+        Check($"{where}: 가운데(어긋남 {off:0.0})·마크와 글자가 잘리지 않고 보인다", Math.Abs(off) <= 1.0 && inside);
+        Check($"{where}: 글자는 축소되지 않는다",
+            Descendants(block).OfType<TextBlock>().All(t =>
+                t.TransformToAncestor(rows) is Transform tf && Math.Abs(tf.Value.M22 - 1.0) < 0.001));
+    }
+
     private static void VerifyGaugeFx(MeterSettings settings, OverlayViewModel vm, Action<string, bool> Check)
     {
         const int W = 240, H = 30;
@@ -2198,12 +2431,19 @@ internal static class Program
         return null;
     }
 
-    private static void Capture(Func<Window> factory, ResourceDictionary palette, string path, bool fixedSize = false)
+    private static void Capture(Func<Window> factory, ResourceDictionary palette, string path, bool fixedSize = false,
+        double? exactHeight = null)
     {
         Window? window = null;
         try
         {
             window = factory();
+            if (exactHeight is double pinned)
+            {
+                // 사용자가 높이를 손으로 고정한 미터 = SizeToContent 꺼짐 + 고정 Height (WindowResizePolicy 참고).
+                window.SizeToContent = SizeToContent.Manual;
+                window.Height = pinned;
+            }
             // Inject the skin into the WINDOW's resources (not Application.Resources — mutating the latter
             // trips net10 ThemeManager.SyncApplicationThemeMode). DynamicResource Skin.* resolves here.
             window.Resources.MergedDictionaries.Insert(0, palette);
@@ -2215,7 +2455,7 @@ internal static class Program
             // (SizeToContent's async sizing returns 0 for later windows).
             Drain(window.Dispatcher);
 
-            RenderToPng(window, path, fixedSize);
+            RenderToPng(window, path, fixedSize, exactHeight);
         }
         catch (Exception ex)
         {
@@ -2232,14 +2472,20 @@ internal static class Program
     /// keeps ONE window alive across several states (the settings tab sweep) can render each state without
     /// paying window construction 12 times over.
     /// </summary>
-    private static void RenderToPng(Window window, string path, bool fixedSize)
+    private static void RenderToPng(Window window, string path, bool fixedSize, double? exactHeight = null)
     {
         var content = (FrameworkElement)window.Content;
         double availableW = double.IsNaN(window.Width) ? content.ActualWidth : window.Width;
-        content.Measure(new Size(availableW, double.PositiveInfinity));
+        // exactHeight: 그 높이로 **측정**까지 한다 — 사용자가 높이를 고정한 앱 창과 같은 측정 제약(유한 높이)을 줘서,
+        // 가운데 정렬처럼 높이 제약에 따라 배치가 정해지는 요소가 앱과 같게 찍히도록.
+        content.Measure(new Size(availableW, exactHeight ?? double.PositiveInfinity));
         double measuredH = content.DesiredSize.Height > 0 ? content.DesiredSize.Height : content.ActualHeight;
+        if (exactHeight is double pinned)
+        {
+            measuredH = pinned;
+        }
         // fixedSize: arrange at the window's real height so overflow scrolls (shows the scrollbar).
-        if (fixedSize && !double.IsNaN(window.Height) && window.Height > 0)
+        else if (fixedSize && !double.IsNaN(window.Height) && window.Height > 0)
         {
             measuredH = window.Height;
         }

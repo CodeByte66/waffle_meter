@@ -73,4 +73,25 @@
             </DataTrigger>
         </Style.Triggers>
     </Style>
+
+    <!--
+        브랜드 마크 — 앱 아이콘(와플)의 단색 선화. 물결 테두리 + 위아래로 엮인 대각 격자를 한 굵기·둥근 끝으로 그린다.
+        인식 전 미터 본문(MeterRowsView 의 RecognitionWaitBlock)이 쓴다.
+        🔑 100×100 캔버스 좌표다. 쓰는 쪽이 Viewbox(44×44) > Canvas 100×100 > Path 로 크기를 정한다 —
+           Path.Stretch 로 키우면 굵기는 안 따라오고 기준 틀이 도형 외곽으로 바뀐다.
+        🔑 굵기 5.5 는 44 DIP 에서 2.42px — 1x 에서 끊김(엇갈림 틈)이 뭉개지지 않는 하한이다. 끊긴 끝점은 교차점에서
+           축마다 (8,8) 떨어져 있어 보이는 틈 = 11.3 − 굵기. 굵기와 끝점은 한 쌍이라 한쪽만 바꾸지 마라.
+           40 DIP 이하로 줄여 쓸 거면 굵기를 6 으로 올려야 같은 선명도가 나온다.
+        ⚠️ Fill 금지(열린 도형). Stroke 는 Skin.Fg — MutedFg 는 알파 68% 라 2px 틈의 대비를 깎는다.
+        ⚠️ 돌리거나 움직이지 마라. 4방향 회전대칭이라 돌면 로딩 스피너로 읽히고, 유휴 CPU 도 0 이 아니게 된다.
+    -->
+    <Geometry x:Key="WaffleMark">M87.5,69 A16.5,16.5 0 0 1 69,87.5 A24.5,24.5 0 0 1 31,87.5 A16.5,16.5 0 0 1 12.5,69 A24.5,24.5 0 0 1 12.5,31 A16.5,16.5 0 0 1 31,12.5 A24.5,24.5 0 0 1 69,12.5 A16.5,16.5 0 0 1 87.5,31 A24.5,24.5 0 0 1 87.5,69 Z M87.5,69 L58,39.5 M42,23.5 L31,12.5 M31,87.5 L60.5,58 M76.5,42 L87.5,31 M12.5,31 L42,60.5 M58,76.5 L69,87.5 M69,12.5 L39.5,42 M23.5,58 L12.5,69</Geometry>
+    <Style x:Key="WaffleMarkPath" TargetType="Path">
+        <Setter Property="Data" Value="{StaticResource WaffleMark}"/>
+        <Setter Property="Stroke" Value="{DynamicResource Skin.Fg}"/>
+        <Setter Property="StrokeThickness" Value="5.5"/>
+        <Setter Property="StrokeStartLineCap" Value="Round"/>
+        <Setter Property="StrokeEndLineCap" Value="Round"/>
+        <Setter Property="StrokeLineJoin" Value="Round"/>
+    </Style>
 </ResourceDictionary>

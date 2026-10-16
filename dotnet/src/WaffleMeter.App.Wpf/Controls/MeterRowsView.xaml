@@ -16,6 +16,13 @@
         <local:RowHeightToFontSizeConverter x:Key="FontSize"/>
         <local:RightGapConverter x:Key="RightGap"/>
     </UserControl.Resources>
+    <!--
+        🔑 행·열 정의가 없는 Grid — 자식 둘(행 목록 ScrollViewer, 인식 전 브랜드 블록)에게 같은 칸 전체를 준다.
+           그래서 ScrollViewer 가 받는 측정 제약은 이 Grid 가 생기기 전과 같다.
+        ⚠️ 브랜드 블록을 ScrollViewer 안 StackPanel 로 옮기지 마라. 세로가 무한이라 가운데 정렬이 불가능하고,
+           높이를 손으로 고정한 미터에서 블록이 위에 붙는다.
+    -->
+    <Grid>
             <!-- 행 목록. 이 ScrollViewer는 v2.8.0 마크업을 그대로 되돌린 것이고, 실측상 관측 가능한 역할이 없다:
                  자동 맞춤(SizeToContent="Height")에서는 VerticalScrollBarVisibility="Disabled"가 세로 제약을
                  그대로 통과시켜 있으나 없으나 창 높이가 같고(1/5/10/24행 모두 동일), 높이를 고정한 상태에서도
@@ -34,6 +41,11 @@
                     <Style TargetType="StackPanel">
                         <Setter Property="Visibility" Value="{Binding PlaceholderVisibility}"/>
                         <Style.Triggers>
+                            <!-- 캐릭터 인식 전에는 아래 브랜드 블록(RecognitionWaitBlock)이 이 자리를 대신한다.
+                                 분리모드 행 창(IdleCardElsewhere=True)도 마찬가지라 그 조건과 묶지 않는다. -->
+                            <DataTrigger Binding="{Binding RecognitionWaitVisibility}" Value="Visible">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
                             <MultiDataTrigger>
                                 <MultiDataTrigger.Conditions>
                                     <Condition Binding="{Binding IdleCardVisibility}" Value="Visible"/>
@@ -415,4 +427,65 @@
             </ItemsControl>
             </StackPanel>
             </ScrollViewer>
+
+        <!--
+            캐릭터 인식 전 빈 상태 — 와플 마크 + WAFFLE METER + "캐릭터 인식 대기 중" + 안내 한 줄.
+            보이는 조건은 OverlayViewModel.RecognitionWaitVisibility(행 0 + 본인 미인식).
+            🔑 가로 배치(마크 | 세 줄)다. 블록이 64~68 DIP(글꼴에 따라)라 본체 창이 MinHeight(150) 바닥까지 내려간다 —
+               세로로 쌓던 첫 판은 132 DIP 로 창을 193 까지 키웠다. 세로로 되돌리지 마라.
+            🔑 높이를 손으로 고정해도 블록은 크기 그대로 가운데에 놓인다. 통째로 Viewbox 로 줄이지 마라 — 그 판은
+               MinHeight 150 에서 안내 문구가 6.8px 로 뭉개졌다.
+            🔑 위아래 숨 쉴 자리는 Margin 이 아니라 MinHeight(64 = 마크 44 + 10×2)로 준다. Margin 은 측정 전에 빠지고
+               레이아웃 클립도 Margin 안쪽에 걸려서, 칸이 64 보다 낮아지면(배율 130% + 최소 높이, 분리 행 창을 80 아래로
+               고정) 여백은 그대로 둔 채 마크와 글자의 위아래가 잘렸다. MinHeight 면 넘친 만큼이 칸 바깥 여백에서 잘린다.
+            ⚠️ 정적이어야 한다 — Storyboard·타이머 금지(유휴 CPU 0, 소프트웨어 렌더).
+            ⚠️ WAFFLE METER 는 Segoe UI 고정. 자간은 U+2009(얇은 공백, Segoe UI 에서 0.2em)로 낸다 — WPF TextBlock
+               에는 자간 속성이 없다. 사용자 글꼴(NEXON·맑은 고딕)엔 U+2009 가 없어 폴백되므로 상속시키지 마라.
+        -->
+        <Grid x:Name="RecognitionWaitBlock" Margin="12,0,12,0" MinHeight="64"
+              HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"
+              Visibility="{Binding RecognitionWaitVisibility}">
+            <Grid.Style>
+                <Style TargetType="Grid">
+                    <Style.Triggers>
+                        <!-- 계기판: 판때기가 없어 그림자가 가독성의 전부다. 블록 전체에 하나만 건다. -->
+                        <DataTrigger Binding="{Binding Layout.EtchText}" Value="True">
+                            <Setter Property="Effect">
+                                <Setter.Value>
+                                    <DropShadowEffect ShadowDepth="1" BlurRadius="3" Opacity="0.95" Color="Black"/>
+                                </Setter.Value>
+                            </Setter>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Grid.Style>
+            <!-- 글자 칸이 * 인 이유: 가로 배치는 폭이 약 276~305 DIP(글꼴에 따라)라 분리 행 창 최소 폭 280, 넓은 글꼴의
+                 본체 최소 폭 320 에서 넘친다. * 칸은 남은 폭을 제약으로 받아 안내 문구가 두 줄로 넘어가고, 넉넉할 때는
+                 Center 정렬이라 글자 폭만 차지한다. -->
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <!-- Margin 0,2,0,-2: 글자 덩어리의 잉크는 줄 상자보다 아래에 몰려 있어(대문자 위 여유) 상자끼리 가운데를
+                 맞추면 마크가 2 DIP 떠 보인다. 위아래를 반대로 줘서 칸의 높이(44)는 그대로 두고 그림만 내린다. -->
+            <Viewbox Grid.Column="0" Width="44" Height="44" VerticalAlignment="Center" Margin="0,2,0,-2">
+                <Canvas Width="100" Height="100">
+                    <Path Style="{StaticResource WaffleMarkPath}"/>
+                </Canvas>
+            </Viewbox>
+            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="W&#x2009;A&#x2009;F&#x2009;F&#x2009;L&#x2009;E&#x2009;&#x2009;&#x2009;M&#x2009;E&#x2009;T&#x2009;E&#x2009;R"
+                           FontFamily="Segoe UI" FontWeight="SemiBold" FontSize="11"
+                           Foreground="{DynamicResource Skin.Fg}"/>
+                <TextBlock Text="캐릭터 인식 대기 중" Foreground="{DynamicResource Skin.Accent}"
+                           FontWeight="SemiBold" FontSize="12" Margin="0,3,0,0"/>
+                <!-- 좁을 때 줄바꿈은 **어절 덩어리 단위**로 한다. TextBlock 의 Wrap 은 한글을 아무 음절에서나 끊어
+                     최소 폭에서 "인식됩 / 니다" 가 됐다. -->
+                <WrapPanel Margin="0,1,0,0" TextElement.Foreground="{DynamicResource Skin.MutedFg}" TextElement.FontSize="10">
+                    <TextBlock Text="접속하거나 지역을 이동하면" Margin="0,0,3,0"/>
+                    <TextBlock Text="자동으로 인식됩니다"/>
+                </WrapPanel>
+            </StackPanel>
+        </Grid>
+    </Grid>
 </UserControl>
