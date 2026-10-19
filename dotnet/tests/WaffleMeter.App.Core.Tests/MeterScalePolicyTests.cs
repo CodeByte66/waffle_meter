@@ -98,6 +98,64 @@ public sealed class MeterScalePolicyTests
     }
 
     [Fact]
+    public void Releasing_inside_the_range_keeps_the_column_budget()
+    {
+        // 종전 동작 그대로 — 490@100 을 392 까지 끌면 80% 이고 폭은 예산 490 × 0.8.
+        int pct = MeterScalePolicy.ScaleFromDrag(490.0, 100, 393.4);
+        Assert.Equal(392.0, MeterScalePolicy.WidthAfterDrag(490.0, 100, pct, 393.4), precision: 6);
+    }
+
+    [Fact]
+    public void Shrinking_past_the_floor_keeps_the_width_the_user_let_go_at()
+    {
+        // 🔴 v3.3.3 제보: 75% 에 붙은 1288 폭 미터를 600 까지 줄여도 손을 떼면 1288 로 되튀었다.
+        int pct = MeterScalePolicy.ScaleFromDrag(1288.0, 75, 600.0);
+        Assert.Equal(MeterScalePolicy.ScaleMin, pct);
+        Assert.Equal(600.0, MeterScalePolicy.WidthAfterDrag(1288.0, 75, pct, 600.0), precision: 6);
+
+        // 100% 에서 출발해도 75% 를 지나친 나머지는 폭으로 남는다(종전: 1288 × 0.75 = 966 으로 되튐).
+        pct = MeterScalePolicy.ScaleFromDrag(1288.0, 100, 600.0);
+        Assert.Equal(600.0, MeterScalePolicy.WidthAfterDrag(1288.0, 100, pct, 600.0), precision: 6);
+    }
+
+    [Fact]
+    public void Widening_past_the_ceiling_keeps_the_width_the_user_let_go_at()
+    {
+        int pct = MeterScalePolicy.ScaleFromDrag(490.0, 100, 900.0);
+        Assert.Equal(MeterScalePolicy.ScaleMax, pct);
+        Assert.Equal(900.0, MeterScalePolicy.WidthAfterDrag(490.0, 100, pct, 900.0), precision: 6);
+    }
+
+    [Fact]
+    public void A_window_that_reached_the_floor_can_be_narrowed_again_by_the_same_edge()
+    {
+        // 되튐이 있으면 몇 번을 끌어도 폭이 그대로였다 — 예산이 가장자리로는 절대 줄지 않았기 때문이다.
+        double width = 1288.0;
+        int scale = 75;
+        foreach (double target in new[] { 900.0, 500.0, 300.0 })
+        {
+            int pct = MeterScalePolicy.ScaleFromDrag(width, scale, target);
+            width = MeterScalePolicy.WidthAfterDrag(width, scale, pct, target);
+            scale = pct;
+            Assert.Equal(target, width, precision: 6);
+        }
+    }
+
+    [Fact]
+    public void Releasing_at_the_floor_never_goes_below_the_minimum_width()
+    {
+        Assert.Equal(MeterScalePolicy.MinWindowWidth(75), MeterScalePolicy.WidthAfterDrag(490.0, 100, 75, 100.0), precision: 6);
+    }
+
+    [Fact]
+    public void A_click_on_the_edge_at_a_range_end_changes_nothing()
+    {
+        // 이동량 0 클릭도 제스처를 연다. 75%·130% 에 붙어 있는 미터에서 그게 폭을 바꾸면 안 된다.
+        Assert.Equal(966.0, MeterScalePolicy.WidthAfterDrag(966.0, 75, MeterScalePolicy.ScaleFromDrag(966.0, 75, 966.0), 966.0), precision: 6);
+        Assert.Equal(637.0, MeterScalePolicy.WidthAfterDrag(637.0, 130, MeterScalePolicy.ScaleFromDrag(637.0, 130, 637.0), 637.0), precision: 6);
+    }
+
+    [Fact]
     public void A_degenerate_start_width_is_not_a_division_by_zero()
     {
         Assert.Equal(115, MeterScalePolicy.ScaleFromDrag(0.0, 115, 500.0));

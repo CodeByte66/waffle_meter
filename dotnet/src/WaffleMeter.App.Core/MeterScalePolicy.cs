@@ -7,7 +7,9 @@ namespace WaffleMeter.App.Core;
 /// 바뀌어도 보존된다. 종전에는 배율이 루트 <c>LayoutTransform</c> 안에 있고 <c>Window.Width</c> 는 그
 /// <b>바깥</b>에 있어서, 세로축엔 <c>SizeToContent="Height"</c> 라는 짝이 있는데 <b>가로축엔 짝이 없었다</b>:
 /// 배율을 130% 로 올리면 내부 논리 폭이 490÷1.3 ≈ 377 DIP 로 오히려 <b>줄어</b> 이름·[서버]태그·전투력
-/// 배지가 예외도 로그도 없이 잘렸다. 폭을 배율에 묶으면 그 결함군이 통째로 닫힌다.</para>
+/// 배지가 예외도 로그도 없이 잘렸다. 폭을 배율에 묶으면 그 결함군이 통째로 닫힌다.
+/// 단, 이건 <b>배율이 바뀔 때</b>의 규칙이다 — 가장자리를 끌어 배율이 범위 끝에 닿은 뒤의 나머지는 폭 변경이다
+/// (<see cref="WidthAfterDrag"/>).</para>
 ///
 /// <para><b>새 설정 키는 없다.</b> baseWidth 는 <c>meterWidth ÷ meterScalePercent</c> 로 유도되므로 기존
 /// 사용자는 두 값이 그대로고, 업데이트 후 첫 실행이 픽셀 단위로 종전과 같다 — 마이그레이션 0.</para>
@@ -74,6 +76,26 @@ public static class MeterScalePolicy
     {
         int pct = ClampScale(percent);
         return Math.Max(BaseWidthMin, baseWidth) * pct / 100.0;
+    }
+
+    /// <summary>
+    /// 배율 제스처(좌/우 가장자리)를 놓았을 때의 창 폭.
+    /// <para>배율이 범위 안에서 움직였으면 종전 그대로 논리 열 예산을 보존한 폭(<see cref="WindowWidth"/>)이다.
+    /// 배율이 하한(75%)·상한(130%)에 닿은 뒤에도 더 끌었다면 <b>손을 뗀 폭</b>을 그대로 쓴다 — 배율이 더는
+    /// 못 움직이니 그 나머지는 폭을 바꾼 것으로 받는다(그만큼 예산이 바뀐다).</para>
+    /// <para>🔴 종전에는 범위 밖으로 끈 만큼을 버렸다. 배율은 75% 에 멈추는데 폭은 예산×0.75 로 되돌아가서,
+    /// 넓어진 미터를 가장자리로 아무리 줄여도 손을 떼는 순간 다시 넓어졌다(v3.3.3 제보 — 75% 에 붙은 채
+    /// 화면 폭만 한 미터). 모서리 말고는 폭을 줄일 길이 없었다. 범위를 넓혀서 풀지 마라(<see cref="ScaleMin"/>).</para>
+    /// </summary>
+    /// <param name="endPercent">놓는 순간의 배율(<see cref="ScaleFromDrag"/> 값).</param>
+    /// <param name="endWidth">놓는 순간의 실제 창 폭(사용자가 끌어 둔 폭).</param>
+    public static double WidthAfterDrag(double startWidth, int startPercent, int endPercent, double endWidth)
+    {
+        int pct = ClampScale(endPercent);
+        double kept = WindowWidth(BaseWidth(startWidth, startPercent), pct);
+        bool pastFloor = pct == ScaleMin && endWidth < kept;
+        bool pastCeiling = pct == ScaleMax && endWidth > kept;
+        return pastFloor || pastCeiling ? Math.Max(MinWindowWidth(pct), endWidth) : kept;
     }
 
     /// <summary>

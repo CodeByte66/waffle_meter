@@ -360,8 +360,11 @@ public partial class App : Application
                 if (_meterScaleDrag is (double startWidth, int startScale))
                 {
                     // 논리 열 예산을 보존한 채 배율만 갈아 끼운다 — 이게 이 기능의 불변식이다.
+                    // 단 배율이 75%·130% 에 닿은 뒤 더 끈 만큼은 폭으로 받는다(WidthAfterDrag). 버리면 손을 떼는
+                    // 순간 창이 되튀어, 넓어진 미터를 가장자리로는 영영 못 줄인다.
+                    // 손을 뗀 폭은 아래 대입들이 레이아웃을 건드리기 **전에** 읽어 둔다.
+                    double endWidth = window.ActualWidth;
                     int pct = viewModel.LiveScalePercent ?? startScale;
-                    double budget = MeterScalePolicy.BaseWidth(startWidth, startScale);
                     _meterScaleDrag = null;
                     // ⚠️ 순서가 두 군데에서 중요하다.
                     //  ① _meterAppliedScale 을 **먼저** 올린다. 안 그러면 아래 설정 대입이 PropertyChanged 로
@@ -373,7 +376,7 @@ public partial class App : Application
                     _settings.MeterScalePercent = pct;
                     viewModel.LiveScalePercent = null;
                     window.MinWidth = MeterScalePolicy.MinWindowWidth(_meterAppliedScale);
-                    window.Width = MeterScalePolicy.WindowWidth(budget, _meterAppliedScale);
+                    window.Width = MeterScalePolicy.WidthAfterDrag(startWidth, startScale, _meterAppliedScale, endWidth);
                     // 배율 제스처는 좌/우 전용이라 WindowResizePolicy.IsManualAfterDrag 가 구조적으로
                     // false 다. 그래도 자동 높이는 명시적으로 되살린다 — 배율이 바뀌면 내용 높이가
                     // 통째로 달라지므로 이전에 고정해 둔 높이는 더 이상 맞지 않는다.
@@ -3032,11 +3035,27 @@ public partial class App : Application
         // 전방향(상/하/좌/우 + 네 모서리) 리사이즈 — 모든 창 공통. v2.8.1은 미터에서만 세로/대각 핸들을
         // 막았는데, 그래봐야 SizeToContent는 폭 드래그에도 꺼지므로(실측) 자동 높이는 못 지키면서
         // 사용자가 높이를 맞출 수단만 사라졌다.
-        WindowResizer.Attach(window, onResizeEnd: onResizeEnd, onResizeStart: onResizeStart);
         // 마지막으로 저장한 값과 다를 때만 기록한다. 미터는 이제 전투 중 행 수 변동마다 높이가 바뀌며 SizeChanged가
         // 자주 발화하는데, 매번 (변화 없는) 폭까지 SetProperty하면 euc-kr 프로퍼티 파일 전체를 동기 재기록해
         // 장시간 느려짐을 유발한다(longrun-slowdown 계열). 실제 값이 바뀔 때만 저장한다.
         string? lastW = null, lastH = null;
+        WindowResizer.Attach(window, onResizeStart: onResizeStart, onResizeEnd: e =>
+        {
+            onResizeEnd?.Invoke(e);
+            // 제스처 동안 저장을 미뤘다면 확정된 폭을 여기서 한 번 저장한다. 확정 폭이 손을 뗀 폭과 같으면
+            // SizeChanged 가 다시 안 오고, 높이까지 그대로면(인식 전 화면은 MinHeight 150 에 붙어 있다) 파일에는
+            // 제스처 **전** 폭이 남아 재시작하면 창이 그 폭으로 돌아간다. 레이아웃이 끝난 뒤(Loaded)에 읽는다.
+            if (suppressSave is not null)
+            {
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+                {
+                    if (!suppressSave())
+                    {
+                        Save();
+                    }
+                }));
+            }
+        });
         window.SizeChanged += (_, _) =>
         {
             onSizeChanged?.Invoke();
@@ -3045,6 +3064,11 @@ public partial class App : Application
                 return;
             }
 
+            Save();
+        };
+
+        void Save()
+        {
             string wv = window.ActualWidth.ToString("0", CultureInfo.InvariantCulture);
             if (wv != lastW)
             {
@@ -3061,7 +3085,7 @@ public partial class App : Application
                     props.SetProperty(hKey, hv);
                 }
             }
-        };
+        }
     }
 
     private static bool LoadPanelPosition(PropertyHandler props, Window panel, string xKey, string yKey)
