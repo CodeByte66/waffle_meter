@@ -48,8 +48,15 @@ public static class MeterFormat
         return ((long)n).ToString(Inv);
     }
 
-    /// <summary>format.ts formatPower: "{power/1000 .1f}k".</summary>
-    public static string FormatPower(int power) => (power / 1000.0).ToString("0.0", Inv) + "k";
+    /// <summary>
+    /// Combat power badge: "{power/1000 .1f}k" (format.ts formatPower), and from a million up
+    /// "{power/1000000 .3f}M" — same width as "999.9k", so the badge doesn't grow as powers climb.
+    /// <para>The cut is 999,950, not 1,000,000: anything at or above it already rounds to "1000.0k".</para>
+    /// </summary>
+    public static string FormatPower(int power) =>
+        power >= 999_950
+            ? (power / 1_000_000.0).ToString("0.000", Inv) + "M"
+            : (power / 1000.0).ToString("0.0", Inv) + "k";
 
     /// <summary>DPS column text: "{dps:N0}/s" (React `${dps.toLocaleString()}/s`).</summary>
     public static string FormatDps(double dps) => Math.Truncate(dps).ToString("N0", Inv) + "/s";
