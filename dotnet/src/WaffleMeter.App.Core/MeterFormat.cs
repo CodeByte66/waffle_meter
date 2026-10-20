@@ -51,6 +51,7 @@ public static class MeterFormat
     /// <summary>
     /// Combat power badge: "{power/1000 .1f}k" (format.ts formatPower), and from a million up
     /// "{power/1000000 .3f}M" — same width as "999.9k", so the badge doesn't grow as powers climb.
+    /// The M form keeps its trailing zeros for that width; the tier band label (TierLadder) trims them.
     /// <para>The cut is 999,950, not 1,000,000: anything at or above it already rounds to "1000.0k".</para>
     /// </summary>
     public static string FormatPower(int power) =>

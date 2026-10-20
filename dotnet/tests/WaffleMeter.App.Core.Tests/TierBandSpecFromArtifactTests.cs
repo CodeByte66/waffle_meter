@@ -102,6 +102,9 @@ public sealed class TierBandSpecFromArtifactTests
         // 보여준다. 숫자가 아니라 문장이 틀리는 종류의 버그라 화면만 봐서는 못 잡는다.
         Assert.Equal("전투력 800k–820k 미만 기준", TierLadder.FormatComparisonBasis(800_000, 20_000));
         Assert.Equal("전투력 800k–850k 미만 기준", TierLadder.FormatComparisonBasis(800_000, 50_000));
+        // 백만 위에서는 좁은 폭의 끝자리가 M 소수로 살아남아야 한다 — 1.025M 를 1.03M 로 뭉개면 같은 문장 버그다.
+        Assert.Equal("전투력 1.02M–1.04M 미만 기준", TierLadder.FormatComparisonBasis(1_020_000, 20_000));
+        Assert.Equal("전투력 1.025M–1.05M 미만 기준", TierLadder.FormatComparisonBasis(1_025_000, 25_000));
         Assert.Equal("전체 전투력 기준", TierLadder.FormatComparisonBasis(TierArtifact.WholeCohortBand, 20_000));
     }
 

@@ -13,7 +13,8 @@ namespace WaffleMeter.App.Core.Tests;
 /// The numbers alone cannot be told apart, so the basis has to be stated or they get compared when they were
 /// never comparable.</para>
 /// <para>🔑 Every string here is byte-identical to the web's <c>formatTierComparisonBasis</c>. Reading the two
-/// screens side by side is the entire point, so a wording drift defeats the feature.</para>
+/// screens side by side is the entire point, so a wording drift defeats the feature. That includes the M form
+/// from a million up ("1.25M–1.3M") — the web's <c>formatPower</c> has to carry the same branch.</para>
 /// </summary>
 public sealed class TierComparisonBasisTests
 {
@@ -25,14 +26,15 @@ public sealed class TierComparisonBasisTests
         Assert.Equal("전체 전투력 기준", TierLadder.FormatComparisonBasis(TierArtifact.WholeCohortBand, TierArtifact.DefaultPowerBandSize));
     }
 
-    /// <summary>The web formats through <c>Intl.NumberFormat("en-US", { maximumFractionDigits: 1 })</c> on
-    /// thousands, so 1,250,000 renders "1,250k" — with the comma. ko-KR grouping would agree here, but the
-    /// contract names en-US and this is what pins it.</summary>
+    /// <summary>Below a million: thousands with one optional decimal and a <c>k</c>. From a million up:
+    /// millions with up to three decimals, trailing zeros dropped, and an <c>M</c> — the same unit as the
+    /// power badge, so "1.262M" never sits next to "1,250k–1,300k".</summary>
     [Theory]
     [InlineData(400_000, "전투력 400k–450k 미만 기준")]
     [InlineData(700_000, "전투력 700k–750k 미만 기준")]
-    [InlineData(1_250_000, "전투력 1,250k–1,300k 미만 기준")]
-    [InlineData(950_000, "전투력 950k–1,000k 미만 기준")]
+    [InlineData(950_000, "전투력 950k–1M 미만 기준")]
+    [InlineData(1_000_000, "전투력 1M–1.05M 미만 기준")]
+    [InlineData(1_250_000, "전투력 1.25M–1.3M 미만 기준")]
     public void A_band_names_its_range(int powerBand, string expected)
     {
         Assert.Equal(expected, TierLadder.FormatComparisonBasis(powerBand, TierArtifact.DefaultPowerBandSize));
