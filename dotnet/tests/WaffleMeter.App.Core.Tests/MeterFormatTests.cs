@@ -24,6 +24,17 @@ public sealed class MeterFormatTests
         Assert.Equal("5.0k", MeterFormat.FormatPower(5000));
     }
 
+    [Theory]
+    [InlineData(999_949, "999.9k")]
+    [InlineData(999_950, "1.000M")]    // would otherwise round to "1000.0k"
+    [InlineData(1_000_000, "1.000M")]
+    [InlineData(1_234_567, "1.235M")]  // rounds, like the k form
+    [InlineData(2_050_000, "2.050M")]  // keeps trailing zeros so the width is fixed
+    public void FormatPower_switches_to_millions_at_1000k(int power, string expected)
+    {
+        Assert.Equal(expected, MeterFormat.FormatPower(power));
+    }
+
     [Fact]
     public void FormatDps_and_percent()
     {
