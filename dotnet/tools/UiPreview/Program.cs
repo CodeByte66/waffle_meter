@@ -2948,9 +2948,9 @@ internal static class Program
     private static Dictionary<int, RowTier> SampleTiers()
     {
         const string dungeon = "무스펠의 성배 · 어려움";
-        // Self shows the longest basis the wording can produce (four grouped digits on both ends), so the
-        // preview exercises the widest the chip's second line ever gets.
-        const string band = "전투력 1,250k–1,300k 미만 기준";
+        // Self shows the longest basis the wording can produce (a three-decimal M on one end — a 25k band
+        // can't land on one at both), so the preview exercises the widest the chip's second line ever gets.
+        const string band = "전투력 1.225M–1.25M 미만 기준";
         const string whole = "전체 전투력 기준";
         return new Dictionary<int, RowTier>
         {

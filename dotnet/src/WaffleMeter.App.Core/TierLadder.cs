@@ -107,8 +107,11 @@ public static class TierLadder
     /// they would compare figures that were never comparable.</para>
     /// <para>🔑 Byte-identical to the web's <c>formatTierComparisonBasis</c>. The whole point is that the two
     /// screens can be read side by side, so a wording drift defeats the feature. The number format is the
-    /// web's <c>formatPower</c>: thousands, en-US grouping, one optional decimal, a <c>k</c> suffix — hence
-    /// "1,250k" with the comma, which ko-KR formatting would not produce. The separator is an EN DASH.</para>
+    /// web's <c>formatPower</c>: below a million, thousands with one optional decimal and a <c>k</c> ("950k");
+    /// from a million up, millions with up to three decimals, trailing zeros dropped, and an <c>M</c>
+    /// ("1.25M", "1.3M", "1M") — the same unit as the "1.250M" power badge beside it. The M branch is new
+    /// (2026-10-20) and has to exist on the web too, or the two screens part ways above a million.
+    /// The separator is an EN DASH.</para>
     /// </summary>
     /// <param name="powerBandSize">이 백분위를 낸 아티팩트가 선언한 밴드 폭. 라벨의 위 끝은 이 값으로만
     /// 정해진다 — 상수로 두면 서버가 폭을 바꾼 날 "800k–850k"라고 적어 놓고 실제로는 800k–820k 분포를
@@ -116,10 +119,12 @@ public static class TierLadder
     public static string FormatComparisonBasis(int powerBand, int powerBandSize) =>
         powerBand < 0
             ? "전체 전투력 기준"
-            : $"전투력 {FormatPowerThousands(powerBand)}–{FormatPowerThousands(powerBand + powerBandSize)} 미만 기준";
+            : $"전투력 {FormatBandPower(powerBand)}–{FormatBandPower(powerBand + powerBandSize)} 미만 기준";
 
-    private static string FormatPowerThousands(int power) =>
-        (power / 1000.0).ToString("#,0.#", System.Globalization.CultureInfo.InvariantCulture) + "k";
+    private static string FormatBandPower(int power) =>
+        power >= 1_000_000
+            ? (power / 1_000_000.0).ToString("#,0.###", System.Globalization.CultureInfo.InvariantCulture) + "M"
+            : (power / 1000.0).ToString("#,0.#", System.Globalization.CultureInfo.InvariantCulture) + "k";
 
     /// <summary>"상위 12.3%" — the single display format, so every surface agrees.</summary>
     public static string FormatTopPercent(double topPercent) =>
