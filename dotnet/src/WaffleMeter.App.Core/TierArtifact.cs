@@ -106,6 +106,24 @@ public sealed class TierArtifact
     /// <see cref="TierLadder.MinPower"/>, so in practice no battle lands under it.</summary>
     public const int DefaultPowerBandFloor = 400_000;
 
+    /// <summary>Accepted range for a declared <see cref="MinBattleDurationMs"/>. Anything outside it is a broken
+    /// document, not a policy — a 0 floor would rank a one-hit opener, a ten-minute one would hide every fight.</summary>
+    public const long MinDeclaredBattleDurationMs = 1_000;
+    public const long MaxDeclaredBattleDurationMs = 600_000;
+
+    /// <summary>
+    /// Shortest fight the distribution's population admits, as THIS artifact declares it.
+    /// <para>🔑 Read rather than hardcoded for the same reason as <see cref="PowerBandSize"/>: the server
+    /// decides which fights enter the cut table, and a meter that gates on a different floor either ranks
+    /// fights the population never contained or hides ones it did. The server can now move the floor (20s →
+    /// 10s) by republishing, with no meter release on the same day.</para>
+    /// <para>Carried on every schema (1·2·3) — this is NOT a schema bump. A build older than this field keeps
+    /// its hardcoded 20s, which is a subset of any lower floor, so it never claims a cohort it was outside.</para>
+    /// <para>Absent, non-integer or out of range (every artifact published before this shipped, including the
+    /// one cached on disk) → <see cref="TierLadder.MinBattleDurationMs"/>, which is what those were built with.</para>
+    /// </summary>
+    public long MinBattleDurationMs { get; }
+
     /// <summary>
     /// Width of a combat-power band, as THIS artifact declares it.
     /// <para>🔑 Why it is read rather than hardcoded: the band a character belongs to is computed here
@@ -159,6 +177,7 @@ public sealed class TierArtifact
         string generatedAt,
         int powerBandSize,
         int powerBandFloor,
+        long minBattleDurationMs,
         double[] grid,
         Dictionary<TierRowKey, long[]> rows,
         Dictionary<int, TierMobPlacement> mobs,
@@ -174,6 +193,7 @@ public sealed class TierArtifact
         GeneratedAt = generatedAt;
         PowerBandSize = powerBandSize;
         PowerBandFloor = powerBandFloor;
+        MinBattleDurationMs = minBattleDurationMs;
         Grid = grid;
         _rows = rows;
         _mobs = mobs;
@@ -317,6 +337,12 @@ public sealed class TierArtifact
             int powerBandFloor = TryInt(root, "powerBandFloor", out int declaredFloor) && declaredFloor > 0
                 ? declaredFloor
                 : DefaultPowerBandFloor;
+            // 전투시간 하한도 같은 모양: 서버가 모집단에 넣은 최단 전투를 선언하고 여기서 따른다. 없거나
+            // 정수가 아니거나 범위 밖이면 이 필드 이전의 고정값(20초)으로 읽는다.
+            long minBattleDurationMs = TryInt(root, "minBattleDurationMs", out int declaredDuration)
+                                       && declaredDuration is >= (int)MinDeclaredBattleDurationMs and <= (int)MaxDeclaredBattleDurationMs
+                ? declaredDuration
+                : TierLadder.MinBattleDurationMs;
 
             double[]? grid = ParseGrid(root);
             if (grid == null)
@@ -368,7 +394,7 @@ public sealed class TierArtifact
             }
 
             return new TierArtifact(
-                artifactId, windowDays, generatedAt, powerBandSize, powerBandFloor, grid, rows, mobs, trialGates,
+                artifactId, windowDays, generatedAt, powerBandSize, powerBandFloor, minBattleDurationMs, grid, rows, mobs, trialGates,
                 dungeonCategoryId, dungeonNames, variantLabels, categoryIds, jobIds);
         }
         catch

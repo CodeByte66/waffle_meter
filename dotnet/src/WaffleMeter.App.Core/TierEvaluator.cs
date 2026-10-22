@@ -63,7 +63,7 @@ public static class TierEvaluator
         }
 
         long durationMs = report.BattleEnd - report.BattleStart;
-        if (durationMs < TierLadder.MinBattleDurationMs)
+        if (durationMs < artifact.MinBattleDurationMs) // 서버가 선언한 하한(없으면 20초)
         {
             return result;
         }
