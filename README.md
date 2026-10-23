@@ -43,6 +43,8 @@ This project uses free code signing provided by [SignPath.io](https://signpath.i
 
 ## 업데이트 기록
 
+- v3.3.6 (2026-10-23)
+  - [변경] 등급이 전투 시작 10초 뒤부터 표시(종전 20초).
 - v3.3.5 (2026-10-20)
   - [변경] 100만이 넘는 전투력을 `1.235M` 처럼 M 단위로 표시(티어 칩 비교 기준 포함).
 - v3.3.4 (2026-10-19)

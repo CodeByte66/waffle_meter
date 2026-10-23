@@ -15,7 +15,7 @@ namespace WaffleMeter.Services;
 public sealed record VersionConfig(string Version)
 {
     /// <summary>Used when no build version can be resolved (kept in sync with the csproj default).</summary>
-    public const string Fallback = "3.3.5-dev";
+    public const string Fallback = "3.3.6-dev";
 
     /// <summary>
     /// Resolve the app version. Prefers <paramref name="explicitVersion"/> (injectable for tests/CLI),
