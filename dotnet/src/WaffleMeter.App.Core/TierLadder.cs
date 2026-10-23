@@ -57,7 +57,10 @@ public static class TierLadder
     public const double MaxTopPercent = 99.9;
 
     /// <summary>Server-side sample gates. A row that fails these is not in the distribution's population, so
-    /// claiming a percentile for it would be asserting membership of a cohort it was never part of.</summary>
+    /// claiming a percentile for it would be asserting membership of a cohort it was never part of.
+    /// <para>⚠️ The duration floor here is only the FALLBACK — the gate reads
+    /// <see cref="TierArtifact.MinBattleDurationMs"/>, which the server declares. This is what an artifact
+    /// that declares nothing (or a broken value) was built with.</para></summary>
     public const long MinBattleDurationMs = 20_000;
     public const int MinPower = 400_000;
 
@@ -276,8 +279,9 @@ public static class TierLadder
     };
 
     /// <summary>Build a cohort from a finished/live battle. Returns null when the fight is outside the
-    /// distribution's population (unmapped boss, unranked job, sub-20s, sub-400k power) — the caller then shows
-    /// nothing rather than a percentile of a cohort this fight was never part of.</summary>
+    /// distribution's population (unmapped boss, unranked job, shorter than the artifact's declared floor,
+    /// sub-400k power) — the caller then shows nothing rather than a percentile of a cohort this fight was
+    /// never part of.</summary>
     public static TierCohort? CohortFor(
         TierArtifact artifact,
         int mobCode,
@@ -289,7 +293,7 @@ public static class TierLadder
         bool synergyTrusted,
         TrialDifficulty trial = default)
     {
-        if (artifact == null || durationMs < MinBattleDurationMs || power < MinPower)
+        if (artifact == null || durationMs < artifact.MinBattleDurationMs || power < MinPower)
         {
             return null;
         }
