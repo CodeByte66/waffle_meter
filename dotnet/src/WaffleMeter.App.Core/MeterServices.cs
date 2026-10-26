@@ -128,6 +128,12 @@ public sealed class MeterServices
     // 막는 건 종전 그대로) 자격 있는 스트림이 나타나는 순간 살아 있어도 넘겨준다 — 진짜 S2C 는 첫 프레임부터
     // 0x3600 을 20Hz 로 싣기 때문에 노이즈에게 묶여 있을 수 없다. 평문 프레임(LooksLikeText)은 임시로도 못 잡는다.
     private bool _primaryProvisional;
+    // HTTP/1.x 요청 연결(MarkIfNonGame). 키는 Canonicalize 라 양방향이 같이 표시된다. 리셋해도 지우지 않는다 —
+    // 연결이 무슨 프로토콜인지는 초기화와 무관한 사실이다. 상한을 넘으면 더 표시하지 않을 뿐 종전 동작이다.
+    private const int MaxNonGameConns = 4096;
+    private readonly HashSet<string> _nonGameConns = new();
+    private readonly HashSet<string> _nonGameVeto = new();
+    private bool _nonGameDisabled;
     private readonly StreamProcessor _processor;
     private readonly Dictionary<string, StreamState> _streams = new();
     private readonly HashSet<string> _excludedKeys = new();
@@ -211,6 +217,72 @@ public sealed class MeterServices
         public long SelfHeals { get; set; }          // stream-scoped stall recoveries (diagnostic)
         public bool ClockCredential { get; set; }    // carried a server-clock frame — may hold primary (sticky; survives flush/self-heal)
         public bool LoggedTextClaim { get; set; }
+        public string Canon { get; init; } = ""; // Canonicalize(StreamKey) — both directions of the connection
+        public bool NonGame { get; set; }        // the connection spoke HTTP/1.x (NonGameProtocol) — never game
+    }
+
+    /// <summary>
+    /// Marks this connection (both directions) as NOT the game once a segment opens with a complete HTTP/1.x
+    /// request head. A marked stream earns no game signal (and loses the one it had), so the existing noise
+    /// guard is free to judge it — the NAVER connector's loopback video otherwise kept a permanent exemption
+    /// from one framing accident. A tunnel opener vetoes the connection instead, and a server-clock frame on
+    /// either direction vetoes it for good (revoking a mark — an HTTP tunnel carrying the game), so a game
+    /// connection can only ever be marked for the few frames before its first 0x3600. Those frames lose only
+    /// what a duplicate of a live credentialed primary would lose; with no live primary they are processed
+    /// in full.
+    /// Consumer-thread only.
+    /// </summary>
+    private void MarkIfNonGame(string streamKey, StreamState state, byte[] payload)
+    {
+        if (_nonGameDisabled)
+        {
+            return;
+        }
+
+        if (!state.ClockCredential && !_nonGameVeto.Contains(state.Canon) && !_nonGameConns.Contains(state.Canon))
+        {
+            switch (NonGameProtocol.Classify(payload))
+            {
+                case NonGameVerdict.Tunnel:
+                    AddNonGameVeto(state.Canon);
+                    break;
+                case NonGameVerdict.HttpRequest when _nonGameConns.Count < MaxNonGameConns:
+                    _nonGameConns.Add(state.Canon);
+                    DebugLogger.Meta("nongame_conn", ("key", streamKey), ("bytes", state.Bytes), ("gameSignal", state.GameSignal));
+                    break;
+            }
+        }
+
+        bool nonGame = !_nonGameDisabled && !state.ClockCredential
+            && !_nonGameVeto.Contains(state.Canon) && _nonGameConns.Contains(state.Canon);
+        if (nonGame && !state.NonGame)
+        {
+            if (state.GameSignal > 0)
+            {
+                DebugLogger.Meta("nongame_signal_reset", ("key", streamKey), ("gameSignal", state.GameSignal));
+                state.GameSignal = 0;
+            }
+
+            if (_lastGameStreamKey == streamKey) _lastGameStreamKey = null;
+            if (_primaryGameKey == streamKey) _primaryGameKey = null; // 자격이 없으니 임시 primary 였다
+        }
+
+        state.NonGame = nonGame;
+    }
+
+    private void AddNonGameVeto(string canon)
+    {
+        if (_nonGameVeto.Count < MaxNonGameConns)
+        {
+            _nonGameVeto.Add(canon);
+            return;
+        }
+
+        // 거부 목록을 더 못 담으면 터널을 지킬 수 없다 — 표시 기능 전체를 끄고 종전 동작으로 돌아간다.
+        _nonGameDisabled = true;
+        _nonGameConns.Clear();
+        foreach (StreamState s in _streams.Values) s.NonGame = false;
+        DebugLogger.Meta("nongame_disabled", ("veto", _nonGameVeto.Count));
     }
 
     // Stall recoveries and gap-skips that belong to streams which have since been evicted or excluded. Without
@@ -587,12 +659,21 @@ public sealed class MeterServices
             var assembler = new StreamAssembler((packet, at) =>
             {
                 DebugLogger.Assembled(packet, at); // L1: reassembled application packet
-                bool isGame = StreamProcessor.LooksLikeGamePacket(packet);
+                bool isGame = created is not { NonGame: true } && StreamProcessor.LooksLikeGamePacket(packet);
                 if (created is not null && !created.ClockCredential && StreamProcessor.IsServerClockFrame(packet))
                 {
                     created.ClockCredential = true;
                     DebugLogger.Meta("game_clock_credential", ("key", streamKey), ("bytes", created.Bytes),
                         ("emitted", created.EmittedPackets), ("gameSignal", created.GameSignal));
+                    // 게임 서버 시계가 실린 연결은 양방향 모두 다시는 표시하지 않는다. 이미 표시돼 있었다면 HTTP 터널
+                    // 위의 게임(부스터·프록시)이다 — 거둔다. 이 방향이 표시되기 전이라도 거부 목록에 올려야 한다:
+                    // S2C 가 먼저 자격을 얻은 뒤 C2S 에 요청 헤드가 실리면, 그 C2S 가 표시된 채 게임 신호를 잃는다.
+                    AddNonGameVeto(created.Canon);
+                    if (_nonGameConns.Remove(created.Canon) || created.NonGame)
+                    {
+                        created.NonGame = false; // 다음 프레임부터 isGame 이 정상 계산된다
+                        DebugLogger.Meta("nongame_revoked", ("key", streamKey));
+                    }
                     if (created.GameSignal > 0)
                     {
                         _lastGameStreamKey = streamKey;
@@ -682,6 +763,16 @@ public sealed class MeterServices
                     }
                 }
 
+                // 표시된 HTTP 연결은 자격 있는 게임 스트림이 primary 로 '살아' 있는 동안 억제된 미러와 똑같이 다룬다
+                // (신원 계열만). 살아 있는지는 락과 같은 기준이다 — 닫힌 옛 연결의 키가 남아 있다고 새 연결의 첫
+                // 0x3600 이전 프레임을 깎으면 종전보다 엄격해진다. 그런 primary 가 없으면 종전처럼 풀 처리.
+                if (created is { NonGame: true } && _primaryGameKey is not null && !_primaryProvisional
+                    && at - _primaryGameAt <= GameStreamHandoverMs)
+                {
+                    _processor.OnPacketReceived(packet, at, identityOnly: true);
+                    return;
+                }
+
                 if (created is { SuppressedDuplicate: true })
                 {
                     // Damage/buff stay suppressed (single-stream lock → no VPN double-count), but the SECOND
@@ -698,13 +789,14 @@ public sealed class MeterServices
                 }
                 _processor.OnPacketReceived(packet, at);
             });
-            created = new StreamState(new PacketAlignmenter(), assembler);
+            created = new StreamState(new PacketAlignmenter(), assembler) { Canon = Canonicalize(streamKey) };
             state = created;
             _streams[segment.StreamKey] = state;
         }
 
         state.LastSeen = segment.ArrivedAtMs;
         state.Bytes += segment.Payload.Length;
+        MarkIfNonGame(segment.StreamKey, state, segment.Payload);
         foreach (AlignedChunk chunk in state.Aligner.Feed(segment.Seq, segment.Payload, segment.ArrivedAtMs))
         {
             state.Assembler.ProcessChunk(chunk.Data, chunk.ArrivedAt);

@@ -365,6 +365,125 @@ public sealed class MeterServicesTests : IDisposable
     }
 
     [Fact]
+    public void An_http_request_connection_never_earns_a_game_signal()
+    {
+        // 커넥터 요청 연결은 첫 세그먼트가 HTTP 요청 헤드다. 그 연결은 평문이 우연히 만든 opcode 로 게임 신호를
+        // 얻지 못한다(얻으면 노이즈 가드에서 영구 면제된다).
+        string logDir = Path.Combine(_temp, "pdl_http_mark");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(new CapturedSegment(0, HttpHead, 0, "127.0.0.1", 49638, "127.0.0.1", 17080));
+        for (int i = 0; i < 30; i++)
+        {
+            services.Value.Feed(UaFrameSegment(HttpHead.Length + i * UaFrame.Length, 1000 + i));
+        }
+
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Single(lines, l => l.Contains("\"type\":\"nongame_conn\""));
+        Assert.DoesNotContain(lines, l => l.Contains("\"type\":\"game_signal_first\""));
+    }
+
+    [Fact]
+    public void A_marked_connection_loses_its_game_signal_and_the_noise_guard_can_exclude_it()
+    {
+        // 종전엔 우연한 isGame 한 번이 영구 면제였다. 반대 방향이 HTTP 요청으로 연결을 드러내면 그 면제를 거두고,
+        // 기존 노이즈 가드(50프레임 · 2MB)가 영상 방향을 걸러낸다.
+        string logDir = Path.Combine(_temp, "pdl_http_reset");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        long seq = 0;
+        for (int i = 0; i < 60; i++)
+        {
+            services.Value.Feed(new CapturedSegment(seq, UaFrame, 1000 + i, "127.0.0.1", 17080, "127.0.0.1", 49638));
+            seq += UaFrame.Length;
+        }
+
+        services.Value.Feed(new CapturedSegment(0, HttpHead, 2000, "127.0.0.1", 49638, "127.0.0.1", 17080));
+        services.Value.Feed(new CapturedSegment(seq, new byte[2_000_000], 2001, "127.0.0.1", 17080, "127.0.0.1", 49638));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Contains(lines, l => l.Contains("\"type\":\"nongame_signal_reset\"") && l.Contains("\"gameSignal\":60"));
+        Assert.Contains(lines, l => l.Contains("\"type\":\"conn_excluded\"") && l.Contains("127.0.0.1:17080-"));
+    }
+
+    [Fact]
+    public void A_connect_tunnel_carrying_the_game_is_never_marked()
+    {
+        // 부스터·프록시는 CONNECT 로 터널을 열고 그 연결에 게임을 싣는다 — 거부 목록에 올라 영영 표시되지 않는다.
+        string logDir = Path.Combine(_temp, "pdl_http_connect");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        byte[] connect = System.Text.Encoding.ASCII.GetBytes(
+            "CONNECT 206.127.156.103:13328 HTTP/1.1\r\nHost: 206.127.156.103:13328\r\n\r\n");
+        services.Value.Feed(new CapturedSegment(0, connect, 900, "10.0.0.2", 5000, "10.0.0.1", 8080));
+        // 터널 안에서 평범한 요청 헤드가 다시 지나가도(프록시가 넘겨 주는 HTTP) 이 연결은 이미 거부 목록이다.
+        services.Value.Feed(new CapturedSegment(connect.Length, HttpHead, 950, "10.0.0.2", 5000, "10.0.0.1", 8080));
+        for (int i = 0; i < 5; i++)
+        {
+            services.Value.Feed(new CapturedSegment(i * 16, [.. MapFrame(1000 + i), .. DamageFrame], 1000 + i,
+                "10.0.0.1", 8080, "10.0.0.2", 5000));
+        }
+
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Equal(5, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\"")));
+        Assert.DoesNotContain(lines, l => l.Contains("\"type\":\"nongame_conn\""));
+    }
+
+    [Fact]
+    public void A_request_head_after_the_server_clock_never_marks_the_game_connection()
+    {
+        // 미터를 세션 도중에 켜면 S2C 가 먼저 0x3600 자격을 얻는다. 그 뒤 C2S 에 요청 헤드가 실려도(요청마다
+        // 헤드를 붙이는 HTTP 터널) 그 연결은 이미 게임으로 확인됐다 — C2S 가 표시돼 게임 신호를 잃으면
+        // 노이즈 가드가 게임의 C2S 를 헬퍼에서 끊을 수 있다.
+        string logDir = Path.Combine(_temp, "pdl_http_after_clock");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(new CapturedSegment(0, [.. MapFrame(1000), .. DamageFrame], 1000, "10.0.0.1", 8080, "10.0.0.2", 5000));
+        services.Value.Feed(new CapturedSegment(0, HttpHead, 1100, "10.0.0.2", 5000, "10.0.0.1", 8080));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.DoesNotContain(lines, l => l.Contains("\"type\":\"nongame_conn\""));
+    }
+
+    [Fact]
+    public void A_marked_tunnel_behind_a_stale_primary_loses_nothing_and_takes_the_lock_once_clocked()
+    {
+        // 평범한 GET 으로 여는 HTTP 터널 위의 게임이 재접속했다. 옛 연결(자격 primary)은 5초 넘게 조용하다.
+        // 새 연결의 첫 0x3600 이전 프레임은 표시돼 있어도 풀 처리돼야 하고(살아 있는 primary 가 없다),
+        // 0x3600 이 표시를 거둔 뒤의 프레임은 정상적으로 게임 신호를 얻어 primary 를 넘겨받아야 한다.
+        string logDir = Path.Combine(_temp, "pdl_http_revoke");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 6000)); // 옛 연결, 이후 침묵
+        services.Value.Feed(new CapturedSegment(0, HttpHead, 7000, "10.0.0.2", 5000, "10.0.0.1", 8080));
+        services.Value.Feed(new CapturedSegment(0, [.. DamageFrame, .. MapFrame(7100), .. DamageFrame], 7100,
+            "10.0.0.1", 8080, "10.0.0.2", 5000));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Single(lines, l => l.Contains("\"type\":\"nongame_conn\""));
+        Assert.Single(lines, l => l.Contains("\"type\":\"nongame_revoked\""));
+        Assert.Equal(3, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\""))); // 옛 1 + 새 2(0x3600 앞뒤)
+        Assert.Contains(lines, l => l.Contains("\"type\":\"primary_claim\"") && l.Contains("\"key\":\"10.0.0.1:8080-"));
+    }
+
+    [Fact]
     public void A_stalled_stream_self_heals_and_resumes_dispatching()
     {
         // The reported failure: with a NAVER Live Streaming Connector session running, the meter stopped
@@ -583,6 +702,11 @@ public sealed class MeterServicesTests : IDisposable
 
     private static CapturedSegment UaFrameSegment(long seq, long at) =>
         new(seq, UaFrame, at, "127.0.0.1", 49638, "127.0.0.1", 17080);
+
+    // 정확히 68바이트인 HTTP 요청 헤드: 'G'(0x47=71) 를 길이로 읽으면 realLength = 71 + 1 - 4 = 68 이라 프레임 하나로
+    // 떨어지고, 같은 방향의 다음 세그먼트가 프레임 경계에서 시작한다.
+    private static readonly byte[] HttpHead =
+        System.Text.Encoding.ASCII.GetBytes("GET /" + new string('a', 27) + " HTTP/1.1\r\nHost: localhost:17080\r\n\r\n");
 
     private static string[] ReadLog(string logDir) =>
         CaptureCorpusReader.ReadLines(Directory.GetFiles(logDir, "*.jsonl.gz").Single())
