@@ -81,7 +81,8 @@ public sealed class MeterServices
     // yielding a recognizable game packet is noise (NAVER Live P2P, downloads, OBS…). We stop processing
     // it AND ask the elevated helper to drop it at capture, so a flood can't starve the game's
     // high-frequency damage stream. Content-based (never IP/port targeted) → loopback/booster game paths,
-    // which DO yield game packets, are always kept (they earn GameSignal within the first few KB).
+    // which DO yield game packets, are always kept (they carry the server clock from their first frames —
+    // see IsProtectedGameStream).
     private const long NoiseVolumeBytes = 2_000_000;
     // Require some FRAMED packets too, so a stalled aligner (which accumulates raw bytes but emits no
     // assembled packets — more likely under the very flood this fights) can never be misread as noise.
@@ -106,10 +107,10 @@ public sealed class MeterServices
     // (B) A stream with no game signal is sitting on a multi-MB framer buffer: a false realLength read out of
     // high-entropy video/P2P bytes. It emits nothing, so it can never satisfy the noise guard's
     // MinNoisePackets gate, and it grows toward PacketAccumulator's 32MB cap (a 64MB array that never shrinks).
-    // GameSignal > 0 streams are EXEMPT, so the large zone/boss snapshot frames that raised that cap
-    // (c683495, 바크론 보스 인식) are untouched — they ride a connection that earned its game signal in the
-    // first few KB. The grace bytes keep a freshly-reconnected game stream out of this until it has had ample
-    // room to earn that signal.
+    // Proven game streams (IsProtectedGameStream) are EXEMPT, so the large zone/boss snapshot frames that raised
+    // that cap (c683495, 바크론 보스 인식) are untouched — they ride a connection that carried the server clock
+    // in its first few hundred bytes. The grace bytes keep a freshly-reconnected game stream out of this until it
+    // has had ample room to prove itself.
     private const long NoiseFramerHoldBytes = 2_000_000;
     private const long NoiseFramerGraceBytes = 4_000_000;
     // Single-game-stream lock (dual-capture defense): a VPN/accelerator can expose the SAME plaintext
@@ -131,6 +132,9 @@ public sealed class MeterServices
     // HTTP/1.x 요청 연결(MarkIfNonGame). 키는 Canonicalize 라 양방향이 같이 표시된다. 리셋해도 지우지 않는다 —
     // 연결이 무슨 프로토콜인지는 초기화와 무관한 사실이다. 상한을 넘으면 더 표시하지 않을 뿐 종전 동작이다.
     private const int MaxNonGameConns = 4096;
+    // 서버 시계 자격을 얻은 연결(Canonicalize). 노이즈 가드 면제의 확정 경로 — IsProtectedGameStream 참조.
+    private readonly HashSet<string> _credentialedConns = new();
+    private const int MinExemptingGameSignal = 3;
     private readonly HashSet<string> _nonGameConns = new();
     private readonly HashSet<string> _nonGameVeto = new();
     private bool _nonGameDisabled;
@@ -212,7 +216,7 @@ public sealed class MeterServices
         public long LastSeen { get; set; }
         public long Bytes { get; set; }              // raw payload volume seen on this directional connection
         public int EmittedPackets { get; set; }      // assembled packets the framer emitted (stall guard)
-        public int GameSignal { get; set; }          // assembled packets that look like game packets (>0 => protected)
+        public int GameSignal { get; set; }          // non-text assembled packets that look like game packets
         public bool SuppressedDuplicate { get; set; } // a concurrent duplicate of the primary game stream — drop its packets
         public long SelfHeals { get; set; }          // stream-scoped stall recoveries (diagnostic)
         public bool ClockCredential { get; set; }    // carried a server-clock frame — may hold primary (sticky; survives flush/self-heal)
@@ -269,6 +273,24 @@ public sealed class MeterServices
 
         state.NonGame = nonGame;
     }
+
+    /// <summary>
+    /// Whether the noise guard and the framer_hold self-heal must leave this stream alone. Two independent ways in:
+    /// <para>(1) The connection carried the game's server clock (0x3600) on EITHER direction. That is certain and
+    /// it is the only thing that protects an idle game connection: in town the server→client stream can go
+    /// minutes with nothing but 0x3600, which is not a game signal (실측 186초·42KB at 0 — at ~0.2KB/s that
+    /// reaches the 2MB guard in ~2.4h of AFK, and the guard would drop the game at the helper until a reset).
+    /// The reverse direction is covered through the canonical key, because client→server never carries 0x3600.</para>
+    /// <para>(2) At least <see cref="MinExemptingGameSignal"/> game-looking frames. One was enough before, and
+    /// noise earns one by chance (p≈4.3e-4~6.3e-4 per frame → 2~3% of heavy P2P connections before the guard
+    /// judges them, after which they stayed exempt for life — a 37MB peer was seen escaping that way). Three
+    /// cuts that to ~5e-6, while the slowest real stream measured reached its third hit at 131KB, 15× inside
+    /// the 2MB guard; this path is what still covers a connection when the clock is never seen.</para>
+    /// </summary>
+    private bool IsProtectedGameStream(StreamState state) =>
+        state.ClockCredential
+        || _credentialedConns.Contains(state.Canon)
+        || state.GameSignal >= MinExemptingGameSignal;
 
     private void AddNonGameVeto(string canon)
     {
@@ -616,7 +638,7 @@ public sealed class MeterServices
         {
             selfHeals += s.SelfHeals;
             framerResets += s.Assembler.ForcedResets;
-            if (s.GameSignal == 0 && s.Bytes >= NoiseVolumeBytes && s.EmittedPackets < MinNoisePackets)
+            if (!IsProtectedGameStream(s) && s.Bytes >= NoiseVolumeBytes && s.EmittedPackets < MinNoisePackets)
             {
                 blindSpot++;
             }
@@ -631,7 +653,7 @@ public sealed class MeterServices
             {
                 worstMs = stalled;
                 worstHeld = s.Aligner.HeldBytes;
-                worstIsGame = s.GameSignal > 0;
+                worstIsGame = IsProtectedGameStream(s);
                 worstIsPrimary = _primaryGameKey == key;
             }
         }
@@ -663,6 +685,11 @@ public sealed class MeterServices
                 if (created is not null && !created.ClockCredential && StreamProcessor.IsServerClockFrame(packet))
                 {
                     created.ClockCredential = true;
+                    if (_credentialedConns.Count < MaxNonGameConns)
+                    {
+                        _credentialedConns.Add(created.Canon); // 반대 방향(C2S)도 게임 연결로 보호된다
+                    }
+
                     DebugLogger.Meta("game_clock_credential", ("key", streamKey), ("bytes", created.Bytes),
                         ("emitted", created.EmittedPackets), ("gameSignal", created.GameSignal));
                     // 게임 서버 시계가 실린 연결은 양방향 모두 다시는 표시하지 않는다. 이미 표시돼 있었다면 HTTP 터널
@@ -694,21 +721,27 @@ public sealed class MeterServices
                     created.EmittedPackets++;
                     if (isGame)
                     {
-                        if (created.GameSignal == 0)
+                        // 평문 프레임은 게임 신호로 세지 않는다. 실측 진짜 게임 hit 55,535개 중 텍스트 0, 루프백
+                        // 오탐(HLS 파일명·User-Agent 의 ".36 ")은 100% 텍스트였다. 요청 헤드를 못 본 연결(미터보다
+                        // 먼저 열린 연결, HTTP/2)까지 덮는다. lock 판정(isGame)은 그대로 둔다 — 텍스트는 거기서 따로 막힌다.
+                        bool textual = StreamProcessor.LooksLikeText(packet);
+                        if (!textual)
                         {
-                            // The 0->1 transition, breadcrumbed ONCE. This is the line that tells a real game
-                            // connection from a false positive: LooksLikeGamePacket is a structural check
-                            // (27 opcode keys + FF FF, p≈4.3e-4 per framed packet), so high-entropy noise
-                            // eventually earns a game signal too — and that grants PERMANENT exemption from the
-                            // noise guard (the GameSignal==0 test below never decays). A game stream earns this
-                            // within the first few KB; a false positive shows up tens of MB in, so the byte
-                            // count alone separates them.
-                            DebugLogger.Meta("game_signal_first",
-                                ("key", streamKey), ("bytes", created.Bytes), ("emitted", created.EmittedPackets));
+                            if (created.GameSignal == 0)
+                            {
+                                // The 0->1 transition, breadcrumbed ONCE. LooksLikeGamePacket is a structural check
+                                // (27 opcode keys + FF FF, p≈4.3e-4 per framed packet), so high-entropy noise earns
+                                // a lone hit now and then — which is why one hit no longer protects a stream
+                                // (IsProtectedGameStream). A game stream earns this within the first few KB; a false
+                                // positive shows up MBs in, so the byte count alone separates them.
+                                DebugLogger.Meta("game_signal_first",
+                                    ("key", streamKey), ("bytes", created.Bytes), ("emitted", created.EmittedPackets));
+                            }
+
+                            created.GameSignal++; // content signal: this connection carries the game stream
                         }
 
-                        created.GameSignal++; // content signal: this connection carries the game stream — protect it
-                        if (created.ClockCredential || !StreamProcessor.LooksLikeText(packet))
+                        if (created.ClockCredential || !textual)
                         {
                             _lastGameStreamKey = streamKey; // for the ping matcher (independent of the dedupe toggle)
                         }
@@ -806,8 +839,8 @@ public sealed class MeterServices
 
         // Classify AFTER processing (so this segment's packets count first): a connection that has pushed
         // a lot of bytes AND emitted enough framed packets, none of which look like the game, is noise.
-        // The game stream earns GameSignal within the first few KB, so it is protected long before this.
-        if (state.GameSignal == 0 && state.EmittedPackets >= MinNoisePackets && state.Bytes >= NoiseVolumeBytes)
+        // The game connection carries the server clock from its first frames, so it is protected long before this.
+        if (!IsProtectedGameStream(state) && state.EmittedPackets >= MinNoisePackets && state.Bytes >= NoiseVolumeBytes)
         {
             // Drop the stream state now, and breadcrumb it so a wrongful exclusion is diagnosable in a debug
             // session instead of a silent blackout. ⚠️ The durable part is _excludedKeys below, which is capped:
@@ -889,7 +922,7 @@ public sealed class MeterServices
         }
 
         bool alignerStalled = state.Aligner.GapOpenAtMs is long openedAt && nowMs - openedAt >= _selfHealGapMs;
-        bool framerStuck = state.GameSignal == 0
+        bool framerStuck = !IsProtectedGameStream(state)
             && state.Bytes >= NoiseFramerGraceBytes
             && state.Assembler.BufferedBytes >= NoiseFramerHoldBytes;
 

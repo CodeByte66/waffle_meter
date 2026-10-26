@@ -377,7 +377,8 @@ public sealed class MeterServicesTests : IDisposable
         services.Value.Feed(new CapturedSegment(0, HttpHead, 0, "127.0.0.1", 49638, "127.0.0.1", 17080));
         for (int i = 0; i < 30; i++)
         {
-            services.Value.Feed(UaFrameSegment(HttpHead.Length + i * UaFrame.Length, 1000 + i));
+            services.Value.Feed(new CapturedSegment(HttpHead.Length + i * DamageFrame.Length, DamageFrame, 1000 + i,
+                "127.0.0.1", 49638, "127.0.0.1", 17080));
         }
 
         logger.Stop();
@@ -400,8 +401,8 @@ public sealed class MeterServicesTests : IDisposable
         long seq = 0;
         for (int i = 0; i < 60; i++)
         {
-            services.Value.Feed(new CapturedSegment(seq, UaFrame, 1000 + i, "127.0.0.1", 17080, "127.0.0.1", 49638));
-            seq += UaFrame.Length;
+            services.Value.Feed(new CapturedSegment(seq, DamageFrame, 1000 + i, "127.0.0.1", 17080, "127.0.0.1", 49638));
+            seq += DamageFrame.Length;
         }
 
         services.Value.Feed(new CapturedSegment(0, HttpHead, 2000, "127.0.0.1", 49638, "127.0.0.1", 17080));
@@ -588,6 +589,134 @@ public sealed class MeterServicesTests : IDisposable
     }
 
     [Fact]
+    public void An_idle_game_connection_carrying_only_the_server_clock_is_never_excluded()
+    {
+        // 마을 대기: 진짜 S2C 가 0x3600 만 실어 오는 동안은 게임 신호가 0 이다(실측 186초·42KB). 그대로 2MB 에
+        // 닿으면(≈2.4시간 AFK) 노이즈 가드가 게임 연결을 헬퍼에서 끊었다. 서버 시계 자격이 그걸 막는다.
+        string logDir = Path.Combine(_temp, "pdl_idle_clock");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        byte[] clocks = new byte[11 * 200_000]; // 2.2MB = MapFrame 200,000개
+        for (int i = 0; i < 200_000; i++) MapFrame(1000 + i).CopyTo(clocks, i * 11);
+        services.Value.Feed(new CapturedSegment(0, clocks, 1000, "10.0.0.1", 5000, "10.0.0.2", 13328));
+        services.Value.Feed(new CapturedSegment(clocks.Length, DamageFrame, 2000, "10.0.0.1", 5000, "10.0.0.2", 13328));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.DoesNotContain(lines, l => l.Contains("\"type\":\"conn_excluded\""));
+        Assert.Single(lines, l => l.Contains("\"opcodeHex\":\"3804\"")); // 대기 뒤의 전투가 그대로 잡힌다
+    }
+
+    [Fact]
+    public void The_client_to_server_direction_of_a_clocked_connection_is_never_excluded()
+    {
+        // C2S 는 0x3600 을 싣지 않고 게임 opcode 도 우연히만 맞는다. 같은 연결의 S2C 가 자격을 얻었으면 보호된다.
+        string logDir = Path.Combine(_temp, "pdl_c2s_protected");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));
+        FeedUnknownFrames(services.Value, "10.0.0.2", 13328, "10.0.0.1", 5000, megabytes: 2.1);
+        logger.Stop();
+
+        Assert.DoesNotContain(ReadLog(logDir), l => l.Contains("\"type\":\"conn_excluded\""));
+    }
+
+    [Fact]
+    public void A_lone_chance_hit_no_longer_exempts_a_noise_stream_for_life()
+    {
+        // 무거운 P2P 연결은 판정 전에 우연히 게임 opcode 를 한 번 맞히곤 한다(연결당 2~3%). 예전엔 그 한 번이
+        // 영구 면제였다(실측 37MB 피어가 그렇게 남았다). 이제는 서버 시계나 세 번 이상의 신호가 있어야 한다.
+        string logDir = Path.Combine(_temp, "pdl_lone_hit");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(new CapturedSegment(0, DamageFrame, 900, "10.9.9.9", 6880, "10.0.0.2", 50000));
+        FeedUnknownFrames(services.Value, "10.9.9.9", 6880, "10.0.0.2", 50000, megabytes: 2.1, seq: DamageFrame.Length);
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Contains(lines, l => l.Contains("\"type\":\"game_signal_first\"") && l.Contains("10.9.9.9"));
+        Assert.Contains(lines, l => l.Contains("\"type\":\"conn_excluded\"") && l.Contains("10.9.9.9"));
+    }
+
+    [Fact]
+    public void Text_frames_never_count_as_a_game_signal()
+    {
+        // 요청 헤드를 못 본 평문 연결(미터보다 먼저 열린 연결, HTTP/2 등)도 우연한 opcode 로 면제를 얻지 못한다.
+        string logDir = Path.Combine(_temp, "pdl_text_signal");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        for (int i = 0; i < 10; i++)
+        {
+            services.Value.Feed(new CapturedSegment(i * UaFrame.Length, UaFrame, 900 + i, "127.0.0.1", 17080, "127.0.0.1", 49700));
+        }
+
+        FeedUnknownFrames(services.Value, "127.0.0.1", 17080, "127.0.0.1", 49700, megabytes: 2.1, seq: 10 * UaFrame.Length);
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.DoesNotContain(lines, l => l.Contains("\"type\":\"game_signal_first\""));
+        Assert.Contains(lines, l => l.Contains("\"type\":\"conn_excluded\""));
+    }
+
+    [Theory]
+    [InlineData(3, false)] // 서버 시계를 못 본 진짜 게임 경로(시계 없는 미러·릴레이 등)는 신호 3회로 보호된다
+    [InlineData(2, true)]  // 우연한 hit 두 번으로는 면제되지 않는다
+    public void Without_a_server_clock_three_game_signals_protect_a_stream_and_two_do_not(int hits, bool excluded)
+    {
+        string logDir = Path.Combine(_temp, $"pdl_hits_{hits}");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        for (int i = 0; i < hits; i++)
+        {
+            services.Value.Feed(new CapturedSegment(i * DamageFrame.Length, DamageFrame, 900 + i, "10.0.0.1", 5300, "10.0.0.2", 13328));
+        }
+
+        FeedUnknownFrames(services.Value, "10.0.0.1", 5300, "10.0.0.2", 13328, megabytes: 2.1, seq: hits * DamageFrame.Length);
+        logger.Stop();
+
+        Assert.Equal(excluded, ReadLog(logDir).Any(l => l.Contains("\"type\":\"conn_excluded\"")));
+    }
+
+    [Fact]
+    public void A_large_frame_after_three_game_signals_is_never_cut_short_even_without_a_clock()
+    {
+        // 재접속 직후 0x3600 보다 먼저 거대한 스냅샷 프레임이 오는 경우 — 게임 신호 3회면 framer_hold 가 자르지 않는다.
+        string logDir = Path.Combine(_temp, "pdl_framer_hits");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        for (int i = 0; i < 3; i++)
+        {
+            services.Value.Feed(new CapturedSegment(i * DamageFrame.Length, DamageFrame, 900 + i, "10.0.0.1", 5400, "10.0.0.2", 13328));
+        }
+
+        long seq = 3 * DamageFrame.Length;
+        byte[] header = { 0x80, 0x87, 0xA7, 0x0E }; // realLength 30,000,000
+        services.Value.Feed(new CapturedSegment(seq, header, 1000, "10.0.0.1", 5400, "10.0.0.2", 13328));
+        seq += header.Length;
+        for (int i = 0; i < 5; i++)
+        {
+            services.Value.Feed(new CapturedSegment(seq, new byte[1_000_000], 1001 + i, "10.0.0.1", 5400, "10.0.0.2", 13328));
+            seq += 1_000_000;
+        }
+
+        logger.Stop();
+
+        Assert.DoesNotContain(ReadLog(logDir), l => l.Contains("stream_self_heal"));
+    }
+
+    [Fact]
     public void Startup_purge_drops_an_impossible_identitys_artifact_counts_but_keeps_server_ownership()
     {
         // 기동 시 위생 정리는 동의 레코드에서 지운 해시를 캐릭터별 스토어 전부에서 치운다 — content.abyssArtifacts
@@ -642,16 +771,16 @@ public sealed class MeterServicesTests : IDisposable
         $"\"job\":null,\"grant\":false,\"pendingPublic\":false}}";
 
     // Declares a 30MB frame and then feeds 5MB of contiguous body, so the framer sits on a multi-MB buffer
-    // without ever completing a packet. withGameSignalFirst prefixes one real game packet, which is the only
-    // thing separating the two cases above.
+    // without ever completing a packet. withGameSignalFirst prefixes one real game segment (server clock +
+    // damage), which is the only thing separating the two cases above.
     private static void FeedBogusFrame(MeterServices services, int srcPort, bool withGameSignalFirst)
     {
         long seq = 0;
         long at = 1000;
         if (withGameSignalFirst)
         {
-            services.Feed(GameSegment(seq: 0, at: at, srcPort: srcPort));
-            seq = 5;
+            services.Feed(ClockedGameSegment(seq: 0, at: at, srcPort: srcPort)); // 서버 시계 = 확정된 게임 연결
+            seq = 16;
         }
 
         // LEB128 for 30,000,000 -> realLength = value + varint.length - 4 = 30,000,000. Under the 32MB cap, so
@@ -707,6 +836,24 @@ public sealed class MeterServicesTests : IDisposable
     // 떨어지고, 같은 방향의 다음 세그먼트가 프레임 경계에서 시작한다.
     private static readonly byte[] HttpHead =
         System.Text.Encoding.ASCII.GetBytes("GET /" + new string('a', 27) + " HTTP/1.1\r\nHost: localhost:17080\r\n\r\n");
+
+    // 게임 opcode 가 아닌(0x9999) 1000바이트 프레임을 megabytes 만큼 한 세그먼트에 담아 보낸다. 노이즈 가드가
+    // 판정할 수 있는 모양(프레임 50개 이상 · 2MB 이상)이다. realLength = 1002 + 2 - 4 = 1000.
+    private static void FeedUnknownFrames(MeterServices services, string srcIp, int srcPort, string dstIp, int dstPort,
+        double megabytes, long seq = 0)
+    {
+        int count = (int)(megabytes * 1_000_000 / 1000);
+        byte[] payload = new byte[count * 1000];
+        for (int i = 0; i < count; i++)
+        {
+            payload[i * 1000] = 0xEA;
+            payload[i * 1000 + 1] = 0x07;
+            payload[i * 1000 + 2] = 0x99;
+            payload[i * 1000 + 3] = 0x99;
+        }
+
+        services.Feed(new CapturedSegment(seq, payload, 5000, srcIp, srcPort, dstIp, dstPort));
+    }
 
     private static string[] ReadLog(string logDir) =>
         CaptureCorpusReader.ReadLines(Directory.GetFiles(logDir, "*.jsonl.gz").Single())
