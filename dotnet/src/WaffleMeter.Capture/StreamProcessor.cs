@@ -1136,9 +1136,30 @@ public sealed class StreamProcessor
         if (packet[offset] != 0x07 || packet[offset + 1] != 0x97) return;
         offset += 2;
 
+        // 모양 게이트 — 제거 계열(RemoveByRequester)과 같은 근거다. requester 와 그 뒤 4바이트는 신청자 dbid
+        // 하나([uid u32][00 00][서버 u16])라서, 진짜 프레임은 uid>0 · 00 00 · 서버 대역을 반드시 싣는다.
+        // 이름 가드만으로는 평문이 섞인 비게임 프로토콜을 못 막는다: 실측 지문(2026-10-27) 닉 "com"·직업
+        // 없음·65.5k 카드는 TCP DNS 응답(ID 07 97, 17자 .com 도메인)이 그대로 재현한다 — 길이 머리의 00 을
+        // 어셈블러가 버려 DNS ID 가 opcode 자리에 오고, 라벨 `\x03com` 이 이름, 응답 레코드가 power 가 된다.
+        // 그 프레임의 서버 자리는 qname 글자(0x7703 등)라 여기서 걸린다.
+        // 직업 코드·서버 뒤 00×4 는 게이트로 쓰지 않는다 — 신규 직업이 곧 진짜 신청 유실이 된다.
+        if (packet.Length < offset + 25) // 고정 필드 24바이트 + nameLen 최소 1바이트
+        {
+            _sink.ParserError("join_request", "shape: short");
+            return;
+        }
+
         _ = PacketPrimitives.ParseUInt32Le(packet, offset); offset += 4; // roomNum (unused, parity)
         int requester = PacketPrimitives.ParseUInt32Le(packet, offset); offset += 4;
-        _ = PacketPrimitives.ParseUInt32Le(packet, offset); offset += 4; // unknown2
+        if (requester <= 0
+            || packet[offset] != 0x00 || packet[offset + 1] != 0x00
+            || !IsPlausibleServerBand(PacketPrimitives.ParseUInt16Le(packet, offset + 2)))
+        {
+            _sink.ParserError("join_request", "shape: dbid");
+            return;
+        }
+
+        offset += 4; // dbid 뒤 절반 [00 00][서버]
         int jobCode = PacketPrimitives.ParseUInt32Le(packet, offset); offset += 4;
         _ = PacketPrimitives.ParseUInt32Le(packet, offset); offset += 4; // unknown4
         _ = PacketPrimitives.ParseUInt32Le(packet, offset); offset += 4; // unknown5
@@ -1165,7 +1186,20 @@ public sealed class StreamProcessor
             return;
         }
 
+        if (packet.Length < offset + 10) // server u16 + 4 + power u32
+        {
+            _sink.ParserError("join_request", "shape: short tail");
+            return;
+        }
+
+        // 이 서버는 dbid 안의 것(본 서버)과 다를 수 있다(현재 서버일 수 있음) — 일치는 강제하지 않고 대역만 본다.
         int server = PacketPrimitives.ParseUInt16Le(packet, offset);
+        if (!IsPlausibleServerBand(server))
+        {
+            _sink.ParserError("join_request", "shape: server");
+            return;
+        }
+
         offset += 6; // Kotlin skips 6 after reading the 2-byte server
         int power = PacketPrimitives.ParseUInt32Le(packet, offset);
 

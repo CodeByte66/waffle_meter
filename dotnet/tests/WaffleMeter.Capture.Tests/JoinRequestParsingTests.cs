@@ -259,6 +259,66 @@ public class JoinRequestParsingTests
     }
 
     [Fact]
+    public void A_dns_answer_over_tcp_does_not_become_a_join_request()
+    {
+        // 2026-10-27 실측 지문(닉 "com" · 직업 없음 · 65.5k · 서버 없음)을 그대로 재현하는 TCP DNS 응답.
+        // 길이 머리 00 33 의 00 을 어셈블러가 버리고 0x33 을 길이로 읽어, DNS ID 07 97 이 opcode 자리에 온다.
+        // 이름 가드는 깨끗한 ASCII "com" 을 통과시키므로 모양 게이트(dbid 의 서버 자리 = qname 글자)가 막아야 한다.
+        byte[] tcpDns =
+        [
+            0x00, 0x33,                                     // DNS-over-TCP 길이 51
+            0x07, 0x97, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, // ID 0x0797, 응답, QD 1, AN 1
+            0x00, 0x00, 0x00, 0x00,                         // NS 0, AR 0 (EDNS 없음)
+            0x03, (byte)'w', (byte)'w', (byte)'w',
+            0x09, (byte)'m', (byte)'i', (byte)'c', (byte)'r', (byte)'o', (byte)'s', (byte)'o', (byte)'f', (byte)'t',
+            0x03, (byte)'c', (byte)'o', (byte)'m', 0x00,
+            0x00, 0x01, 0x00, 0x01,                         // QTYPE A, QCLASS IN
+            0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 0x14, 0x46, 0xf6, 0x14,
+        ];
+        var (join, diag, proc) = NewProcessor();
+        var assembler = new StreamAssembler((p, at) => proc.OnPacketReceived(p, at));
+
+        assembler.ProcessChunk(tcpDns, 0);
+
+        Assert.Empty(join.Requests);
+        Assert.Equal(1, diag.ParserErrors);
+    }
+
+    [Theory]
+    [InlineData(7, 0x00)]  // requester = 0
+    [InlineData(11, 0x01)] // dbid 패드가 00 00 이 아님
+    [InlineData(14, 0x00)] // dbid 서버 = 0x00E9 → 대역 밖
+    [InlineData(38, 0x00)] // 이름 뒤 서버 = 0x00E9 → 대역 밖
+    public void A_join_request_off_the_dbid_shape_is_rejected(int index, byte value)
+    {
+        byte[] frame = (byte[])GoldenJoinRequest.Clone();
+        frame[index] = value;
+        if (index == 7) frame[8] = frame[9] = frame[10] = 0x00;
+        var (join, diag, proc) = NewProcessor();
+
+        proc.OnPacketReceived(frame, 0);
+
+        Assert.Empty(join.Requests);
+        Assert.Equal(1, diag.ParserErrors);
+    }
+
+    [Fact]
+    public void A_join_request_whose_two_servers_differ_is_still_accepted()
+    {
+        // dbid 안의 서버는 본 서버, 이름 뒤 서버는 현재 서버일 수 있다 — 일치를 강제하면 서버 이전·원정
+        // 상태의 신청자를 버린다. 둘 다 대역 안이면 통과해야 한다(여기선 2018, 목록 밖 서버도 포함).
+        byte[] frame = (byte[])GoldenJoinRequest.Clone();
+        frame[37] = 0xe2; frame[38] = 0x07; // 이름 뒤 서버 2018
+        var (join, _, proc) = NewProcessor();
+
+        proc.OnPacketReceived(frame, 0);
+
+        var r = Assert.Single(join.Requests);
+        Assert.Equal(2018, r.Server);
+        Assert.Equal(423359, r.Power);
+    }
+
+    [Fact]
     public void Truncated_join_request_is_swallowed_not_thrown()
     {
         var (join, diag, proc) = NewProcessor();
