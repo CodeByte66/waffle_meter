@@ -231,6 +231,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _pendingAetherList = hotkeys.AetherList;
         _pendingCurrencyTab = hotkeys.CurrencyTab;
         _pendingMemoLock = hotkeys.MemoLock;
+        _pendingMemoShow = hotkeys.MemoShow;
 
         IReadOnlyList<string> presetNames = _presets.Names;
         for (int i = 0; i < BuffPresetManager.SlotCount; i++)
@@ -831,9 +832,10 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     public string AetherListHotkeyWarning => WarningFor(_hotkeys.AetherListIssue);
     public string CurrencyTabHotkeyWarning => WarningFor(_hotkeys.CurrencyTabIssue);
     public string MemoLockHotkeyWarning => WarningFor(_hotkeys.MemoLockIssue);
+    public string MemoShowHotkeyWarning => WarningFor(_hotkeys.MemoShowIssue);
 
     /// <summary>
-    /// 경고 아홉 칸을 다시 읽는다. ⚠️ <see cref="HotkeyHandler.IssuesChanged"/> 는 <b>리스너 스레드</b>에서
+    /// 경고 열 칸을 다시 읽는다. ⚠️ <see cref="HotkeyHandler.IssuesChanged"/> 는 <b>리스너 스레드</b>에서
     /// 올 수 있으므로 UI 스레드로 마셜한다. Application 이 없는 컨텍스트(단위 테스트·UiPreview)에서는
     /// 그 자리에서 바로 올린다.
     /// </summary>
@@ -860,6 +862,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(AetherListHotkeyWarning));
         OnPropertyChanged(nameof(CurrencyTabHotkeyWarning));
         OnPropertyChanged(nameof(MemoLockHotkeyWarning));
+        OnPropertyChanged(nameof(MemoShowHotkeyWarning));
     }
 
     public void Detach()
@@ -1891,6 +1894,14 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         set { Set(ref _pendingMemoLock, value); DropDuplicateHotkeys(value, nameof(PendingMemoLock)); }
     }
 
+    /// <summary>메모 켜기/끄기 단축키. 역시 기본 미지정.</summary>
+    private HotkeyCombo? _pendingMemoShow;
+    public HotkeyCombo? PendingMemoShow
+    {
+        get => _pendingMemoShow;
+        set { Set(ref _pendingMemoShow, value); DropDuplicateHotkeys(value, nameof(PendingMemoShow)); }
+    }
+
     /// <summary>
     /// 방금 지정한 조합을 쓰고 있던 <b>다른</b> 단축키 칸을 비운다. 충돌을 거절하는 게 아니라 먼저
     /// 쓰던 쪽을 놓아 주는 방향인 이유: 거절은 "왜 안 들어가지"가 되고, 그대로 두면 둘 중 하나가
@@ -1904,7 +1915,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     /// 실제로 다시 지정할 때만 정리한다.</para>
     /// </summary>
     /// <summary>
-    /// 저장된 아홉 조합을 편집 버퍼로 다시 읽어 온다(가져오기·취소). 중복 정리를 <b>끄고</b> 도는 것이
+    /// 저장된 열 조합을 편집 버퍼로 다시 읽어 온다(가져오기·취소). 중복 정리를 <b>끄고</b> 도는 것이
     /// 이 메서드의 존재 이유다 — <see cref="DropDuplicateHotkeys"/> 의 주석 참고.
     /// </summary>
     private void SeedPendingHotkeys()
@@ -1921,6 +1932,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             PendingAetherList = _hotkeys.AetherList;
             PendingCurrencyTab = _hotkeys.CurrencyTab;
             PendingMemoLock = _hotkeys.MemoLock;
+            PendingMemoShow = _hotkeys.MemoShow;
         }
         finally
         {
@@ -1950,6 +1962,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             (nameof(PendingAetherList), () => PendingAetherList, v => PendingAetherList = v),
             (nameof(PendingCurrencyTab), () => PendingCurrencyTab, v => PendingCurrencyTab = v),
             (nameof(PendingMemoLock), () => PendingMemoLock, v => PendingMemoLock = v),
+            (nameof(PendingMemoShow), () => PendingMemoShow, v => PendingMemoShow = v),
         ];
 
         foreach ((string name, Func<HotkeyCombo?> get, Action<HotkeyCombo?> set) in slots)
@@ -2898,6 +2911,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _hotkeys.SetAetherList(PendingAetherList);
         _hotkeys.SetCurrencyTab(PendingCurrencyTab);
         _hotkeys.SetMemoLock(PendingMemoLock);
+        _hotkeys.SetMemoShow(PendingMemoShow);
     }
 
     /// <summary>Revert live-applied settings + pending hotkeys (Cancel).</summary>

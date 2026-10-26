@@ -77,7 +77,8 @@ public sealed class SettingsKeyCatalogTests
 
         Assert.Contains("currencyTabHotkey", keys);
         Assert.Contains("memoLockHotkey", keys);
-        Assert.True(keys.Length >= 9, $"단축키 키를 {keys.Length}개만 찾았습니다 — 상수 이름 규칙이 바뀌었나요?");
+        Assert.Contains("memoShowHotkey", keys);
+        Assert.True(keys.Length >= 10, $"단축키 키를 {keys.Length}개만 찾았습니다 — 상수 이름 규칙이 바뀌었나요?");
         Assert.All(keys, k =>
         {
             SettingsKey? entry = SettingsKeyCatalog.Find(k);
