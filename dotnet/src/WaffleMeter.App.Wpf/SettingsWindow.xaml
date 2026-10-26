@@ -2004,6 +2004,20 @@
                                         Click="OnClearHotkey" Tag="{Binding ElementName=CurrencyTabHotkeyBox}"/>
                             </Grid>
                         </Grid>
+                        <!-- 메모 켜기/끄기. 설정 '메모 표시'와 같은 값을 뒤집는다. 역시 기본 미지정. -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="메모 켜기/끄기" Style="{StaticResource SettingTitle}"/>
+                                <TextBlock Style="{StaticResource HotkeyWarning}" Text="{Binding MemoShowHotkeyWarning}"/>
+                            </StackPanel>
+                            <Grid Grid.Column="1">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <local:HotkeyCaptureBox x:Name="MemoShowHotkeyBox" Grid.Column="0" Combo="{Binding PendingMemoShow, Mode=TwoWay}"/>
+                                <Button Grid.Column="1" Style="{StaticResource HotkeyClearButton}"
+                                        Click="OnClearHotkey" Tag="{Binding ElementName=MemoShowHotkeyBox}"/>
+                            </Grid>
+                        </Grid>
                         <!-- 메모 잠금/해제. 역시 기본 미지정 — 잠긴 메모를 키보드만으로 푸는 길이다. -->
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>

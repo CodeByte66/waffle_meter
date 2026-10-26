@@ -168,6 +168,32 @@ public sealed class HotkeyHandlerTests : IDisposable
         Assert.Null(new HotkeyHandler(new PropertyHandler(_temp)).MemoLock);
     }
 
+    /// <summary>
+    /// 메모 켜기/끄기 단축키도 <b>조합 없이</b> 출고되고, 메모 잠금과는 <b>다른 키</b>에 저장된다 — 둘 다 메모를
+    /// 다루지만 하나는 표시, 하나는 클릭 통과라 서로를 덮으면 안 된다.
+    /// </summary>
+    [Fact]
+    public void The_memo_show_hotkey_ships_unassigned_and_round_trips_apart_from_the_memo_lock()
+    {
+        var props = new PropertyHandler(_temp);
+        var handler = new HotkeyHandler(props);
+        Assert.Null(handler.MemoShow);
+        Assert.Equal(HotkeyIssue.None, handler.MemoShowIssue);
+        Assert.Null(props.GetProperty("memoShowHotkey")); // 출고 상태에서는 파일에 키조차 없다
+
+        handler.SetMemoShow(new HotkeyCombo(HotkeyHandler.ModAlt | HotkeyHandler.ModShift, 0x4D)); // Alt+Shift+M
+        Assert.Equal("modifiers=5,vkCode=77", props.GetProperty("memoShowHotkey"));
+        Assert.Null(props.GetProperty("memoLockHotkey")); // 잠금 칸은 건드리지 않는다
+
+        var reopened = new HotkeyHandler(new PropertyHandler(_temp));
+        Assert.Equal(new HotkeyCombo(HotkeyHandler.ModAlt | HotkeyHandler.ModShift, 0x4D), reopened.MemoShow);
+        Assert.Null(reopened.MemoLock);
+
+        reopened.SetMemoShow(null);
+        Assert.Equal("none", new PropertyHandler(_temp).GetProperty("memoShowHotkey"));
+        Assert.Null(new HotkeyHandler(new PropertyHandler(_temp)).MemoShow);
+    }
+
     /// <summary>옛 쓰레기 조합(수식키 단독)은 재화 관리 칸에서도 은퇴로 보고된다 — 다른 칸과 같은 경로를 탄다.</summary>
     [Fact]
     public void A_retired_currency_tab_combo_is_reported_and_cleared_by_reassigning()

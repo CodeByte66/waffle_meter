@@ -1025,6 +1025,24 @@ internal static class Program
         vm.PendingCurrencyTab = null; vm.Commit();
         Check("재화 관리 단축키 해제", hotkeys.CurrencyTab is null && props.GetProperty("currencyTabHotkey") == "none");
 
+        // 메모 켜기/끄기 단축키 — 설정 '메모 표시'(ShowMemo)를 뒤집는다. 역시 미지정 출고, 메모 잠금과는 다른 칸.
+        Check("메모 켜기/끄기 단축키는 기본 미지정",
+            hotkeys.MemoShow is null && vm.PendingMemoShow is null
+            && props.GetProperty("memoShowHotkey") is null or "none");
+        vm.PendingMemoShow = new HotkeyCombo(HotkeyHandler.ModAlt | HotkeyHandler.ModShift, 0x4D); // Alt+Shift+M
+        vm.Commit();
+        Check("메모 켜기/끄기 단축키 저장",
+            hotkeys.MemoShow is { VkCode: 0x4D } && props.GetProperty("memoShowHotkey") == "modifiers=5,vkCode=77");
+        hotkeys.Reload();
+        Check("메모 켜기/끄기 단축키가 Reload 를 넘어 살아남는다", hotkeys.MemoShow is { VkCode: 0x4D });
+        Check("메모 켜기/끄기 단축키가 메모 잠금 칸을 건드리지 않는다", hotkeys.MemoLock is null);
+        vm.PendingMemoLock = new HotkeyCombo(HotkeyHandler.ModAlt | HotkeyHandler.ModShift, 0x4D);
+        Check("메모 잠금에 같은 조합을 주면 메모 켜기/끄기가 비워진다",
+            vm.PendingMemoShow is null && vm.PendingMemoLock is { VkCode: 0x4D });
+        vm.PendingMemoLock = null;
+        vm.PendingMemoShow = null; vm.Commit();
+        Check("메모 켜기/끄기 단축키 해제", hotkeys.MemoShow is null && props.GetProperty("memoShowHotkey") == "none");
+
         // 중복 지정. 일곱 칸이 같은 조합을 들면 RegisterHotKey 는 먼저 등록되는 쪽만 성공하고 나중 것은
         // 조용히 죽는다 — 그래서 방금 고른 쪽이 이기고 먼저 쓰던 칸이 '미지정'으로 비워져야 한다.
         vm.PendingVisibility = new HotkeyCombo(HotkeyHandler.ModControl, 0x48); // Ctrl+H (표시/숨김 기본 조합)

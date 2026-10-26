@@ -112,6 +112,7 @@ public sealed class HotkeyHandler : IDisposable
     private const int AetherListId = 7;
     private const int CurrencyTabId = 8;
     private const int MemoLockId = 9;
+    private const int MemoShowId = 10;
 
     // A held global hotkey auto-repeats: while the combo stays down Windows posts WM_HOTKEY at the keyboard
     // repeat RATE (up to ~30/s, i.e. ~33ms apart), and there is no key-up message to mark the release. Collapse
@@ -136,6 +137,7 @@ public sealed class HotkeyHandler : IDisposable
     private const string KeyAetherList = "aetherListHotkey";
     private const string KeyCurrencyTab = "currencyTabHotkey";
     private const string KeyMemoLock = "memoLockHotkey";
+    private const string KeyMemoShow = "memoShowHotkey";
 
     // Persisted marker for an explicitly-unassigned hotkey. Distinct from "property never set" (→ default)
     // and from a corrupt/unparseable value (→ default): an unassigned combo registers no global hotkey.
@@ -155,6 +157,7 @@ public sealed class HotkeyHandler : IDisposable
     private volatile HotkeyCombo? _aetherList;
     private volatile HotkeyCombo? _currencyTab;
     private volatile HotkeyCombo? _memoLock;
+    private volatile HotkeyCombo? _memoShow;
     private Thread? _listener;
     private volatile bool _running;
     private readonly Dictionary<int, long> _lastHotkeyTick = new(); // per-id leading-edge debounce; listener-thread-only
@@ -174,6 +177,7 @@ public sealed class HotkeyHandler : IDisposable
     public HotkeyIssue AetherListIssue => IssueOf(AetherListId);
     public HotkeyIssue CurrencyTabIssue => IssueOf(CurrencyTabId);
     public HotkeyIssue MemoLockIssue => IssueOf(MemoLockId);
+    public HotkeyIssue MemoShowIssue => IssueOf(MemoShowId);
 
     private HotkeyIssue IssueOf(int id) => _issues.TryGetValue(id, out HotkeyIssue v) ? v : HotkeyIssue.None;
 
@@ -217,6 +221,9 @@ public sealed class HotkeyHandler : IDisposable
     /// 풀 수 있는 길이다.</summary>
     public Action? OnMemoLock { get; set; }
 
+    /// <summary>메모 켜기/끄기(설정의 '메모 표시'). 기본 미지정 — 인게임 키와 겹칠 조합을 우리가 고르지 않는다.</summary>
+    public Action? OnMemoShow { get; set; }
+
     public HotkeyHandler(PropertyHandler props)
     {
         _props = props;
@@ -250,6 +257,7 @@ public sealed class HotkeyHandler : IDisposable
         _aetherList = LoadOptional(KeyAetherList, AetherListId); // 컨텐츠 관리도 UNASSIGNED 출고
         _currencyTab = LoadOptional(KeyCurrencyTab, CurrencyTabId); // 재화 관리도 UNASSIGNED 출고
         _memoLock = LoadOptional(KeyMemoLock, MemoLockId); // 메모 잠금도 UNASSIGNED 출고
+        _memoShow = LoadOptional(KeyMemoShow, MemoShowId); // 메모 켜기/끄기도 UNASSIGNED 출고
     }
 
     public HotkeyCombo? Reset => _reset;
@@ -261,6 +269,7 @@ public sealed class HotkeyHandler : IDisposable
     public HotkeyCombo? AetherList => _aetherList;
     public HotkeyCombo? CurrencyTab => _currencyTab;
     public HotkeyCombo? MemoLock => _memoLock;
+    public HotkeyCombo? MemoShow => _memoShow;
 
     /// <summary>Set (or with <c>null</c>, unassign) the reset hotkey; persists and re-registers live.</summary>
     public void SetReset(HotkeyCombo? combo) => Update(v => _reset = v, KeyReset, ResetId, combo);
@@ -272,6 +281,7 @@ public sealed class HotkeyHandler : IDisposable
     public void SetAetherList(HotkeyCombo? combo) => Update(v => _aetherList = v, KeyAetherList, AetherListId, combo);
     public void SetCurrencyTab(HotkeyCombo? combo) => Update(v => _currencyTab = v, KeyCurrencyTab, CurrencyTabId, combo);
     public void SetMemoLock(HotkeyCombo? combo) => Update(v => _memoLock = v, KeyMemoLock, MemoLockId, combo);
+    public void SetMemoShow(HotkeyCombo? combo) => Update(v => _memoShow = v, KeyMemoShow, MemoShowId, combo);
 
     private void Update(Action<HotkeyCombo?> assign, string key, int id, HotkeyCombo? value)
     {
@@ -358,6 +368,7 @@ public sealed class HotkeyHandler : IDisposable
         Register(AetherListId, _aetherList);
         Register(CurrencyTabId, _currencyTab);
         Register(MemoLockId, _memoLock);
+        Register(MemoShowId, _memoShow);
 
         try
         {
@@ -396,6 +407,9 @@ public sealed class HotkeyHandler : IDisposable
                             case MemoLockId:
                                 OnMemoLock?.Invoke();
                                 break;
+                            case MemoShowId:
+                                OnMemoShow?.Invoke();
+                                break;
                         }
                     }
                 }
@@ -416,6 +430,7 @@ public sealed class HotkeyHandler : IDisposable
             UnregisterHotKey(IntPtr.Zero, AetherListId);
             UnregisterHotKey(IntPtr.Zero, CurrencyTabId);
             UnregisterHotKey(IntPtr.Zero, MemoLockId);
+            UnregisterHotKey(IntPtr.Zero, MemoShowId);
         }
     }
 

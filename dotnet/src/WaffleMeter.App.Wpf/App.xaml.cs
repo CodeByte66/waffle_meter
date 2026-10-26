@@ -518,6 +518,9 @@ public partial class App : Application
             OnCurrencyTab = () => Dispatcher.BeginInvoke(() => window.RequestAetherList(AetherPanelTab.Currency)),
             // 메모 잠금 토글. 트레이 '오버레이 입력 복구'처럼 설정값만 뒤집는다 — 창 반영은 설정 변경 경로가 한다.
             OnMemoLock = () => Dispatcher.BeginInvoke(() => _settings.MemoLocked = !_settings.MemoLocked),
+            // 메모 켜기/끄기. 설정의 '메모 표시'·메모 ✕ 와 같은 값(ShowMemo)만 뒤집는다 — 창 반영은 RefreshMemoOverlay 가 한다.
+            // 편집 중에는 메모가 전역 단축키를 내려 두므로(SuspendGlobalHotkeys) 입력 중인 글을 이 키가 치우는 일은 없다.
+            OnMemoShow = () => Dispatcher.BeginInvoke(() => _settings.ShowMemo = !_settings.ShowMemo),
         };
         _hotkeys.Start();
 
