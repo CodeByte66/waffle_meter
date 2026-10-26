@@ -120,6 +120,14 @@ public sealed class MeterServices
     // the next game stream fails over (real reconnect / proxy port change). A lone game stream is always
     // primary, so single-stream (non-VPN) users are byte-for-byte unaffected.
     private const long GameStreamHandoverMs = 5_000;
+    // 자격 = 서버 시계(0x3600, StreamProcessor.IsServerClockFrame)를 실어 온 스트림. isGame 은 opcode 2바이트
+    // 구조 검사라 평문이 오탐을 낸다 — 10-16 실측: NAVER 스트리밍 커넥터의 루프백 HTTP 요청이 User-Agent 의
+    // ".36 "(길이 0x2E + 0x3633)으로 +0.7초에 primary 를 잡고, 요청마다(1Hz) 갱신하며 세션 내내 진짜 게임
+    // 스트림을 identityOnly 로 묶었다(데미지 0/91).
+    // 그래서 자격 없는 스트림의 primary 는 '임시'다: 종전처럼 잡히긴 하지만(첫 0x3600 전의 VPN 미러 이중 집계를
+    // 막는 건 종전 그대로) 자격 있는 스트림이 나타나는 순간 살아 있어도 넘겨준다 — 진짜 S2C 는 첫 프레임부터
+    // 0x3600 을 20Hz 로 싣기 때문에 노이즈에게 묶여 있을 수 없다. 평문 프레임(LooksLikeText)은 임시로도 못 잡는다.
+    private bool _primaryProvisional;
     private readonly StreamProcessor _processor;
     private readonly Dictionary<string, StreamState> _streams = new();
     private readonly HashSet<string> _excludedKeys = new();
@@ -201,6 +209,8 @@ public sealed class MeterServices
         public int GameSignal { get; set; }          // assembled packets that look like game packets (>0 => protected)
         public bool SuppressedDuplicate { get; set; } // a concurrent duplicate of the primary game stream — drop its packets
         public long SelfHeals { get; set; }          // stream-scoped stall recoveries (diagnostic)
+        public bool ClockCredential { get; set; }    // carried a server-clock frame — may hold primary (sticky; survives flush/self-heal)
+        public bool LoggedTextClaim { get; set; }
     }
 
     // Stall recoveries and gap-skips that belong to streams which have since been evicted or excluded. Without
@@ -578,6 +588,26 @@ public sealed class MeterServices
             {
                 DebugLogger.Assembled(packet, at); // L1: reassembled application packet
                 bool isGame = StreamProcessor.LooksLikeGamePacket(packet);
+                if (created is not null && !created.ClockCredential && StreamProcessor.IsServerClockFrame(packet))
+                {
+                    created.ClockCredential = true;
+                    DebugLogger.Meta("game_clock_credential", ("key", streamKey), ("bytes", created.Bytes),
+                        ("emitted", created.EmittedPackets), ("gameSignal", created.GameSignal));
+                    if (created.GameSignal > 0)
+                    {
+                        _lastGameStreamKey = streamKey;
+                        // isGame 이 같은 순간의 0x3600 보다 먼저 프레이밍된 경우(0808 실측 152ms) 자격 시점에 바로
+                        // 잡거나 임시 primary 를 정식으로 올린다. 자격 프레임은 스트림당 한 번뿐이라 이것이 MapFrame 으로
+                        // refresh 하는 길이 되지는 않는다 — refresh 는 아래 isGame 으로만 한다.
+                        bool primaryLive = _primaryGameKey is not null && at - _primaryGameAt <= GameStreamHandoverMs;
+                        if (_dedupeGameStreams && (!primaryLive || _primaryProvisional))
+                        {
+                            ClaimPrimary(created, streamKey, at, provisional: false,
+                                primaryLive && _primaryGameKey != streamKey ? "preempt" : "credential");
+                        }
+                    }
+                }
+
                 if (created is not null)
                 {
                     created.EmittedPackets++;
@@ -597,7 +627,10 @@ public sealed class MeterServices
                         }
 
                         created.GameSignal++; // content signal: this connection carries the game stream — protect it
-                        _lastGameStreamKey = streamKey; // for the ping matcher (independent of the dedupe toggle)
+                        if (created.ClockCredential || !StreamProcessor.LooksLikeText(packet))
+                        {
+                            _lastGameStreamKey = streamKey; // for the ping matcher (independent of the dedupe toggle)
+                        }
                     }
                 }
 
@@ -608,12 +641,32 @@ public sealed class MeterServices
                 // stream always satisfies the first branch, so non-VPN users are unaffected.
                 if (_dedupeGameStreams && isGame && created is not null)
                 {
-                    if (_primaryGameKey is null || _primaryGameKey == streamKey
-                        || at - _primaryGameAt > GameStreamHandoverMs)
+                    bool self = _primaryGameKey == streamKey;
+                    bool otherLive = _primaryGameKey is not null && !self && at - _primaryGameAt <= GameStreamHandoverMs;
+                    bool preempt = otherLive && _primaryProvisional && created.ClockCredential;
+                    if (!otherLive || preempt)
                     {
-                        _primaryGameKey = streamKey;
-                        _primaryGameAt = at;
-                        created.SuppressedDuplicate = false;
+                        if (created.ClockCredential)
+                        {
+                            ClaimPrimary(created, streamKey, at, provisional: false,
+                                preempt ? "preempt" : self ? "refresh" : _primaryGameKey is null ? "claim" : "handover");
+                        }
+                        else if (!StreamProcessor.LooksLikeText(packet))
+                        {
+                            ClaimPrimary(created, streamKey, at, provisional: true, "provisional");
+                        }
+                        else
+                        {
+                            if (!created.LoggedTextClaim)
+                            {
+                                created.LoggedTextClaim = true;
+                                DebugLogger.Meta("primary_claim_skipped_text",
+                                    ("key", streamKey), ("bytes", created.Bytes), ("gameSignal", created.GameSignal));
+                            }
+
+                            // 살아 있는 primary 가 없으니 쥐지는 못해도 이 프레임은 종전처럼 풀 처리한다(중립).
+                            created.SuppressedDuplicate = false;
+                        }
                     }
                     else
                     {
@@ -696,6 +749,22 @@ public sealed class MeterServices
                 if (_primaryGameKey == key) _primaryGameKey = null; // primary went idle — let the next game stream claim it
             }
         }
+    }
+
+    /// <summary>Takes (or refreshes) the primary game-stream lock. The change of hands is breadcrumbed so a debug
+    /// session shows who held the lock and why; a refresh by the holder is not. Consumer-thread only.</summary>
+    private void ClaimPrimary(StreamState state, string streamKey, long at, bool provisional, string reason)
+    {
+        if (_primaryGameKey != streamKey || _primaryProvisional != provisional)
+        {
+            DebugLogger.Meta("primary_claim", ("key", streamKey), ("from", _primaryGameKey ?? "(none)"),
+                ("reason", reason), ("provisional", provisional));
+        }
+
+        _primaryGameKey = streamKey;
+        _primaryGameAt = at;
+        _primaryProvisional = provisional;
+        state.SuppressedDuplicate = false;
     }
 
     /// <summary>Drops a stream, carrying its loss counters into the retired totals first so the cumulative

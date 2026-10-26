@@ -348,6 +348,64 @@ public sealed class StreamProcessor
         _joinSink = joinSink ?? NullJoinRequestSink.Instance;
     }
 
+    /// <summary>0x3600 MapFrame_NT(서버 epoch ms 하나)의 구조 판정 — primary 게임 스트림 락의 <b>자격</b>
+    /// 전용이다. 게임 서버→클라 스트림은 이걸 20Hz로 싣고(실측 S2C 6개 스트림 100%, 최장 간격 0.40초),
+    /// 노이즈·역방향 2,190만 바이트의 모든 오프셋에서 그럴듯한 epoch 는 0건이었다 — 텍스트엔 0x00 이 없고
+    /// 난수는 정확한 길이 + 2020~2100년 epoch 를 동시에 맞추지 못한다.
+    /// <para>0x3600 은 <see cref="LooksLikeGamePacket"/>(=<c>OpcodeNames</c>)에 넣지 않는다 — ServerClockKey
+    /// 주석 참조. 로컬 시계와도 비교하지 않는다: PC 시계가 틀린 사용자도 자격은 얻어야 한다.</para></summary>
+    public static bool IsServerClockFrame(byte[] packet)
+    {
+        if (packet.Length is not (11 or 12))
+        {
+            return false;
+        }
+
+        VarIntOutput lengthInfo = PacketPrimitives.ReadVarInt(packet);
+        if (lengthInfo.Length < 0 || lengthInfo.Length >= packet.Length)
+        {
+            return false;
+        }
+
+        int flagByte = packet[lengthInfo.Length];
+        int opcodeOffset = lengthInfo.Length + (flagByte >= 0xF0 && flagByte < 0xFF ? 1 : 0);
+        if (packet.Length != opcodeOffset + 10) // 정확히 opcode 2B + Int64 8B
+        {
+            return false;
+        }
+
+        int opcodeKey = (packet[opcodeOffset] & 0xFF) | ((packet[opcodeOffset + 1] & 0xFF) << 8);
+        if (opcodeKey != ServerClockKey)
+        {
+            return false;
+        }
+
+        long serverNow = PacketPrimitives.ReadUInt64Le(packet, opcodeOffset + 2);
+        return serverNow >= MinPlausibleEpochMs && serverNow <= MaxPlausibleEpochMs;
+    }
+
+    /// <summary>출력 가능 ASCII(0x20-0x7E, \t \r \n)가 3/4 이상인 프레임. HTTP·HLS·JSON 같은 평문 프로토콜이
+    /// 우연히 알려진 opcode 를 만든 경우(실측: User-Agent 의 <c>.36 </c> = 길이 0x2E + 0x3633)를 가른다.
+    /// 8바이트 미만은 판단하지 않는다(false). 게임 프레임은 바이너리라 닉네임이 실려도 이 비율에 못 미친다.</summary>
+    public static bool LooksLikeText(byte[] packet)
+    {
+        if (packet.Length < 8)
+        {
+            return false;
+        }
+
+        int printable = 0;
+        foreach (byte b in packet)
+        {
+            if (b is (>= 0x20 and <= 0x7E) or 0x09 or 0x0A or 0x0D)
+            {
+                printable++;
+            }
+        }
+
+        return printable * 4 >= packet.Length * 3;
+    }
+
     /// <summary>
     /// Cheap structural check used by the connection classifier (NOT by the parser): does this assembled
     /// packet look like a GAME packet — a known opcode key, or an LZ4 (FF FF) compressed game packet?
