@@ -107,8 +107,8 @@ public sealed class MeterServicesTests : IDisposable
         using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
 
         logger.Start();
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5000));
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5001));
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5001));
         logger.Stop();
 
         string[] lines = ReadLog(logDir);
@@ -125,8 +125,8 @@ public sealed class MeterServicesTests : IDisposable
         using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
 
         logger.Start();
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5000));
-        services.Value.Feed(GameSegment(seq: 5, at: 1001, srcPort: 5000)); // same 4-tuple, next contiguous seq
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));
+        services.Value.Feed(ClockedGameSegment(seq: 16, at: 1001, srcPort: 5000)); // same 4-tuple, next contiguous seq
         logger.Stop();
 
         string[] lines = ReadLog(logDir);
@@ -144,9 +144,9 @@ public sealed class MeterServicesTests : IDisposable
         using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
 
         logger.Start();
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5000));        // A claims primary → dispatched
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5001));        // B concurrent → suppressed
-        services.Value.Feed(GameSegment(seq: 5, at: 7001, srcPort: 5001));        // > handover later → B takes over
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));        // A claims primary → dispatched
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5001));        // B concurrent → suppressed
+        services.Value.Feed(ClockedGameSegment(seq: 16, at: 7001, srcPort: 5001));        // > handover later → B takes over
         logger.Stop();
 
         string[] lines = ReadLog(logDir);
@@ -164,8 +164,8 @@ public sealed class MeterServicesTests : IDisposable
         using var services = new ServicesScope(new MeterServices(props, debugLogger: logger));
 
         logger.Start();
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5000));
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5001));
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5001));
         logger.Stop();
 
         string[] lines = ReadLog(logDir);
@@ -185,14 +185,183 @@ public sealed class MeterServicesTests : IDisposable
         using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
 
         logger.Start();
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5000));   // A claims primary (damage) → dispatched
-        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5001));   // B suppressed (damage) → dropped
-        services.Value.Feed(RosterSegment(seq: 5, at: 1001, srcPort: 5001)); // B suppressed (roster) → STILL replayed
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));   // A claims primary (damage) → dispatched
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5001));   // B suppressed (damage) → dropped
+        services.Value.Feed(RosterSegment(seq: 16, at: 1001, srcPort: 5001)); // B suppressed (roster) → STILL replayed
         logger.Stop();
 
         string[] lines = ReadLog(logDir);
         Assert.Equal(1, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\""))); // damage: primary only (suppressed dropped)
         Assert.Equal(1, lines.Count(l => l.Contains("\"opcodeHex\":\"9702\""))); // roster: replayed from the suppressed stream
+    }
+
+    [Fact]
+    public void A_loopback_text_false_positive_never_holds_primary_and_game_damage_is_counted()
+    {
+        // 10-16 실측 재현: NAVER 스트리밍 커넥터의 루프백 HTTP 요청이 User-Agent 의 ".36 " 에서 프레이밍돼
+        // 0x3633 으로 읽히고(isGame), 게임보다 먼저 primary 를 잡아 요청마다(1Hz) 갱신했다. 진짜 게임 스트림은
+        // 세션 내내 identityOnly 로 묶여 데미지가 0/91 이었다. 서버 시계 자격이 없는 스트림은 primary 를 못 쥔다.
+        string logDir = Path.Combine(_temp, "pdl_ua_hijack");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        long uaSeq = 0, gameSeq = 0;
+        int damage = 0;
+        for (long at = 0; at <= 20_000; at += 100)
+        {
+            if (at % 1000 == 0)
+            {
+                services.Value.Feed(UaFrameSegment(uaSeq, at));
+                uaSeq += UaFrame.Length;
+            }
+
+            if (at >= 300 && at % 500 == 300)
+            {
+                services.Value.Feed(ClockedGameSegment(gameSeq, at, srcPort: 5000));
+                gameSeq += 16;
+                damage++;
+            }
+        }
+
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Equal(damage, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\"")));
+        Assert.DoesNotContain(lines, l => l.Contains("\"type\":\"primary_claim\"") && l.Contains("127.0.0.1"));
+        Assert.Contains(lines, l => l.Contains("\"type\":\"primary_claim_skipped_text\"") && l.Contains("127.0.0.1"));
+    }
+
+    [Fact]
+    public void A_chance_hit_during_an_idle_gap_cannot_take_primary_from_the_game()
+    {
+        // 마을 대기: 진짜 S2C 도 isGame 공백이 10초를 넘는다(실측 최장 10.75초, 0x3600 은 isGame 이 아니다).
+        // 종전엔 그 틈에 노이즈·역방향의 우연한 isGame 이 primary 를 잡고, 돌아온 게임 데미지를 억제했다.
+        // 자격 없는 도전자는 그 틈에 임시 primary 만 잡고, 게임이 돌아오는 즉시 넘겨준다.
+        string logDir = Path.Combine(_temp, "pdl_idle_gap");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));
+        long seq = 16, noiseSeq = 0;
+        for (long at = 1500; at < 9500; at += 500)
+        {
+            services.Value.Feed(new CapturedSegment(seq, MapFrame(at), at, "10.0.0.1", 5000, "10.0.0.2", 13328));
+            seq += 11;
+            if (at % 2000 == 1000)
+            {
+                // 역방향(클라→서버)의 우연한 0x3804 — 3000/5000/7000/9000
+                services.Value.Feed(new CapturedSegment(noiseSeq, DamageFrame, at, "10.0.0.2", 13328, "10.0.0.1", 5000));
+                noiseSeq += DamageFrame.Length;
+            }
+        }
+
+        services.Value.Feed(new CapturedSegment(seq, DamageFrame, 9500, "10.0.0.1", 5000, "10.0.0.2", 13328));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        // 게임 1000 + (3000·5000 은 살아 있는 primary 에 억제) + 7000·9000 임시 primary + 게임 9500 = 4. 종전 코드는 3.
+        Assert.Equal(4, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\"")));
+        Assert.Contains(lines, l => l.Contains("\"reason\":\"preempt\"") && l.Contains("\"key\":\"10.0.0.1:5000-"));
+    }
+
+    [Fact]
+    public void The_credential_frame_claims_primary_when_a_game_packet_was_framed_first()
+    {
+        // 0808 실측 순서: 첫 isGame 이 0x3600 보다 152ms 먼저 왔다. 그 사이에도 VPN 미러는 한 번만 세야 한다
+        // (종전 락이 막던 구간) — 첫 isGame 이 임시 primary 를 잡고, 자격 프레임이 그걸 정식으로 올린다.
+        string logDir = Path.Combine(_temp, "pdl_credential_late");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(GameSegment(seq: 0, at: 1000, srcPort: 5000));
+        services.Value.Feed(GameSegment(seq: 0, at: 1001, srcPort: 5001)); // VPN 미러 — 둘 다 아직 자격 없음
+        services.Value.Feed(new CapturedSegment(5, MapFrame(1150), 1150, "10.0.0.1", 5000, "10.0.0.2", 13328));
+        services.Value.Feed(new CapturedSegment(5, MapFrame(1150), 1151, "10.0.0.1", 5001, "10.0.0.2", 13328));
+        services.Value.Feed(new CapturedSegment(16, DamageFrame, 1200, "10.0.0.1", 5000, "10.0.0.2", 13328));
+        services.Value.Feed(new CapturedSegment(16, DamageFrame, 1201, "10.0.0.1", 5001, "10.0.0.2", 13328));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Equal(2, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\""))); // 미러는 한 번도 안 셌다
+        Assert.Contains(lines, l => l.Contains("\"reason\":\"provisional\"") && l.Contains(":5000-"));
+        Assert.Contains(lines, l => l.Contains("\"reason\":\"credential\"") && l.Contains(":5000-"));
+        Assert.Single(lines, l => l.Contains("\"type\":\"dup_game_stream_dropped\""));
+    }
+
+    [Fact]
+    public void Server_clock_frames_alone_do_not_keep_a_stale_primary_alive()
+    {
+        // 재접속: 옛 연결이 0x3600 만 계속 흘리는 동안 새 연결이 데미지를 싣는다. 0x3600 으로 primary 를 갱신하면
+        // 새 연결이 영영 억제된다 — 갱신은 isGame 으로만 하고, 자격은 '쥘 수 있느냐'만 정한다.
+        string logDir = Path.Combine(_temp, "pdl_stale_clock");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1000, srcPort: 5000));
+        long seq = 16;
+        for (long at = 1500; at <= 7000; at += 500)
+        {
+            services.Value.Feed(new CapturedSegment(seq, MapFrame(at), at, "10.0.0.1", 5000, "10.0.0.2", 13328));
+            seq += 11;
+        }
+
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 6500, srcPort: 5001));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Equal(2, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\"")));
+        Assert.Contains(lines, l => l.Contains("\"reason\":\"handover\"") && l.Contains(":5001-"));
+    }
+
+    [Fact]
+    public void Without_a_server_clock_the_lock_still_dedupes_and_yields_to_the_first_credential()
+    {
+        // 0x3600 이 아직 안 왔거나 패치로 깨진 경우: 임시 primary 가 종전처럼 VPN 이중 집계를 막는다.
+        // 자격 있는 스트림이 나타나면 임시 primary 가 살아 있어도 즉시 넘겨준다.
+        string logDir = Path.Combine(_temp, "pdl_drought");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        for (int i = 0; i < 60; i++)
+        {
+            services.Value.Feed(GameSegment(seq: i * 5, at: 1000 + i, srcPort: 5000));
+            services.Value.Feed(GameSegment(seq: i * 5, at: 1000 + i, srcPort: 5001)); // 미러
+        }
+
+        services.Value.Feed(ClockedGameSegment(seq: 0, at: 1100, srcPort: 5002));
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.Contains(lines, l => l.Contains("\"reason\":\"provisional\"") && l.Contains(":5000-"));
+        Assert.Contains(lines, l => l.Contains("\"type\":\"dup_game_stream_dropped\"") && l.Contains(":5001-"));
+        Assert.Contains(lines, l => l.Contains("\"reason\":\"preempt\"") && l.Contains(":5002-"));
+        // A 60 + 미러 0 + C 1
+        Assert.Equal(61, lines.Count(l => l.Contains("\"opcodeHex\":\"3804\"")));
+    }
+
+    [Fact]
+    public void Plain_text_never_takes_the_lock_even_provisionally()
+    {
+        string logDir = Path.Combine(_temp, "pdl_drought_text");
+        var logger = new PacketDebugLogger(logDir);
+        using var services = new ServicesScope(new MeterServices(new PropertyHandler(_temp), debugLogger: logger));
+
+        logger.Start();
+        for (int i = 0; i < 60; i++)
+        {
+            services.Value.Feed(UaFrameSegment(i * UaFrame.Length, 1000 + i * 1000));
+        }
+
+        logger.Stop();
+
+        string[] lines = ReadLog(logDir);
+        Assert.DoesNotContain(lines, l => l.Contains("\"type\":\"primary_claim\""));
+        Assert.Single(lines, l => l.Contains("\"type\":\"primary_claim_skipped_text\""));
     }
 
     [Fact]
@@ -389,6 +558,31 @@ public sealed class MeterServicesTests : IDisposable
     // dup-suppression. (Body is empty, so the parser finds no members and no-ops — we assert only the dispatch.)
     private static CapturedSegment RosterSegment(long seq, long at, int srcPort) =>
         new(seq, new byte[] { 0x08, 0x02, 0x97, 0x00, 0x00 }, at, "10.0.0.1", srcPort, "10.0.0.2", 13328);
+
+    private static readonly byte[] DamageFrame = [0x08, 0x04, 0x38, 0x00, 0x00];
+
+    // 0x3600 MapFrame_NT: [0E][00 36][서버 epoch ms Int64 LE] = 11바이트 (1016 실프레임 모양). primary 자격.
+    private static byte[] MapFrame(long at)
+    {
+        byte[] frame = new byte[11];
+        frame[0] = 0x0E;
+        frame[1] = 0x00;
+        frame[2] = 0x36;
+        BitConverter.TryWriteBytes(frame.AsSpan(3), 1_792_083_904_000 + at);
+        return frame;
+    }
+
+    // 진짜 게임 S2C 세그먼트: 서버 시계(자격) + 데미지 0x3804. 16바이트라 다음 seq 는 +16.
+    private static CapturedSegment ClockedGameSegment(long seq, long at, int srcPort) =>
+        new(seq, [.. MapFrame(at), .. DamageFrame], at, "10.0.0.1", srcPort, "10.0.0.2", 13328);
+
+    // 10-16 하이재킹 프레임: User-Agent "...537.36 (KHTML, like Gecko)..." 이 '.' 에서 잘린 것.
+    // 0x2E = 길이 46 → realLength 43, 그 뒤 "36" = 0x3633(OwnNickname) → LooksLikeGamePacket true.
+    private static readonly byte[] UaFrame =
+        System.Text.Encoding.ASCII.GetBytes(".36 (KHTML, like Gecko) Chrome/141.0.0.0 Sa"); // 43바이트
+
+    private static CapturedSegment UaFrameSegment(long seq, long at) =>
+        new(seq, UaFrame, at, "127.0.0.1", 49638, "127.0.0.1", 17080);
 
     private static string[] ReadLog(string logDir) =>
         CaptureCorpusReader.ReadLines(Directory.GetFiles(logDir, "*.jsonl.gz").Single())

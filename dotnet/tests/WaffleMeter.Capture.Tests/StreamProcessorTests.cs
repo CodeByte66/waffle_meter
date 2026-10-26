@@ -163,4 +163,47 @@ public class StreamProcessorTests
         Assert.Contains(DoTKey, sink.Dispatched);   // it WAS routed to the DoT handler
         Assert.Equal(1, sink.ParserErrors);         // and the parse failure was recorded, not fatal
     }
+
+    // 1016 실프레임 그대로: [0E][00 36][epoch ms LE] — primary 락 자격.
+    private static readonly byte[] RealMapFrame = [0x0E, 0x00, 0x36, 0xE5, 0x43, 0x86, 0x40, 0xA1, 0x01, 0x00, 0x00];
+
+    [Fact]
+    public void IsServerClockFrame_accepts_real_mapframes()
+    {
+        Assert.True(StreamProcessor.IsServerClockFrame(RealMapFrame));
+        Assert.True(StreamProcessor.IsServerClockFrame(
+            [0x0F, 0xF0, 0x00, 0x36, 0xE5, 0x43, 0x86, 0x40, 0xA1, 0x01, 0x00, 0x00])); // extraFlag 12B
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0x0E, 0x00, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 })] // epoch 0
+    [InlineData(new byte[] { 0x0E, 0x00, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40 })] // 2^62
+    [InlineData(new byte[] { 0x0E, 0x00, 0x36, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x03, 0x00, 0x00 })] // 2100년 이후
+    [InlineData(new byte[] { 0x0E, 0x00, 0x36, 0xE5, 0x43, 0x86, 0x40, 0xA1, 0x01, 0x00 })]       // 10B 절단
+    [InlineData(new byte[] { 0x0F, 0x00, 0x36, 0xE5, 0x43, 0x86, 0x40, 0xA1, 0x01, 0x00, 0x00, 0x00 })] // 플래그 없는 12B
+    [InlineData(new byte[] { 0x0E, 0x33, 0x36, 0xE5, 0x43, 0x86, 0x40, 0xA1, 0x01, 0x00, 0x00 })] // 0x3633
+    [InlineData(new byte[] { 0x08, 0x04, 0x38, 0x00, 0x00 })]                                      // 0x3804
+    public void IsServerClockFrame_rejects_lookalikes(byte[] frame) =>
+        Assert.False(StreamProcessor.IsServerClockFrame(frame));
+
+    [Fact]
+    public void IsServerClockFrame_rejects_the_user_agent_hijack_frame()
+    {
+        byte[] ua = System.Text.Encoding.ASCII.GetBytes(".36 (KHTML, like Gecko) Chrome/141.0.0.0 Sa");
+        Assert.True(StreamProcessor.LooksLikeGamePacket(ua)); // 이것이 10-16 하이재킹의 출발점이다
+        Assert.False(StreamProcessor.IsServerClockFrame(ua));
+    }
+
+    [Fact]
+    public void LooksLikeText_separates_plain_text_from_game_frames()
+    {
+        Assert.True(StreamProcessor.LooksLikeText(
+            System.Text.Encoding.ASCII.GetBytes(".36 (KHTML, like Gecko) Chrome/141.0.0.0 Sa")));
+        Assert.False(StreamProcessor.LooksLikeText(RealMapFrame));
+        Assert.False(StreamProcessor.LooksLikeText([0x08, 0x04, 0x38, 0x00, 0x00])); // 8바이트 미만은 판단 안 함
+
+        // 경계: 8바이트 중 출력 가능 6개(=3/4)는 텍스트, 5개는 아니다.
+        Assert.True(StreamProcessor.LooksLikeText([0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x00, 0x00]));
+        Assert.False(StreamProcessor.LooksLikeText([0x41, 0x41, 0x41, 0x41, 0x41, 0x00, 0x00, 0x00]));
+    }
 }
