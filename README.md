@@ -43,6 +43,8 @@ This project uses free code signing provided by [SignPath.io](https://signpath.i
 
 ## 업데이트 기록
 
+- v3.3.7 (2026-10-26)
+  - [추가] 설정 › 단축키에 `메모 켜기/끄기` 단축키(기본 미지정).
 - v3.3.6 (2026-10-23)
   - [변경] 등급이 전투 시작 10초 뒤부터 표시(종전 20초).
 - v3.3.5 (2026-10-20)
