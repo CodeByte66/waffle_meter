@@ -86,4 +86,42 @@ public class PacketPrimitivesTests
     {
         Assert.Equal("00 0F A1 FF", PacketPrimitives.ToHex(new byte[] { 0x00, 0x0F, 0xA1, 0xFF }));
     }
+
+    [Fact]
+    public void ReadVarUInt64_reads_past_32_bits()
+    {
+        // 실측 0x3641 감시자 카이라 최대 HP: 80 CA A4 A8 36 = 14,580,000,000 (ReadVarInt 는 32비트로 잘라 엉뚱한 값을 낸다).
+        VarLongOutput r = PacketPrimitives.ReadVarUInt64(new byte[] { 0xAA, 0x80, 0xCA, 0xA4, 0xA8, 0x36 }, offset: 1);
+        Assert.Equal(14_580_000_000L, r.Value);
+        Assert.Equal(5, r.Length);
+        Assert.NotEqual(14_580_000_000L, PacketPrimitives.ReadVarInt(new byte[] { 0x80, 0xCA, 0xA4, 0xA8, 0x36 }).Value);
+    }
+
+    [Fact]
+    public void ReadVarUInt64_single_byte_zero_is_canonical()
+    {
+        Assert.Equal(new VarLongOutput(0, 1), PacketPrimitives.ReadVarUInt64(new byte[] { 0x00 }));
+    }
+
+    [Fact]
+    public void ReadVarUInt64_rejects_a_non_canonical_trailing_zero_byte()
+    {
+        Assert.Equal(new VarLongOutput(-1, -1), PacketPrimitives.ReadVarUInt64(new byte[] { 0x80, 0x00 }));
+    }
+
+    [Fact]
+    public void ReadVarUInt64_rejects_out_of_bounds_and_values_past_long_max()
+    {
+        Assert.Equal(-1, PacketPrimitives.ReadVarUInt64(new byte[] { 0x80, 0x80 }).Length);
+
+        // long.MaxValue 는 받고, 2^63 은 거부한다.
+        byte[] max = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F };
+        Assert.Equal(new VarLongOutput(long.MaxValue, 9), PacketPrimitives.ReadVarUInt64(max));
+        byte[] twoTo63 = { 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01 };
+        Assert.Equal(-1, PacketPrimitives.ReadVarUInt64(twoTo63).Length);
+
+        // 11바이트째까지 이어지는 varint 는 10바이트 상한에서 끊긴다.
+        byte[] tooLong = Enumerable.Repeat((byte)0x80, 10).Append((byte)0x01).ToArray();
+        Assert.Equal(-1, PacketPrimitives.ReadVarUInt64(tooLong).Length);
+    }
 }

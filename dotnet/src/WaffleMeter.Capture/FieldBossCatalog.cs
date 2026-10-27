@@ -205,6 +205,12 @@ public static class FieldBossCatalog
     public static FieldBossRegion? Region(int code)
         => ByCode.TryGetValue(code, out FieldBossInfo b) ? b.Region : null;
 
+    /// <summary>True when the code is an 어비스 필드보스 (이 표의 <see cref="FieldBossRegion.Abyss"/> 행).
+    /// <para>군중전 전용 규칙(스폰 HP·HP 상한 1e12·사라진 보스 규칙)의 <b>유일한</b> 스코프 판정이다.
+    /// ⚠️ 몹 코드 접두(2600xxx)로 대신하지 마라 — 같은 대역에 비보스·기믹이 섞여 있고, 표에 없는 코드는
+    /// 지금 동작을 그대로 지켜야 한다.</para></summary>
+    public static bool IsAbyss(int code) => Region(code) == FieldBossRegion.Abyss;
+
     /// <summary>Korean label for a region tab.</summary>
     public static string RegionName(FieldBossRegion region) => region switch
     {

@@ -341,6 +341,13 @@ public sealed class DpsCalculator
             user.TrySetJob(inferredJob, JobProvenance.OwnSkill);
         }
 
+        // 이 전투 안의 본인을 붙잡아 둔다(ResolveBattleSelf). 유휴 종료로 저장이 한참 늦으면 그사이 존 이동으로
+        // 라이브 본인 uid 가 바뀌어, 저장 시점 값이 이 전투의 참가자가 아니게 된다.
+        if (user.Id != 0 && user.Id == _dm.ExecutorId())
+        {
+            _battleSelfId = user.Id;
+        }
+
         if (!string.IsNullOrWhiteSpace(user.Nickname) && user.Server > 0 && user.Power <= 0)
         {
             _dm.RequestOfficialCharacterLookup(user.Id);
@@ -407,7 +414,37 @@ public sealed class DpsCalculator
         return start > PreemptivePacketWindowMs ? start - PreemptivePacketWindowMs : 0L;
     }
 
-    private void ProcessPendingPacketsBefore(int targetId, long before)
+    /// <summary>엔티티 → 그 엔티티로 마지막에 <b>저장한</b> 전투의 종료(마지막 피해) 시각. 종료·전환 때의 재누적이
+    /// 이보다 앞선 패킷을 다시 세지 못하게 하는 하한이다(<see cref="RebuildFloor"/>).</summary>
+    private readonly Dictionary<int, long> _lastSavedEndByTarget = new();
+
+    /// <summary>이 전투에서 피해를 넣은 본인 uid(첫 관측 시 래치). 새 전투가 열릴 때만 0 으로 돌린다 —
+    /// <see cref="ResetCache"/> 는 종료 재누적 직전에도 돌기 때문에 거기서 지우면 의미가 없다.</summary>
+    private int _battleSelfId;
+
+    /// <summary>리포트에 실을 본인 uid: 라이브 본인이 이 전투의 기여자면 그 값, 아니면 이 전투에서 래치한 본인,
+    /// 그것도 없으면 라이브 값(종전 동작).</summary>
+    private int ResolveBattleSelf()
+    {
+        int live = _dm.ExecutorId();
+        if (live != 0 && _cachedInfo.ContainsKey(live))
+        {
+            return live;
+        }
+
+        return _battleSelfId != 0 && _cachedInfo.ContainsKey(_battleSelfId) ? _battleSelfId : live;
+    }
+
+    /// <summary>재누적 하한 = 같은 엔티티로 직전에 저장한 전투의 종료 + 1ms (없으면 0 = 하한 없음).
+    /// <para>왜 필요한가: 같은 엔티티로 전투가 다시 열리면(시체 토글, 같은 id 재풀) 링버퍼는 비워지지 않은 채로
+    /// 남고, 그 전투가 끝날 때 <see cref="ResetCache"/> 뒤 링 전체를 다시 누적하면 <b>이미 저장한 앞 전투의 피해까지</b>
+    /// 새 전투에 들어간다(2026-10-27 카이라: 처치 기록 97초 + 같은 피해를 다시 센 35초 유령 기록).</para>
+    /// <para>⚠️ '이 전투의 시작 − 1초'로 잡지 마라. 늦게 찍힌 시작 토글이 정당한 선행 피해를 잘라 내고, 핀 테스트
+    /// A_spurious_late_toggle_does_not_amputate_the_battle_window 가 지키는 191M 사건 방어와 충돌한다.</para></summary>
+    private long RebuildFloor(int targetId)
+        => _lastSavedEndByTarget.TryGetValue(targetId, out long savedEnd) ? savedEnd + 1 : 0L;
+
+    private void ProcessPendingPacketsBefore(int targetId, long before, long notBefore = 0L)
     {
         if (targetId <= 0) return;
         PacketWindow window = _dm.BattleDataSince(targetId, _lastProcessedSequence);
@@ -418,6 +455,11 @@ public sealed class DpsCalculator
 
         foreach (ParsedDamagePacket p in window.Packets)
         {
+            if (p.Timestamp < notBefore)
+            {
+                continue;
+            }
+
             if (before <= 0L || p.Timestamp < before)
             {
                 AccumulatePacket(p);
@@ -499,7 +541,7 @@ public sealed class DpsCalculator
             TargetInstanced = targetInfo != null
                 ? _dm.IsInstancedBoss(targetInfo.Mob.Code)
                 : _recentData.TargetInstanced,
-            ExecutorId = _dm.ExecutorId(), // freeze 본인 uid so the post-combat idle ("대기 중") view self-colors the
+            ExecutorId = ResolveBattleSelf(), // freeze 본인 uid so the post-combat idle ("대기 중") view self-colors the
                                            // own row in 직업 강조 mode — this is the report returned in the idle state,
                                            // so without it self-id falls to the transient _selfId and reverts to job color
         };
@@ -574,7 +616,7 @@ public sealed class DpsCalculator
         if ((targetChanged || battleRestartedWithSameTarget)
             && storageTarget != -1 && previousTarget > 0 && !_recentData.IsEmpty())
         {
-            ProcessPendingPacketsBefore(previousTarget, ActivePacketCutoff());
+            ProcessPendingPacketsBefore(previousTarget, ActivePacketCutoff(), RebuildFloor(previousTarget));
             FreezeTargetHp(previousTarget); // Refresh 보다 먼저 — 기여도 분모(fixedMax)가 얼린 MaxHp 를 보게 한다
             RefreshRecentReportFromCache(previousTarget, _recentData.Target);
             SaveRecentBattleLog();
@@ -584,6 +626,13 @@ public sealed class DpsCalculator
         if (targetChanged || battleRestartedWithSameTarget)
         {
             ResetCache();
+        }
+
+        // 새 전투가 열렸다 — 앞 전투의 본인 래치를 넘겨받지 않는다. (종료 전이는 여기 해당하지 않는다: 아래 종료
+        // 재누적이 그 전투의 본인을 그대로 써야 한다.)
+        if ((targetChanged || battleRestartedWithSameTarget) && storageTarget > 0)
+        {
+            _battleSelfId = 0;
         }
 
         _currentTarget = storageTarget;
@@ -597,7 +646,8 @@ public sealed class DpsCalculator
                 _recentData.BattleEnd = battleEnd;
                 if (previousTarget > 0)
                 {
-                    ProcessPendingPacketsBefore(previousTarget, 0L);
+                    // 링 전체 재누적 — 하한은 같은 엔티티의 직전 저장 종료다(RebuildFloor).
+                    ProcessPendingPacketsBefore(previousTarget, 0L, RebuildFloor(previousTarget));
                     FreezeTargetHp(previousTarget);
                     RefreshRecentReportFromCache(previousTarget, _recentData.Target);
                 }
@@ -642,7 +692,9 @@ public sealed class DpsCalculator
                 ResetCache();
             }
 
-            long packetCutoff = ActivePacketCutoff();
+            // 라이브 누적도 같은 하한을 쓴다 — 시작 1초 전까지 받아 주는 선행 창이 같은 엔티티의 직전 판(이미 저장)과
+            // 겹치면 그 타격이 두 판에 다 들어간다. 종료 재누적(RebuildFloor)과 같은 기준이라야 라이브와 기록이 같다.
+            long packetCutoff = Math.Max(ActivePacketCutoff(), RebuildFloor(_currentTarget));
             foreach (ParsedDamagePacket p in window.Packets)
             {
                 if (p.Timestamp >= packetCutoff)
@@ -708,7 +760,7 @@ public sealed class DpsCalculator
             Packets = reportPackets,
             // 이 전투의 시련 난이도를 지금 박아 둔다 — 나중에 몹 코드로는 되짚을 수 없다(DpsReport 주석).
             TrialDifficulty = _dm.TrialDifficulty.Current,
-            ExecutorId = _dm.ExecutorId(), // carry 본인 uid into the live report so self-coloring survives the
+            ExecutorId = ResolveBattleSelf(), // carry 본인 uid into the live report so self-coloring survives the
                                            // transition into the post-combat idle state (matches the saved snapshot)
         };
 
@@ -1445,6 +1497,7 @@ public sealed class DpsCalculator
         if (_recentData.Target is { } saving)
         {
             FreezeTargetHp(saving.Id);
+            _lastSavedEndByTarget[saving.Id] = _recentData.BattleEnd; // 다음 재누적의 하한(RebuildFloor)
         }
 
         Dictionary<int, Dictionary<string, AnalyzedSkill>>? liveSkills;
@@ -1551,6 +1604,8 @@ public sealed class DpsCalculator
         _recentBuffRates = new();
         _recentBossBuffRates = [];
         _recentDataSaved = false;
+        _lastSavedEndByTarget.Clear();
+        _battleSelfId = 0;
         ResetCache();
     }
 
@@ -1572,6 +1627,8 @@ public sealed class DpsCalculator
         _recentBuffRates = new();
         _recentBossBuffRates = [];
         _recentDataSaved = false;
+        _lastSavedEndByTarget.Clear();
+        _battleSelfId = 0;
         ResetCache();
     }
 }

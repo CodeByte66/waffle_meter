@@ -96,6 +96,9 @@ public sealed class StreamProcessor
     private const int OtherNicknameKey = 0x45 | (0x36 << 8);   // 0x3645 (was 0x3644)
     private const int OwnCombatPowerKey = 0x56 | (0x36 << 8);  // 0x3656 (was 0x3655)
     private const int SummonKey = 0x41 | (0x36 << 8);          // 0x3641 (was 0x3640)
+    // 0x3642 NpcDisappear_NT — 엔티티가 시야에서 빠지거나 사라졌다. 본문은 [key varint][mask u8][reason u8]
+    // 하나뿐이다(코퍼스 3,160프레임 전부 그 모양, mask 0). 어비스 필드보스의 '사라진 보스' 게이팅 상태로만 쓴다.
+    private const int NpcDisappearKey = 0x42 | (0x36 << 8);    // 0x3642
     private const int BuffApplyKey = 0x2A | (0x38 << 8);       // 0x382A
     // 버프 제거 브로드캐스트. 슬롯 단위라 "정확히 그 인스턴스"를 지목한다(코드만 주는 0x921A와 다름).
     private const int BuffRemoveKey = 0x2C | (0x38 << 8);      // 0x382C
@@ -289,6 +292,7 @@ public sealed class StreamProcessor
         [OwnCombatPowerKey] = "OwnCombatPower",
         [OtherNicknameKey] = "OtherNickname",
         [SummonKey] = "Summon",
+        [NpcDisappearKey] = "NpcDisappear",
         [DamageKey] = "Damage",
         [DoTKey] = "DoT",
         [BuffApplyKey] = "BuffApply",
@@ -561,6 +565,9 @@ public sealed class StreamProcessor
                     break;
                 case SummonKey:
                     ParseSummonPacket(packet, extraFlag);
+                    break;
+                case NpcDisappearKey:
+                    ParseNpcDisappear(packet, lengthInfo, extraFlag);
                     break;
                 case BattleToggleKey:
                     ParseBattlePacket(packet, lengthInfo, extraFlag);
@@ -2166,6 +2173,203 @@ public sealed class StreamProcessor
         }
     }
 
+    /// <summary>스폰(0x3641 NpcAppear_NT)에서 읽어 낸 생존 상태. <see cref="MaskBytes"/> = NpcAppear 선택필드
+    /// 마스크 폭(현행 4, 2026-08-08 이전 클라 2).</summary>
+    public readonly record struct SpawnVitals(int Key, int PcId, byte Live, long Hp, long HpMax, bool InCombat, int MaskBytes);
+
+    /// <summary>어비스 필드보스 HP 상한. 실측 최대 145.8억(감시자 카이라, 0x3641 스폰). 일반 상한
+    /// <see cref="MaxPlausibleHp"/>(10e9)는 그 밖의 모든 몹에 그대로 둔다 — 던전 쓰레기 프레임 가드다.</summary>
+    private const long AbyssFieldBossMaxPlausibleHp = 1_000_000_000_000L;
+
+    private bool _spawnHpMissLogged;
+
+    /// <summary>현재 등록된 mobCode 가 어비스 필드보스인 엔티티에 한해 스폰 HP 를 읽어 데이터 계층에 넘긴다.
+    /// <para>pc_id 가 등록된 코드와 같을 때만 넘긴다 — 이동 중 스폰은 마커 스캔이 코드를 못 읽어(85/85) 옛 코드가
+    /// 남아 있을 수 있는데, 그 엔티티 id 가 다른 NPC 에게 재발급됐다면 그 NPC 의 HP 가 보스 것으로 둔갑한다.</para></summary>
+    private void ReadAbyssBossSpawnVitals(byte[] packet, int afterOpcode, int key)
+    {
+        if (_data.GetMobId(key) is not { } code || !FieldBossCatalog.IsAbyss(code))
+        {
+            return;
+        }
+
+        if (!TryReadNpcAppearVitals(packet, afterOpcode, out SpawnVitals v) || v.Key != key || v.PcId != code)
+        {
+            if (!_spawnHpMissLogged)
+            {
+                _spawnHpMissLogged = true; // 스키마가 바뀌면 조용히 꺼진다 — 그걸 알아챌 흔적만 한 번 남긴다
+                _sink.Meta("spawn_hp_miss", ("target", key), ("mobCode", code), ("len", packet.Length));
+            }
+
+            return;
+        }
+
+        _data.SaveMobSpawnVitals(key, v.Live, v.Hp, v.HpMax, v.InCombat);
+        _sink.Meta("spawn_hp",
+            ("target", key), ("mobCode", code), ("hp", v.Hp), ("maxHp", v.HpMax), ("live", (int)v.Live), ("combat", v.InCombat));
+    }
+
+    /// <summary>0x3641 NpcAppear_NT 본문을 usmap 스키마(NpcAppear_NT → CharDesc → CharState) <b>선언 순서대로</b>
+    /// 걸어가 key·pc_id·live·hp·hp_max·교전 여부를 읽는다. <paramref name="afterOpcode"/> = opcode 2바이트 바로 뒤.
+    /// <code>
+    /// [key varint][NpcAppear 마스크 u32(구세대 u16)]
+    /// [CharDesc 마스크 u8][bit0 → nickname: u8 len + UTF-8][pc_id u32]
+    /// [CharState 마스크 u16][pos 12][dir 4][move_dir 2][bit3 → velocity 12]
+    /// [live u8][hp varint64][hp_max varint64][mp u32][mp_max u32] … (+52 바이트에 bit6 교전 바이트)
+    /// </code>
+    /// <para>🔴 바이트 패턴('00 52 01' 등)으로 찾지 마라. HP 앞 바이트는 <c>_move_dir</c>(u16)와 <c>_live</c>라
+    /// 스폰마다 다르다(첫 스폰 <c>00 52 01</c>, 재진입 <c>f2 3c 01</c>). 폭을 모르는 선택 비트(CharDesc bit0 외,
+    /// CharState 0x0037)가 켜져 있으면 추측하지 않고 실패한다 — fail-closed, 지금보다 나빠지지 않는다.</para>
+    /// <para>마스크 폭은 4바이트를 먼저 시도하고, 검증에 실패하면 2바이트로 다시 시도한다(2026-08-08 이전 클라).</para></summary>
+    public static bool TryReadNpcAppearVitals(byte[] p, int afterOpcode, out SpawnVitals v)
+        => TryReadNpcAppearVitals(p, afterOpcode, 4, out v) || TryReadNpcAppearVitals(p, afterOpcode, 2, out v);
+
+    private static bool TryReadNpcAppearVitals(byte[] p, int afterOpcode, int maskBytes, out SpawnVitals v)
+    {
+        v = default;
+        int o = afterOpcode;
+        if (o < 0 || o >= p.Length)
+        {
+            return false;
+        }
+
+        VarIntOutput key = PacketPrimitives.ReadVarInt(p, o);
+        if (key.Length <= 0 || key.Value <= 0)
+        {
+            return false;
+        }
+
+        o += key.Length + maskBytes; // NpcAppear 선택필드 마스크 — 값은 쓰지 않는다
+        if (o + 1 > p.Length)
+        {
+            return false;
+        }
+
+        int descMask = p[o++];
+        if ((descMask & ~0x01) != 0)
+        {
+            return false; // _nickname 말고는 관측된 적 없는 CharDesc 필드 — 폭을 모른다
+        }
+
+        if ((descMask & 0x01) != 0)
+        {
+            if (o + 1 > p.Length)
+            {
+                return false;
+            }
+
+            int nameLen = p[o++];
+            if (nameLen > 64 || o + nameLen > p.Length)
+            {
+                return false;
+            }
+
+            o += nameLen;
+        }
+
+        if (o + 4 > p.Length)
+        {
+            return false;
+        }
+
+        long pcId = PacketPrimitives.ReadUInt32LeAsLong(p, o);
+        o += 4;
+        if (pcId <= 0 || pcId >= 1 << 24)
+        {
+            return false;
+        }
+
+        if (o + 2 > p.Length)
+        {
+            return false;
+        }
+
+        int stateMask = PacketPrimitives.ParseUInt16Le(p, o);
+        o += 2;
+        if ((stateMask & 0x0037) != 0)
+        {
+            return false; // 로컬 좌표·타깃 키 등 미관측 비트 — 폭을 모른다
+        }
+
+        o += 12 + 4 + 2; // _pos, _dir, _move_dir
+        if ((stateMask & 0x08) != 0)
+        {
+            o += 12; // _velocity
+        }
+
+        if (o + 1 > p.Length)
+        {
+            return false;
+        }
+
+        byte live = p[o++];
+        if (live > 1)
+        {
+            return false;
+        }
+
+        VarLongOutput hp = PacketPrimitives.ReadVarUInt64(p, o);
+        if (hp.Length <= 0)
+        {
+            return false;
+        }
+
+        o += hp.Length;
+        VarLongOutput hpMax = PacketPrimitives.ReadVarUInt64(p, o);
+        if (hpMax.Length <= 0)
+        {
+            return false;
+        }
+
+        o += hpMax.Length;
+        if (o + 52 > p.Length)
+        {
+            return false;
+        }
+
+        long mp = PacketPrimitives.ReadUInt32LeAsLong(p, o);
+        long mpMax = PacketPrimitives.ReadUInt32LeAsLong(p, o + 4);
+
+        if (hpMax.Value <= 0 || hpMax.Value > AbyssFieldBossMaxPlausibleHp
+            || hp.Value > hpMax.Value
+            || (live == 0) != (hp.Value == 0)
+            || mp > mpMax)
+        {
+            return false;
+        }
+
+        bool inCombat = (stateMask & 0x40) != 0 && o + 52 < p.Length && p[o + 52] == 1;
+        v = new SpawnVitals(key.Value, (int)pcId, live, hp.Value, hpMax.Value, inCombat, maskBytes);
+        return true;
+    }
+
+    /// <summary>0x3642 NpcDisappear_NT — <c>[key varint][mask u8][reason u8]</c>. 모양이 정확히 맞을 때만
+    /// 데이터 계층에 넘긴다. 사유는 진단 meta 에만 싣는다 — 게이팅이 사유를 읽지 않게 하는 게 의도다.</summary>
+    private void ParseNpcDisappear(byte[] packet, VarIntOutput lengthInfo, bool extraFlag)
+    {
+        int offset = lengthInfo.Length + (extraFlag ? 1 : 0);
+        if (offset + 2 > packet.Length || packet[offset] != 0x42 || packet[offset + 1] != 0x36)
+        {
+            return;
+        }
+
+        offset += 2;
+        VarIntOutput key = PacketPrimitives.ReadVarInt(packet, offset);
+        if (key.Length <= 0 || key.Value <= 0)
+        {
+            return;
+        }
+
+        offset += key.Length;
+        if (offset + 2 != packet.Length || packet[offset] != 0x00)
+        {
+            return; // mask 가 켜진 모양은 관측된 적 없다 — 폭을 모르는 필드를 추측하지 않는다
+        }
+
+        _data.SaveMobDisappear(key.Value);
+        _sink.Meta("despawn", ("target", key.Value), ("reason", (int)packet[offset + 1]));
+    }
+
     /// <summary>Summon / mob-spawn packet 0x3640. Kotlin parseSummonPacket (502-559). Emits a
     /// mob_spawn meta (and records the instanceId-&gt;mobCode map) plus a summon_map meta.</summary>
     private void ParseSummonPacket(byte[] packet, bool extraFlag)
@@ -2219,6 +2423,10 @@ public sealed class StreamProcessor
             // mobCode registration is skipped even though we received the packet — a first boss that hits this
             // becomes unrecognizable downstream (parse-miss drop path).
         }
+
+        // 어비스 필드보스 한정 — 스폰이 실어 온 현재/최대 HP. mobCode 등록은 위 마커 스캔이 그대로 맡는다
+        // (pc_id 로 바꾸는 건 별도 승인 사항). 아래 소환수 주인 탐색은 일찍 return 하므로 그보다 앞에 둔다.
+        ReadAbyssBossSpawnVitals(packet, offset, summonInfo.Value);
 
         int keyIdx = FindArrayIndex(packet, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF);
         if (keyIdx == -1) return;
@@ -2396,13 +2604,18 @@ public sealed class StreamProcessor
         if (mob is null) return;
         if (!mob.Boss) return;
 
-        if (maxHp is { } mx && IsSaneHp(mx))
+        // 어비스 필드보스만 상한을 1e12 로 연다(실측 145.8억). 2026-10-27 감시자 카이라는 교전 첫 33.5초 동안
+        // HP 프레임 222개가 10e9 에 걸려 버려졌고, 처음 받아들인 99.98억(실제 68.6%)이 최대로 래치돼 % 가
+        // 1.458배 부풀었다. 그 밖의 몹은 종전 상한 그대로다 — 던전 쓰레기 프레임 가드가 그 값에 기대고 있다.
+        long hpCap = FieldBossCatalog.IsAbyss(mobCode.Value) ? AbyssFieldBossMaxPlausibleHp : MaxPlausibleHp;
+
+        if (maxHp is { } mx && IsSaneHp(mx, hpCap))
         {
             _data.SaveMobMaxHp(mobIdInfo.Value, mx);
         }
 
         // 현재 HP가 실리지 않은 프레임(최대 HP만 오는 경우)은 잔여 HP를 발행하지 않는다 — 종전 버그.
-        if (currentHp is not { } hp || !IsSaneHp(hp)) return;
+        if (currentHp is not { } hp || !IsSaneHp(hp, hpCap)) return;
 
         long mobHp = hp;
         _data.SaveMobHp(mobIdInfo.Value, mobHp);
@@ -2419,9 +2632,11 @@ public sealed class StreamProcessor
     // 상한이 느슨해도 피해가 제한적이었는데, 그 포화를 걷어내면서 이게 유일한 가드가 됐다. 최대 HP 는 단조
     // 증가로 래치되고 소프트 리셋에서도 보존되므로(Repositories.SaveMaxHp / DataManager.ResetBattleRecords),
     // 이상값 한 프레임이 그 엔티티의 분모를 세션 내내 오염시킨다. 실측 최대 27.2억(델트라스) 대비 3.7배 여유.
+    // ⚠️ 어비스 필드보스는 이 상한을 넘는다(실측 최대 145.8억, 감시자 카이라 0x3641 스폰) — 그쪽은
+    // AbyssFieldBossMaxPlausibleHp 를 쓴다. 이 값 자체를 올리지 마라: 그 밖의 몹 전부의 가드가 느슨해진다.
     private const long MaxPlausibleHp = 10_000_000_000L;
 
-    private static bool IsSaneHp(long hp) => hp >= 0 && hp <= MaxPlausibleHp;
+    private static bool IsSaneHp(long hp, long cap = MaxPlausibleHp) => hp >= 0 && hp <= cap;
 
     // 여기서 int.MaxValue로 포화시키던 자리다. 그 주석은 "여유가 1.17배뿐"이라며 넘칠 것을 예고해 뒀는데,
     // 실제로 비탄의 설원(델트라스 27억대)과 차원핵 계열이 넘겨서 그 보스들의 HP 게이지·보스 체력 기여도·전투

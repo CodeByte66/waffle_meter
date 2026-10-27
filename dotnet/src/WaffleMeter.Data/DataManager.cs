@@ -117,6 +117,36 @@ public sealed class DataManager : ICaptureGameData
     /// 평범한 필드로 둔다.</para></summary>
     private long _lastBossActivityMs;
 
+    // ---- 어비스 필드보스: '사라진 보스' (2026-10-28) ----
+    // 🔑 스코프는 진행 중 전투의 보스가 어비스 필드보스(FieldBossCatalog.IsAbyss)일 때뿐이다. 던전·인스턴스와 그 밖의
+    // 필드보스는 아래 상태를 기록은 해도 게이트에서 읽지 않는다 — 기믹 무음(칼드릭스 27.8초)·바크론 가시속박 stomp
+    // 보호가 그대로여야 한다.
+    // 배경(2026-10-27 감시자 카이라, 400명 군중전): 보스가 시야 밖으로 나가면(0x3642) 서버가 그 엔티티 HP 를 끊고,
+    // 마지막 HP>0 이 primary-lock 을 60초 붙잡는다. 그동안 다음 보스의 시작 토글은 거부되고(재시도 없음 = 미기록),
+    // 전역 20초 무음 조건은 군중이 늘 무언가를 때리고 있어 영영 충족되지 않아 옛 보스 화면이 고착된다. 존을 옮겨도
+    // 닫히지 않았다.
+
+    /// <summary>시야 밖(0x3642 이후 무소식)인 어비스 필드보스 전투를 귀환을 기다리며 붙잡는 시간. 오너 확정 60초.
+    /// 이 동안 primary-lock 은 이미 풀려 있으므로(다음 보스가 열 수 있다) 길게 잡는 비용은 화면 고착뿐이다.</summary>
+    private const long OutOfSightHoldMs = 60_000L;
+
+    /// <summary>본인이 새 uid 로 다시 로드된(존 이동) 뒤, 보스가 이만큼 조용하면 그 전투는 끝났다. 같은 uid 재수신
+    /// (원거리 부활)은 존 이동이 아니라 기록하지 않는다.</summary>
+    private const long ZoneLeaveGraceMs = 3_000L;
+
+    /// <summary>현 타깃이었을 때 0x3642 를 받은 엔티티와 그 시각. 게이팅 상태일 뿐 활동이 아니다 — 그 보스의 다음
+    /// HP·피해가 오면 <see cref="_lastBossActivityMs"/> 가 앞서므로 저절로 풀린다.</summary>
+    private int _goneTarget;
+    private long _goneSinceMs;
+
+    /// <summary>본인이 <b>다른</b> uid 로 다시 로드된 마지막 시각(0x3633). 존·인스턴스 이동의 신호다.</summary>
+    private long _ownReloadAtMs;
+
+    /// <summary>보스 엔티티 → 사망 브로드캐스트(0x8D04) 시각. 한 번도 열린 적 없는 어비스 필드보스의 처치 직후
+    /// 시체 토글(0→1)을 막는 데 쓴다(<see cref="StartBattleAt"/>).</summary>
+    private readonly Dictionary<int, long> _bossDeathAtMs = new();
+    private const int BossDeathCap = 64;
+
     /// <summary>타깃을 가리지 않고 마지막으로 데미지를 본 시각(<see cref="AnyCombatQuietMs"/> 판정용).
     /// 기믹 중 쫄 딜이 여기에 찍혀 "전투가 아직 살아 있다"를 증명한다.</summary>
     private long _lastAnyDamageMs;
@@ -650,6 +680,15 @@ public sealed class DataManager : ICaptureGameData
         int? previous = GetMobId(mid);
         if (previous != null && previous != code)
         {
+            // 열린 어비스 필드보스 전투의 엔티티 id 가 다른 몹에게 재발급됐다 — 그 보스는 이제 우리 것이 아니다.
+            // 마지막 활동 시각으로 닫는다. 새 코드가 카탈로그에 있는 몹일 때만 믿는다: 이동 중 스폰은 마커 스캔이
+            // 엉뚱한 코드(몹 아님)를 읽는 일이 있어서(2026-10-27 실측 11건, 전부 카탈로그 밖) 그걸로 닫으면
+            // 걸어 들어오는 보스의 전투가 잘린다.
+            if (mid == CurrentTarget() && IsAbyssFieldBossBattleOpen() && Mob(code) != null)
+            {
+                CloseCurrentBattleAt(mid, _lastBossActivityMs);
+            }
+
             _recentlyEndedBattles.Remove(mid);
             if (_pendingStart?.MobId == mid)
             {
@@ -834,6 +873,109 @@ public sealed class DataManager : ICaptureGameData
     }
 
     public void SaveMobMaxHp(int mid, long maxHp) => _mobIdRepository.SaveMaxHp(mid, maxHp);
+
+    /// <summary>스폰(0x3641)이 실어 온 권위 최대 HP. 추정 래치를 덮어쓰고, 이후 추정 래치가 건드리지 못하게 한다.</summary>
+    public void SaveMobMaxHpFromSpawn(int mid, long maxHp) => _mobIdRepository.SaveMaxHpFromSpawn(mid, maxHp);
+
+    /// <summary>어비스 필드보스 스폰(0x3641)의 현재/최대 HP — 수정 1(진짜 최대 HP)과 수정 3(재진입 유지)의 본체.
+    /// <para>최대 HP 는 권위값으로 덮는다. 현재 HP 는 셋으로 갈린다:</para>
+    /// <list type="bullet">
+    /// <item><b>HP 0(시체)</b> — 보지 못한 처치다. 현 전투면 <b>먼저</b> 마지막 활동 시각으로 닫고 그다음 HP 0 을
+    /// 쓴다. 순서가 핵심이다: 닫기 전에 쓰면 전투 최저 HP 가 0 이 돼 보지 못한 처치가 킬로 승격되고, 활동 시각도
+    /// 갱신돼 primary-lock 이 다시 무장된다(시체가 다음 보스를 막는다).</item>
+    /// <item><b>만피·비전투로 돌아온 현 보스</b>(전투 중 90% 아래까지 깎였던) — 리셋·재스폰이다. 이어 붙이지 않고
+    /// 닫는다.</item>
+    /// <item>그 밖의 HP&gt;0 — 평범한 HP 보고로 넘긴다. 현 타깃이면 활동 시각이 갱신되고 '시야 밖' 상태가 풀려
+    /// 원거리 부활 뒤 돌아온 전투가 한 판으로 이어진다(2026-10-27 카이라: 시야 이탈 13초 뒤 재진입 스폰이
+    /// 23.9억 / 145.8억을 실어 왔는데 종전에는 읽지 않았다).</item>
+    /// </list>
+    /// <para>어비스 필드보스 밖에서는 아무것도 하지 않는다 — 파서도 그 밖에는 부르지 않는다.</para></summary>
+    public void SaveMobSpawnVitals(int mid, int live, long hp, long maxHp, bool inCombat)
+    {
+        if (mid <= 0 || maxHp <= 0 || GetMobId(mid) is not { } code || !FieldBossCatalog.IsAbyss(code)
+            || Mob(code) is not { Boss: true, IsDummy: false })
+        {
+            return;
+        }
+
+        SaveMobMaxHpFromSpawn(mid, maxHp);
+        bool isCurrent = mid == CurrentTarget() && CurrentBattleStart() > 0L && CurrentBattleEnd() == 0L;
+
+        if (hp <= 0)
+        {
+            if (isCurrent)
+            {
+                CloseCurrentBattleAt(mid, _lastBossActivityMs);
+            }
+
+            MobHp(mid, 0);
+            return;
+        }
+
+        if (isCurrent
+            && !inCombat
+            && hp >= maxHp / 100 * 99
+            && BattleLowMobHp(mid, _battleRevision) is { } low
+            && low < maxHp / 100 * 90)
+        {
+            CloseCurrentBattleAt(mid, _lastBossActivityMs);
+        }
+
+        MobHp(mid, hp);
+    }
+
+    /// <summary>0x3642 — 현 타깃이 시야에서 빠졌다는 표시만 남긴다. 전투를 닫지도, 활동으로 치지도 않는다.</summary>
+    public void SaveMobDisappear(int mid)
+    {
+        if (mid > 0 && mid == CurrentTarget())
+        {
+            _goneTarget = mid;
+            _goneSinceMs = Clock();
+        }
+    }
+
+    /// <summary>열린 전투가 있고 그 보스가 어비스 필드보스인가 — '사라진 보스' 규칙 전부의 스코프.</summary>
+    private bool IsAbyssFieldBossBattleOpen()
+        => CurrentTarget() > 0
+           && CurrentBattleStart() > 0L
+           && CurrentBattleEnd() == 0L
+           && (_activeBattleMobCode ?? GetMobId(CurrentTarget())) is { } code
+           && FieldBossCatalog.IsAbyss(code);
+
+    /// <summary>열린 어비스 필드보스 전투의 보스가 더는 우리 것일 수 없는가. 게이팅 판정일 뿐 그 자체로 닫지 않는다.
+    /// <para><paramref name="zoneLeft"/> — 그 보스의 마지막 활동 뒤에 본인이 새 uid 로 다시 로드됐고(존 이동) 보스가
+    /// <see cref="ZoneLeaveGraceMs"/> 넘게 조용하다.</para>
+    /// <para>시야 밖 — 현 타깃이 0x3642 를 받았고 그 뒤로 그 보스의 HP·피해가 하나도 없다.</para>
+    /// <para>둘 다 그 보스의 다음 활동이 오면 저절로 풀린다(활동 시각이 앞선다).</para></summary>
+    private bool BossWithdrawn(long now, out bool zoneLeft)
+    {
+        zoneLeft = false;
+        if (!IsAbyssFieldBossBattleOpen())
+        {
+            return false;
+        }
+
+        long last = _lastBossActivityMs;
+        zoneLeft = _ownReloadAtMs > last && now - last > ZoneLeaveGraceMs;
+        bool outOfSight = _goneTarget == CurrentTarget() && _goneSinceMs >= last;
+        return zoneLeft || outOfSight;
+    }
+
+    /// <summary>열린 전투를 <paramref name="end"/>(마지막 활동 시각)로 닫는다 — 유휴 종료와 사라진 보스 규칙의 공통
+    /// 경로. 사망 확인이 아니므로 킬이 되지 않고, 업로드는 <c>not_kill</c> 로 스킵된다.</summary>
+    private void CloseCurrentBattleAt(int current, long end)
+    {
+        if (current <= 0 || current != CurrentTarget() || CurrentBattleStart() <= 0L || CurrentBattleEnd() != 0L)
+        {
+            return;
+        }
+
+        SaveCurrentBattleEnd(end);
+        SaveCurrentTarget(-1);
+        _recentlyEndedBattles[current] = new EndedBattle(_activeBattleMobCode ?? GetMobId(current), end);
+        _activeBattleMobCode = null;
+        _goneTarget = 0;
+    }
 
     public bool IsMobInstance(int id) => _mobIdRepository.Exist(id);
 
@@ -1618,6 +1760,16 @@ public sealed class DataManager : ICaptureGameData
             // 메우려고 존재하므로, 도착하는 순간 스테이징된 후보는 무효다. 이걸 지우지 않으면 나중에 옛 후보
             // uid가 딜을 넣을 때 방금 확정된 본인을 도로 밀어낸다.
             _pendingExecutorAnchor = null;
+
+            // 본인이 <b>다른</b> uid 로 다시 로드됐다 = 존·인스턴스 이동. 어비스 필드보스 전투의 '존 이탈' 판정이
+            // 읽는다(BossWithdrawn). 같은 uid 재수신(원거리 부활)은 이동이 아니다. 앵커 승격 경로는 일부러 넣지
+            // 않는다 — 그건 서버의 로드 선언이 아니라 추정이다.
+            int previousExecutor = _userRepository.Executor();
+            if (previousExecutor != 0 && previousExecutor != uid)
+            {
+                _ownReloadAtMs = Clock();
+            }
+
             SaveExecutorId(uid);
         }
 
@@ -2341,6 +2493,8 @@ public sealed class DataManager : ICaptureGameData
 
     public void SaveEntityDeath(int entityId, long arrivedAt)
     {
+        MarkBossDead(entityId);
+
         // 마킹만 먼저. 아래 executor 게이트는 버프 오버레이를 비우는 별개 관심사이고, 파티원 사망은
         // 거기서 걸러지지만 회색 표시에는 필요하다.
         if (_userRepository.Exist(entityId))
@@ -2364,6 +2518,40 @@ public sealed class DataManager : ICaptureGameData
     }
 
     private long _ownerBuffClearRevision;
+
+    /// <summary>보스의 사망 브로드캐스트(0x8D04)는 곧 HP 0 이다 — 시체 가드와 primary-lock 이 둘 다 <c>MobHp</c> 를
+    /// 읽는데, 종전에는 이 신호가 HP 를 바꾸지 않았다.
+    /// <para>2026-10-27 21:01:46 감시자 카이라 실측 순서: 사망 +0ms / 종료 토글 +1 / <b>시체 시작 토글 +46</b> /
+    /// HP 0 프레임 +46. 군중전에서는 HP 0 프레임이 시체 토글보다 늦게 와서, HP==0 만 보던 시체 가드가 새고 처치된
+    /// 보스로 유령 전투가 열렸다(35초짜리 중복 기록 + 저장 시점 본인 uid → self=MISSING). 사망을 HP 0 으로 쓰면
+    /// 현 타깃은 전투 최저 HP 가 0 이 돼 킬이 확정되고, 시체 토글은 기존 가드가 pending 으로 삼킨다. 같은 엔티티가
+    /// 나중에 HP&gt;0 을 보고하면(페이즈 부활) <see cref="MobHp(int, long)"/> 가 pending 을 재생해 저절로 회복된다.</para>
+    /// <para>재사용된 플레이어 uid 는 건너뛴다 — 그 id 가 지금 플레이어로 알려져 있고 현 타깃도 아니라면 죽은 건
+    /// 옛 보스가 아니라 그 플레이어다.</para></summary>
+    private void MarkBossDead(int entityId)
+    {
+        if (entityId <= 0 || GetMobId(entityId) is not { } code || Mob(code) is not { Boss: true, IsDummy: false })
+        {
+            return;
+        }
+
+        if (_userRepository.Exist(entityId) && entityId != CurrentTarget())
+        {
+            return;
+        }
+
+        long now = Clock();
+        if (_bossDeathAtMs.Count >= BossDeathCap)
+        {
+            foreach (int stale in _bossDeathAtMs.Where(kv => now - kv.Value > EndedBattleStartIgnoreMs).Select(kv => kv.Key).ToList())
+            {
+                _bossDeathAtMs.Remove(stale);
+            }
+        }
+
+        _bossDeathAtMs[entityId] = now;
+        MobHp(entityId, 0);
+    }
 
     /// <summary>사망으로 버프 스토어가 비워질 때마다 증가. 오버레이 틱이 값 변화를 보고 종료 음성을 건너뛴다.</summary>
     public long OwnerBuffClearRevision
@@ -3323,7 +3511,17 @@ public sealed class DataManager : ICaptureGameData
         }
     }
 
-    public void SaveMobHp(int instanceId, long hp) => MobHp(instanceId, hp);
+    public void SaveMobHp(int instanceId, long hp)
+    {
+        // 현재 HP ≤ 최대 HP. 권위 최대치(스폰)가 있는데 그보다 큰 현재 HP 는 우리 해석과 다른 프레임이다 — 버린다.
+        // 권위값이 없으면 종전대로 현재 HP 로 최대를 래치한다(카이라 첫 0x8D00 은 145.798억이라 오차 0.001%).
+        if (_mobIdRepository.Get(instanceId) is { MaxHpAuthoritative: true } m && hp > m.MaxHp)
+        {
+            return;
+        }
+
+        MobHp(instanceId, hp);
+    }
 
     public List<UseBuff> BattleBuff(int uid, long start, long end) => _useBuffRepository.FindOverlapping(uid, start, end);
 
@@ -3774,6 +3972,20 @@ public sealed class DataManager : ICaptureGameData
             return;
         }
 
+        // 어비스 필드보스 한정: 한 번도 열린 적 없는 보스(primary-lock 에 거부됐던 B)가 방금 죽었다. 위 시체 가드는
+        // '끝난 전투'가 있어야 걸리므로 이 보스의 처치 직후 시체 토글(0→1)이 그대로 유령 전투를 연다. 사망 직후
+        // 3초만 같은 방식(pending)으로 삼킨다.
+        // ⚠️ 3초 제한을 빼지 마라 — 같은 엔티티의 정상 재풀까지 막아 재풀 테스트(DataManagerRepullTests)가 깨진다.
+        if (mobId != CurrentTarget()
+            && mobCode is { } deadCode && FieldBossCatalog.IsAbyss(deadCode)
+            && MobHp(mobId) == 0
+            && _bossDeathAtMs.TryGetValue(mobId, out long diedAt)
+            && now - diedAt <= EndedBattleStartIgnoreMs)
+        {
+            _pendingStart = (mobId, mobCode, now);
+            return;
+        }
+
         if (CurrentTarget() == mobId
             && CurrentBattleStart() > 0L
             && CurrentBattleEnd() == 0L
@@ -3795,12 +4007,15 @@ public sealed class DataManager : ICaptureGameData
         // 가드가 풀린다"만 상정했고 HP=null(종료토글 유실)만 예외로 뒀다 — 살아있는데 무소식인 경우가 구멍이었다.
         // TickBossBattleIdle이 리포트 틱마다 같은 일을 하지만, 그 틱과 이 경로(소비자 스레드)의 순서는 보장되지
         // 않으므로 여기서도 같은 기준으로 양보한다.
+        // 마지막 항(2026-10-28, 어비스 필드보스 한정): 사라진 보스(시야 밖으로 나간 뒤 무소식 / 존 이탈)는 아무것도
+        // 보호하지 않는다. 그 밖의 보스에는 이 항이 언제나 false 라 잠김이 그대로다(바크론 가시속박 stomp 방지).
         if (CurrentTarget() > 0
             && mobId != CurrentTarget()
             && CurrentBattleStart() > 0L
             && CurrentBattleEnd() == 0L
             && (MobHp(CurrentTarget()) ?? 0) > 0
-            && now - _lastBossActivityMs <= BossIdleTimeoutMs)
+            && now - _lastBossActivityMs <= BossIdleTimeoutMs
+            && !BossWithdrawn(now, out _))
         {
             return;
         }
@@ -3808,6 +4023,7 @@ public sealed class DataManager : ICaptureGameData
         _pendingStart = null;
         _unresolvedStarts.Remove(mobId);
         _recentlyEndedBattles.Remove(mobId);
+        _goneTarget = 0;
         _battleRevision++; // 최저치는 리비전으로 무효화된다 — 여기서 지우면 아직 저장 안 된 직전 판이 값을 잃는다
         
         // 보스 전투의 시작. 허수아비의 고정 종료가 여기까지 살아남으면 그 값이 이 전투의 종료 스탬프로
@@ -3922,16 +4138,29 @@ public sealed class DataManager : ICaptureGameData
 
         long last = _lastBossActivityMs;
         long now = Clock();
-        if (last <= 0L || now - last <= BossIdleTimeoutMs) return;
+        if (last <= 0L) return;
+
+        // 어비스 필드보스의 사라진 보스(BossWithdrawn) — 존을 떠났으면 곧바로, 시야 밖이면 OutOfSightHoldMs 를
+        // 기다려 닫는다. 아래 '아무 데도 딜이 없다' 조건은 여기 쓰지 않는다: 그건 기믹으로 <b>조용할 뿐인</b> 보스를
+        // 지키려는 것이고, 400명 군중은 늘 무언가를 때리고 있어서 그 조건이 영영 충족되지 않는다(화면 고착).
+        // 그 밖의 보스는 이 분기에 들어오지 않는다.
+        if (BossWithdrawn(now, out bool zoneLeft))
+        {
+            if (zoneLeft || now - last > OutOfSightHoldMs)
+            {
+                CloseCurrentBattleAt(current, last);
+            }
+
+            return;
+        }
+
+        if (now - last <= BossIdleTimeoutMs) return;
 
         // 두 번째 조건: 파티가 아무 데도 딜을 안 넣고 있어야 한다. 기믹으로 보스만 무음인 동안에는 쫄 딜이
         // 계속 찍히므로 여기서 걸려 전투가 유지된다 — 기믹이 아무리 길어도 안전하다.
         if (_lastAnyDamageMs > 0L && now - _lastAnyDamageMs <= AnyCombatQuietMs) return;
 
-        SaveCurrentBattleEnd(last);
-        SaveCurrentTarget(-1);
-        _recentlyEndedBattles[current] = new EndedBattle(_activeBattleMobCode ?? GetMobId(current), last);
-        _activeBattleMobCode = null;
+        CloseCurrentBattleAt(current, last);
     }
 
     public void EndBattle(int mobId)
@@ -3974,7 +4203,11 @@ public sealed class DataManager : ICaptureGameData
             Information = data.Information.ToDictionary(kv => kv.Key, kv => CopyInfo(kv.Value)),
             Target = data.Target is { } t ? new MobInfo(t.Id, t.Mob, t.RemainHp, t.MaxHp) : null,
             Packets = null,
-            ExecutorId = ExecutorId(),     // freeze the 본인 uid so a history replay self-colors the own row (CopyUser froze IsExecutor — usually false)
+            // freeze the 본인 uid so a history replay self-colors the own row (CopyUser froze IsExecutor — usually false).
+            // 리포트가 그 전투 안의 본인을 들고 오면 그걸 쓴다 — 저장은 유휴 종료로 한참 뒤에 일어날 수 있고, 그사이
+            // 존 이동으로 본인 uid 가 바뀌면 저장 시점 값은 이 전투의 참가자가 아니다(2026-10-27 self=MISSING).
+            // 0 이면 종전대로 라이브 값.
+            ExecutorId = data.ExecutorId != 0 ? data.ExecutorId : ExecutorId(),
             // 기록 재생에서도 로스터 구제의 '파티 씬' 증거가 살아 있어야 구제된 파티원 행이 안 사라진다.
             // ⚠️ 이 한 줄만으로는 부족했다 — `RefreshRecentReportFromCache`의 초기화 목록이 종료 틱에 이 값을
             // 떨어뜨리고 있어서 여기서 복사해 봐야 false 였다. 그쪽을 먼저 고쳤기에 이제 의미가 있다.
@@ -4043,6 +4276,15 @@ public sealed class DataManager : ICaptureGameData
     public void EnableBattleHistoryPersistence(string directory) =>
         _battleLogRepository.AttachStore(new BattleHistoryStore(directory));
 
+    /// <summary>사라진 보스 판정 상태와 사망 기록을 비운다(두 리셋 공통).</summary>
+    private void ClearWithdrawnBossState()
+    {
+        _goneTarget = 0;
+        _goneSinceMs = 0;
+        _ownReloadAtMs = 0;
+        _bossDeathAtMs.Clear();
+    }
+
     public void HardReset()
     {
         _resetEpoch++;
@@ -4063,6 +4305,7 @@ public sealed class DataManager : ICaptureGameData
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
         _battleLowHp.Clear();
+        ClearWithdrawnBossState();
         ClearPartyRosterState();
         ClearAetherStatus();
         ClearShugoKey();
@@ -4093,6 +4336,7 @@ public sealed class DataManager : ICaptureGameData
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
         _battleLowHp.Clear();
+        ClearWithdrawnBossState();
         // drop the 0x9702 party snapshot — a stale party (e.g. after leaving the dungeon and returning
         // to town) must not preview on reset; it re-fills on party formation
         ClearPartyRosterState();
