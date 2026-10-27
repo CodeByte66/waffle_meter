@@ -25,4 +25,9 @@
     <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 20인 공대(포스) 실측 프레임 — Capture.Tests 와 같은 파일을 공유한다(전 구간 end-to-end 조립 테스트용). -->
+    <Compile Include="..\WaffleMeter.Capture.Tests\ForceRosterFixtures.cs" Link="Fixtures\ForceRosterFixtures.cs" />
+  </ItemGroup>
+
 </Project>

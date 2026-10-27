@@ -226,6 +226,30 @@ public sealed class DataManager : ICaptureGameData
     private readonly Dictionary<int, (string Nickname, int Server, long At)> _memberProfiles = new();
     private const int MemberProfileCap = 32;
 
+    // 0x9200/0x920D 가 실어 온 본인 파티원 중 **다른 존에 있어 uid 가 0 인** 멤버 — (닉네임, 서버) → 도착시각.
+    // uid 가 없으니 _memberProfiles 에는 못 들어가고, 종전엔 그래서 통째로 버려졌다(실측: 20인 공대 2파티의 Violette).
+    // 같은 사람이 uid 를 달고 다시 오면 여기서 빠진다. 잠금은 _memberProfiles 와 같이 쓴다.
+    private readonly Dictionary<(string Nickname, int Server), long> _offZoneProfiles = new();
+
+    // 포스(20인 공대) 로스터 — 0x96xx. 표시 전용(통계 업로드 입력에 쓰지 않는다). 자체 잠금.
+    private readonly ForceRoster _forceRoster = new();
+
+    // 마지막 0x9200(스키마 워크)의 파티 key 와 그 시각 — "내 파티" 표식. 소비자 스레드가 쓰고 UI 스레드가 읽는다.
+    private long _ownPartyKey;
+    private long _ownPartyKeyAtMs;
+
+    // 그 0x9200 이 실어 온 멤버 (닉네임, 서버) — 캐릭터 전환 때 그 key 가 새 캐릭터의 파티인지 가린다. _memberProfiles 잠금.
+    private List<(string Nickname, int Server)> _ownPartyMembers = [];
+
+    /// <summary>캐릭터 전환을 알아챈 순간, 이보다 최근에 온 포스 스냅샷·0x9200 은 <b>새 캐릭터</b> 것일 수 있다. 존 로드에서 둘은
+    /// 본인 로드 0x3633 보다 약 7초 먼저 온다(실측 20261027-205641: 21:02:41.9 → 21:02:49.0, 21:02:59.1 → 21:03:06.3).
+    /// 오드 덤프의 <see cref="AetherHandoverGraceMs"/> 와 같은 폭이다. 창 안이어도 그 안에 새 캐릭터가 있어야 남긴다.</summary>
+    private const long RosterHandoverGraceMs = 15_000;
+
+    // uid -> 그 User 의 전투력이 마지막으로 기입된 시각(SaveUserPower). 전투 전 프리뷰가 포스 로스터의 전투력과
+    // '나중에 받은 쪽'을 고르는 데만 쓴다. 0 = 모름(그때는 포스 쪽이 있으면 포스 쪽이 이긴다).
+    private readonly Dictionary<int, long> _userPowerAtMs = new();
+
     /// <summary>Injectable clock (default wall clock; app behavior unchanged). Mirrors the Kotlin seam.</summary>
     public Func<long> Clock { get; set; } = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -1490,8 +1514,12 @@ public sealed class DataManager : ICaptureGameData
         _partyRosterSetAtMs = _partyRosterAtMs;
     }
 
-    /// <summary>로스터 상태를 통째로 버린다(캐릭터 전환·초기화).</summary>
-    private void ClearPartyRosterState()
+    /// <summary>로스터 상태를 통째로 버린다(캐릭터 전환·초기화).
+    /// <para><paramref name="incoming"/> 은 캐릭터 전환일 때만 준다(초기화는 무조건 버린다). 그때 포스 로스터와 내 파티 key 는
+    /// <see cref="RosterHandoverGraceMs"/> 안에 왔고 <b>새 캐릭터가 그 안에 있으면</b> 남긴다 — 존 로드 순서상 그건 새 캐릭터의
+    /// 공대다. 무조건 버리면 ForceInfo 는 다음 존 이동 때까지 다시 오지 않아(정원을 싣는 건 0x9602 뿐) 그동안 20인 공대 규칙이 꺼진다.
+    /// 0x9702 방 로스터는 종전대로 무조건 버린다.</para></summary>
+    private void ClearPartyRosterState(User? incoming = null, long identityAtMs = 0)
     {
         _partyRoster.Clear();
         _partyRosterBySlot.Clear();
@@ -1499,7 +1527,36 @@ public sealed class DataManager : ICaptureGameData
         _partyRosterId = 0;
         _partyRosterCapacity = 0;
         _partyRosterAtMs = 0;
+        // 포스 로스터도 같이 — 다른 캐릭터의 공대가 새 캐릭터 프리뷰에 남으면 안 되고, 초기화 뒤 낡은 공대가 다시
+        // 뜨면 안 된다는 0x9702 와 같은 규칙이다. 존을 옮기면 ForceInfo(reason 5 Reconnect)가 다시 채운다.
+        long since = identityAtMs - RosterHandoverGraceMs;
+        if (incoming is null || !_forceRoster.SnapshotHolds(m => IsCharacter(incoming, m.Nickname, m.Server), since))
+        {
+            _forceRoster.Clear();
+        }
+
+        bool keepOwnParty = false;
+        if (incoming is not null && Interlocked.Read(ref _ownPartyKeyAtMs) is long keyAt && keyAt > 0 && keyAt >= since)
+        {
+            lock (_memberProfiles)
+            {
+                keepOwnParty = _ownPartyMembers.Any(m => IsCharacter(incoming, m.Nickname, m.Server));
+            }
+        }
+
+        if (!keepOwnParty)
+        {
+            Interlocked.Exchange(ref _ownPartyKey, 0);
+            Interlocked.Exchange(ref _ownPartyKeyAtMs, 0);
+        }
     }
+
+    /// <summary>로스터 레코드 하나가 <paramref name="who"/> 캐릭터인가 — 닉네임+서버(서버를 모르면 닉네임만; 잘린 0x3633 은
+    /// Server=-1 을 남긴다). 엔티티 uid 로는 가리지 않는다: 존마다 새로 매기는 작은 수라 나가는 캐릭터의 공대에 같은 uid 가 있을 수 있다.</summary>
+    private static bool IsCharacter(User who, string nickname, int server) =>
+        !string.IsNullOrWhiteSpace(who.Nickname)
+        && string.Equals(nickname, who.Nickname, StringComparison.Ordinal)
+        && (who.Server <= 0 || server == who.Server);
 
     /// <summary>Known Users for the current party/raid roster — the 0x9702 snapshot matched to uids by
     /// name+server — executor first then power desc. Empty when no roster is known, or when the last
@@ -1623,12 +1680,141 @@ public sealed class DataManager : ICaptureGameData
         lock (_memberProfiles)
         {
             _memberProfiles[uid] = (nickname, server, Clock());
+            _offZoneProfiles.Remove((nickname, server)); // uid 를 달고 돌아왔다
             if (_memberProfiles.Count > MemberProfileCap)
             {
                 // 가장 오래된 매핑부터 버린다(재사용 uid의 낡은 이름이 오래 남지 않도록).
                 int oldest = _memberProfiles.OrderBy(kv => kv.Value.At).First().Key;
                 _memberProfiles.Remove(oldest);
             }
+        }
+    }
+
+    /// <summary>스키마 워크로 읽은 0x9200 의 본인 파티 전원(uid 0 포함). uid 있는 멤버는 이미 <see cref="SaveMemberProfile"/>
+    /// 로 들어와 있다. 여기서는 ① uid 0 멤버를 (닉네임, 서버)로 남기고 ② 이 스냅샷에 없는 사람의 프로필을 지운다 —
+    /// 0x9200 은 매번 파티 전체를 싣으므로 빠진 사람은 떠난 것이다(종전엔 제거 경로가 없어 5분 TTL 동안 프리뷰에 남았다).
+    /// 같은 사람이 이 스냅샷에서 다른 uid(또는 uid 0)로 왔다면 옛 uid 매핑도 낡은 것이라 같이 지운다.
+    /// <para><paramref name="partyKey"/> 는 "내 파티" 표식으로 남긴다(<see cref="OwnPartyKey"/>).</para></summary>
+    public void SaveMemberProfileSnapshot(long partyKey, IReadOnlyList<WireRosterMember> members)
+    {
+        long now = Clock();
+        if (partyKey != 0)
+        {
+            Interlocked.Exchange(ref _ownPartyKey, partyKey);
+            Interlocked.Exchange(ref _ownPartyKeyAtMs, now);
+        }
+
+        var current = new Dictionary<(string, int), int>();
+        foreach (WireRosterMember m in members)
+        {
+            if (!string.IsNullOrWhiteSpace(m.Nickname) && m.Server > 0)
+            {
+                current[(m.Nickname, m.Server)] = m.EntityUid;
+            }
+        }
+
+        if (partyKey != 0)
+        {
+            lock (_memberProfiles)
+            {
+                _ownPartyMembers = current.Keys.ToList();
+            }
+        }
+
+        if (current.Count == 0)
+        {
+            return;
+        }
+
+        lock (_memberProfiles)
+        {
+            foreach (int uid in _memberProfiles
+                         .Where(kv => !current.TryGetValue((kv.Value.Nickname, kv.Value.Server), out int nowUid) || nowUid != kv.Key)
+                         .Select(kv => kv.Key)
+                         .ToList())
+            {
+                _memberProfiles.Remove(uid);
+            }
+
+            _offZoneProfiles.Clear();
+            foreach (((string nick, int server), int uid) in current)
+            {
+                if (uid <= 0)
+                {
+                    _offZoneProfiles[(nick, server)] = now;
+                }
+            }
+        }
+    }
+
+    /// <summary>0x920D — 한 명 추가. uid 0(다른 존)이면 (닉네임, 서버)로 남긴다. uid 가 있으면 이미 <see cref="SaveMemberProfile"/>
+    /// 로 들어왔다.</summary>
+    public void AddMemberProfile(WireRosterMember member)
+    {
+        if (member.EntityUid > 0 || string.IsNullOrWhiteSpace(member.Nickname) || member.Server <= 0)
+        {
+            return;
+        }
+
+        lock (_memberProfiles)
+        {
+            _offZoneProfiles[(member.Nickname, member.Server)] = Clock();
+        }
+    }
+
+    /// <summary>최근 <paramref name="withinMs"/> 안에 0x9200/0x920D 가 "본인 파티원인데 다른 존에 있다"고 한 (닉네임, 서버).
+    /// 전투 전 프리뷰가 uid 없는 이름 행으로 보여 준다.</summary>
+    public IReadOnlyList<(string Nickname, int Server)> MemberProfileOffZone(long withinMs)
+    {
+        long now = Clock();
+        lock (_memberProfiles)
+        {
+            return _offZoneProfiles
+                .Where(kv => now - kv.Value <= withinMs)
+                .Select(kv => kv.Key)
+                .ToList();
+        }
+    }
+
+    public void SaveForceInfo(ForceSnapshot force) => _forceRoster.Apply(force, Clock());
+
+    public void AddForceMember(long partyKey, WireRosterMember member) => _forceRoster.AddMember(partyKey, member, Clock());
+
+    public void AddForceParty(ForceParty party) => _forceRoster.AddParty(party, Clock());
+
+    public void MoveForceMembers(IReadOnlyList<ForceParty> changes) => _forceRoster.Move(changes, Clock());
+
+    public void ReconnectForceMember(WireRosterMember member) => _forceRoster.Reconnect(member, Clock());
+
+    public void RemoveForceMember(long memberDbid, long partyKey) => _forceRoster.Remove(memberDbid, Clock());
+
+    public void UpdateForceMemberStatus(ForceMemberStatus status) => _forceRoster.UpdateStatus(status, Clock());
+
+    /// <summary>포스(20인 공대) 로스터의 불변 사본. 비었거나 마지막 포스 패킷이 <paramref name="withinMs"/> 보다 오래됐으면 null.
+    /// ⚠️ 표시 전용 — 통계 업로드(<see cref="FreshPartySlots"/>)는 이걸 읽지 않는다.</summary>
+    public ForceRosterView? ForceRosterView(long withinMs)
+    {
+        ForceRosterView? view = _forceRoster.View();
+        return view is not null && Clock() - view.UpdatedAtMs <= withinMs ? view : null;
+    }
+
+    /// <summary>최근 <paramref name="withinMs"/> 안의 0x9200 이 실어 온 본인 파티의 서버 key(0 = 없음·낡음). 20인 공대에서는
+    /// 포스 안 본인 서브파티의 key 와 같아서, 본인 uid 를 아직 모를 때(0x3633 없이 켠 미터) "내 파티"를 고르는 근거가 된다.</summary>
+    public long OwnPartyKey(long withinMs)
+    {
+        long key = Interlocked.Read(ref _ownPartyKey);
+        return key != 0 && Clock() - Interlocked.Read(ref _ownPartyKeyAtMs) <= withinMs ? key : 0;
+    }
+
+    /// <summary><see cref="OwnPartyKey"/> 가 도착한 시각(0 = 없음). 표시 쪽이 포스의 마지막 구성 변경과 앞뒤를 가린다.</summary>
+    public long OwnPartyKeyAtMs() => Interlocked.Read(ref _ownPartyKeyAtMs);
+
+    /// <summary><paramref name="uid"/> 의 전투력이 <see cref="SaveUserPower"/> 로 마지막 기입된 시각. 0 = 모름.</summary>
+    public long UserPowerObservedAtMs(int uid)
+    {
+        lock (_userPowerAtMs)
+        {
+            return _userPowerAtMs.TryGetValue(uid, out long at) ? at : 0;
         }
     }
 
@@ -1659,13 +1845,21 @@ public sealed class DataManager : ICaptureGameData
 
         // Get → 수정 → Save 를 따로 하면 수정 구간이 락 밖이다. 공식 조회 콜백(ThreadPool)이 같은 객체의
         // 같은 필드를 동시에 고치므로 Mutate 로 한 번에 끝낸다.
-        _userRepository.Mutate(uid, user =>
+        bool stored = _userRepository.Mutate(uid, user =>
         {
             if (user.Power != power)
             {
                 user.Power = power;
             }
         });
+
+        if (stored)
+        {
+            lock (_userPowerAtMs)
+            {
+                _userPowerAtMs[uid] = Clock();
+            }
+        }
     }
 
     /// <summary>Returns the User for <paramref name="uid"/>, creating and persisting a bare one (no
@@ -2002,7 +2196,7 @@ public sealed class DataManager : ICaptureGameData
 
             if (identityChanged)
             {
-                ClearPartyRosterState();
+                ClearPartyRosterState(newExec, identityAtMs);
 
                 // 오드 / 슈고 열쇠 ride the 0x610B login dump, which the comment above records as arriving ~4 s
                 // BEFORE this naming packet. So the newest reading at this instant is usually the INCOMING
