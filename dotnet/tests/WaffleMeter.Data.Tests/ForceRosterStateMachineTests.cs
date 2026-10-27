@@ -86,6 +86,28 @@ public sealed class ForceRosterStateMachineTests
     }
 
     [Fact]
+    public void A_reconnect_from_another_zone_clears_the_old_entity_uid()
+    {
+        // 실측 21:02:05 — 쉰이 다른 존으로 가면서 key 0 으로 재접속했다. 옛 uid 5565 를 들고 있으면 그 uid 를 새로 받은
+        // 낯선 엔티티의 User 가 쉰 행에 붙는다.
+        ForceRoster f = Seeded(out long now);
+        f.Reconnect(Swin with { EntityUid = 0 }, now + 100);
+        Assert.Equal(0, f.View()!.Parties[1].Members.Single(m => m.Nickname == "쉰").EntityUid);
+        f.Reconnect(Swin with { EntityUid = 9001 }, now + 200);
+        Assert.Equal(9001, f.View()!.Parties[1].Members.Single(m => m.Nickname == "쉰").EntityUid);
+    }
+
+    [Fact]
+    public void A_move_replaces_the_whole_member_list_of_each_party_it_carries()
+    {
+        // 이동에 실린 파티는 이동 후 전체 목록이다 — 거기 없는 사람은 그 파티에서 빠진다.
+        ForceRoster f = Seeded(out long now);
+        f.Move(new[] { Party(P2, 2, VioletteAway, Eut, Konpang) }, now + 100);
+        Assert.Equal(new[] { "Violette", "읓", "콘팡" }, Names(f.View()!.Parties[1]));
+        Assert.Equal("콩령", Assert.Single(f.View()!.Parties[0].Members).Nickname); // 실리지 않은 파티는 그대로
+    }
+
+    [Fact]
     public void A_reconnect_of_someone_the_roster_does_not_hold_invents_nobody()
     {
         ForceRoster f = Seeded(out long now);
