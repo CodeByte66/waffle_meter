@@ -35,6 +35,7 @@ public sealed class PreCombatRosterTests
         public List<(string, int, int, int)> JobPower = [];
         public ForceRosterView? Force;
         public long OwnPartyKey;
+        public long OwnPartyKeyAt;
 
         public User Add(int uid, string nick, JobClass? job = null, int power = 0, long powerAt = 0, int server = Srv)
         {
@@ -49,7 +50,7 @@ public sealed class PreCombatRosterTests
         }
 
         public PreCombatRosterInputs Inputs() => new(
-            Exec, Authoritative, RosterIds, Profiles, OffZone, Recent, JobPower, Force, OwnPartyKey,
+            Exec, Authoritative, RosterIds, Profiles, OffZone, Recent, JobPower, Force, OwnPartyKey, OwnPartyKeyAt,
             uid => Users.GetValueOrDefault(uid),
             (nick, server) => Users.Values.FirstOrDefault(u => u.Nickname == nick && u.Server == server),
             uid => PowerAt.GetValueOrDefault(uid));
@@ -249,6 +250,93 @@ public sealed class PreCombatRosterTests
         World w = TwentyManRaid(selfKnown: true);
         w.RosterIds = [("콘팡", Srv, 1), ("쉰", Srv, 2)];
         Assert.Equal(Show(WithoutForce(w)), Show(PreCombatRoster.Build(w.Inputs())));
+    }
+
+    /// <summary>공대를 떠나거나 해산한 뒤 5분 안에 필드에서 새 5인 파티에 들었다 — 0x9702 는 없고 새 0x9200 이 왔다.
+    /// ForceLeave/ForceDisband 를 읽지 않으니 낡은 포스(본인 기록 포함)가 TTL 동안 남는다. 그게 새 파티를 덮으면 안 된다.</summary>
+    [Fact]
+    public void C_a_force_left_behind_does_not_cover_the_new_party_announced_after_it()
+    {
+        const long NewKey = 0x24135ED200177777L;
+        World w = TwentyManRaid(selfKnown: true);
+        w.Force = w.Force! with { MembershipAtMs = 1_000 };
+        w.Add(6001, "새동료", JobClass.CLERIC, 800000);
+        w.Profiles = [(2851, "콘팡", Srv), (6001, "새동료", Srv)];
+        w.Recent = [];
+        w.OwnPartyKey = NewKey;
+        w.OwnPartyKeyAt = 2_000; // 포스의 마지막 구성 변경 뒤에 왔다
+
+        List<User> rows = PreCombatRoster.Build(w.Inputs());
+        Assert.Equal(Show(WithoutForce(w)), Show(rows));
+        Assert.Equal(new[] { "콘팡", "새동료" }, rows.Select(u => u.Nickname));
+    }
+
+    [Fact]
+    public void C_a_party_key_from_before_the_raid_formed_does_not_switch_the_rule_off()
+    {
+        // 공대에 들기 전 5인 파티의 0x9200 key 가 TTL 안에 남아 있어도, 그 뒤에 포스가 구성됐으면 포스가 지금 공대다.
+        World w = TwentyManRaid(selfKnown: true);
+        w.Force = w.Force! with { MembershipAtMs = 1_000 };
+        w.OwnPartyKey = 0x24135ED200177777L;
+        w.OwnPartyKeyAt = 999;
+        Assert.Equal(new[] { "콘팡", "읓", "Violette", "쉰", "무적자" }, PreCombatRoster.Build(w.Inputs()).Select(u => u.Nickname));
+    }
+
+    [Fact]
+    public void C_a_force_that_no_longer_holds_me_is_not_my_raid()
+    {
+        // 본인이 0x9622 로 빠졌다(공대 탈퇴). 남은 2파티 key 가 0x9200 key 와 같아도 그건 이제 남의 공대다.
+        World w = TwentyManRaid(selfKnown: true);
+        ForceRosterParty mineBefore = w.Force!.Parties[1];
+        w.Force = w.Force with
+        {
+            Parties = [w.Force.Parties[0], mineBefore with { Members = mineBefore.Members.Where(m => m.Nickname != "콘팡").ToList() }],
+            MembershipAtMs = 1_000,
+        };
+        w.OwnPartyKeyAt = 500;
+
+        Assert.Equal(Show(WithoutForce(w)), Show(PreCombatRoster.Build(w.Inputs())));
+    }
+
+    [Fact]
+    public void C_self_with_an_unknown_server_is_still_found_in_the_force_by_name()
+    {
+        // 잘린 0x3633 은 Server=-1 을 남긴다(DataManager.SaveExecutorId 주석). 그래도 본인 파티를 놓치면 안 된다 — 위 '본인이 없는
+        // 포스는 내 공대가 아니다' 규칙이 정상 공대를 끄게 된다.
+        World w = TwentyManRaid(selfKnown: true);
+        w.Users[2851] = new User(2851, "콘팡", -1, JobClass.RANGER, isExecutor: true, power: 870000);
+        w.Force = w.Force! with
+        {
+            Parties = w.Force.Parties.Select(p => p with { Members = p.Members.Select(m => m with { EntityUid = m.Nickname == "콘팡" ? 0 : m.EntityUid }).ToList() }).ToList(),
+        };
+        Assert.Equal(5, PreCombatRoster.Build(w.Inputs()).Count);
+        Assert.Equal("콘팡", PreCombatRoster.Build(w.Inputs())[0].Nickname);
+    }
+
+    [Fact]
+    public void Real_frames_then_a_new_open_world_party_shows_the_new_party()
+    {
+        long clock = 1_793_102_309_233; // 20:58:29.233 KST
+        var data = new DataManager { Clock = () => clock };
+        var sp = new StreamProcessor(null, data, null);
+        sp.OnPacketReceived(F.Bytes(F.PartyInfo205829), clock);
+        sp.OnPacketReceived(F.Bytes(F.ForceInfo205829), clock);
+        data.SaveNickname(2851, "콘팡", isExecutor: true, server: Srv, jobByte: 16);
+        Assert.Equal(4, PreCombatRoster.Build(PreCombatRoster.Gather(data, [], [], clock, Ttl)).Count);
+
+        // 공대 해산(읽지 않는 패킷) 2분 뒤, 필드에서 새 파티 — 새 key 의 0x9200.
+        clock += 120_000;
+        var newParty = new[]
+        {
+            new WireRosterMember(1, 2851, ((long)Srv << 48) | 45996, "콘팡", 16, 0, true),
+            new WireRosterMember(2, 6001, ((long)Srv << 48) | 777, "새동료", 8, 0, true),
+        };
+        data.SaveMemberProfile(6001, "새동료", Srv);
+        data.SaveMemberProfileSnapshot(0x24135ED200177777L, newParty);
+        Assert.NotNull(data.ForceRosterView(Ttl)); // 낡은 포스는 아직 TTL 안이다
+
+        List<User> rows = PreCombatRoster.Build(PreCombatRoster.Gather(data, [], [], clock, Ttl));
+        Assert.Equal(new[] { "콘팡", "새동료" }, rows.Select(u => u.Nickname));
     }
 
     [Fact]

@@ -181,6 +181,62 @@ public sealed class ForceRosterStateMachineTests
         Assert.Null(dm.ForceRosterView(300_000));
     }
 
+    /// <summary>캐릭터 전환(마이농 → 콘팡): 로그인 존 로드에서 0x9602 ForceInfo 와 0x9200 이 본인 로드 0x3633 보다 약 7초 먼저
+    /// 온다(실측 205641). 전환을 알아챈 순간 들고 있는 포스와 내 파티 key 는 <b>새 캐릭터</b> 것이다 — 버리면 ForceInfo(정원을
+    /// 싣는 유일한 패킷)는 다음 존 이동 때까지 다시 오지 않는다.</summary>
+    private static DataManager SwitchInto(ref long clock, Func<long> now, long arrivedBeforeIdentityMs, ForceSnapshot force,
+        params WireRosterMember[] party)
+    {
+        var dm = new DataManager { Clock = now };
+        dm.SaveNickname(9549, "마이농", isExecutor: true, server: 2003, jobByte: 12);
+        clock += 60_000;
+        dm.SaveForceInfo(force);
+        dm.SaveMemberProfileSnapshot(P2, party);
+        clock += arrivedBeforeIdentityMs;
+        dm.SaveNickname(2851, "콘팡", isExecutor: true, server: 2003, jobByte: 16);
+        return dm;
+    }
+
+    [Fact]
+    public void A_character_switch_keeps_the_incoming_characters_force_that_arrived_just_before_it()
+    {
+        long clock = 1_000_000;
+        DataManager dm = SwitchInto(ref clock, () => clock, 7_000, Snapshot(Party(P2, 2, Swin, Konpang)), Swin, Konpang);
+
+        ForceRosterView? v = dm.ForceRosterView(300_000);
+        Assert.NotNull(v);
+        Assert.Equal(20, v!.LimitMember);
+        Assert.Equal(P2, dm.OwnPartyKey(300_000));
+    }
+
+    [Fact]
+    public void A_character_switch_still_drops_the_outgoing_characters_force()
+    {
+        // 새 캐릭터가 들어 있지 않은 포스 = 나가는 캐릭터의 공대.
+        long clock = 1_000_000;
+        DataManager dm = SwitchInto(ref clock, () => clock, 7_000, Snapshot(Party(P2, 2, Swin, Eut)), Swin, Eut);
+        Assert.Null(dm.ForceRosterView(300_000));
+        Assert.Equal(0, dm.OwnPartyKey(300_000));
+
+        // 새 캐릭터가 들어 있어도 창(15초)보다 오래된 스냅샷은 그 로그인의 것이 아니다.
+        clock = 1_000_000;
+        dm = SwitchInto(ref clock, () => clock, 20_000, Snapshot(Party(P2, 2, Swin, Konpang)), Swin, Konpang);
+        Assert.Null(dm.ForceRosterView(300_000));
+        Assert.Equal(0, dm.OwnPartyKey(300_000));
+    }
+
+    [Fact]
+    public void Membership_time_moves_with_who_is_where_not_with_status_updates()
+    {
+        ForceRoster f = Seeded(out long now);
+        Assert.Equal(now, f.View()!.MembershipAtMs);
+        f.UpdateStatus(new ForceMemberStatus(Dbid(5238), 28, 893426), now + 50);
+        Assert.Equal(now, f.View()!.MembershipAtMs);
+        Assert.Equal(now + 50, f.View()!.UpdatedAtMs);
+        f.Remove(Dbid(5014), now + 70);
+        Assert.Equal(now + 70, f.View()!.MembershipAtMs);
+    }
+
     [Fact]
     public void A_ForceRemoveMember_through_DataManager_removes_by_dbid()
     {

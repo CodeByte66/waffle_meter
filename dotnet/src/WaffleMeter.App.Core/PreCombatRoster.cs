@@ -13,6 +13,7 @@ namespace WaffleMeter.App.Core;
 /// <param name="RosterJobPower">0x9702 로스터가 실어 온 (닉네임, 서버, 직업코드, 전투력).</param>
 /// <param name="Force">포스(20인 공대) 로스터. 없거나 낡았으면 null.</param>
 /// <param name="OwnPartyKey">최근 0x9200 이 실어 온 본인 파티의 서버 key(0 = 없음). 본인 uid 를 모를 때 포스 안에서 내 파티를 고른다.</param>
+/// <param name="OwnPartyKeyAtMs">그 key 가 도착한 시각(0 = 모름). 포스의 마지막 구성 변경보다 나중이고 포스에 없는 파티면 공대를 떠난 것이다.</param>
 /// <param name="UserById">신원 저장소 조회.</param>
 /// <param name="UserByIdentity">신원 저장소 (닉네임, 서버) 조회 — uid 없는 행에 저장된 직업·전투력을 붙일 때만 쓴다.</param>
 /// <param name="UserPowerAtMs">그 uid 의 전투력이 마지막으로 기입된 시각(0 = 모름) — 포스 전투력과 '나중 것'을 고를 때.</param>
@@ -26,6 +27,7 @@ public sealed record PreCombatRosterInputs(
     IReadOnlyList<(string Nickname, int Server, int JobCode, int Power)> RosterJobPower,
     ForceRosterView? Force,
     long OwnPartyKey,
+    long OwnPartyKeyAtMs,
     Func<int, User?> UserById,
     Func<string, int, User?> UserByIdentity,
     Func<int, long> UserPowerAtMs);
@@ -78,6 +80,7 @@ public static class PreCombatRoster
             data.PartyRosterJobPower(ttlMs),
             data.ForceRosterView(ttlMs),
             data.OwnPartyKey(ttlMs),
+            data.OwnPartyKeyAtMs(),
             data.User,
             data.FindUserByNicknameAndServer,
             data.UserPowerObservedAtMs);
@@ -263,7 +266,8 @@ public static class PreCombatRoster
     }
 
     /// <summary>(C) 20인 공대: 본인이 든 파티만. 조건 — 포스 정원 &gt; 10, 0x9702 방 로스터 없음, 그리고 내 파티를 고를 수 있음
-    /// (포스 안에서 본인을 찾거나, 본인을 아직 모르면 0x9200 이 알려 준 내 파티 key 와 같은 파티). 하나라도 아니면 null(종전 경로).
+    /// (포스 안에서 본인을 찾거나, 본인을 아직 모르면 0x9200 이 알려 준 내 파티 key 와 같은 파티), 그리고 그 포스가 아직 내 공대임
+    /// (본인을 아는데 포스에 없으면, 또는 포스 구성 뒤에 온 0x9200 이 포스 밖 파티를 말하면 떠난 공대다). 하나라도 아니면 null(종전 경로).
     /// <para>본인을 모르는 경우가 실제로 있다: 미터를 공대 도중에 켜면 0x3633 이 다시 오지 않는다(실측 20261027-205641 —
     /// 본인 인식이 풀 뒤 21:01 에야 됐다). 그래도 0x9200 은 내 서브파티만 싣고 그 key 가 포스 파티 key 와 같다.</para></summary>
     private static List<User>? TryBuildRaidForceParty(PreCombatRosterInputs inp, User? self)
@@ -276,9 +280,29 @@ public static class PreCombatRoster
         int execUid = inp.ExecutorUid;
         bool IsSelf(ForceRosterMember m) =>
             (execUid > 0 && m.EntityUid == execUid)
-            || (self is not null && string.Equals(m.Nickname, self.Nickname, StringComparison.Ordinal) && m.Server == self.Server);
+            || (self is not null && string.Equals(m.Nickname, self.Nickname, StringComparison.Ordinal)
+                && (self.Server <= 0 || m.Server == self.Server));
 
-        ForceRosterParty? own = force.PartyOf(IsSelf)
+        // 포스 로스터를 끝내는 건 캐릭터 전환·초기화와 TTL 뿐이다(ForceLeave 0x962E / ForceDisband 0x961A 는 와이어 표본이
+        // 없어 읽지 않는다). 그래서 공대를 떠나거나 해산한 뒤 5분 동안 낡은 포스가 남는다 — 그게 새 파티 프리뷰를 덮지 않게
+        // 이 포스가 '지금 내 공대'라는 근거가 깨지면 종전 경로로 돌린다.
+        //  ① 본인을 아는데 포스에 본인이 없다 → 떠났거나(0x9622 로 본인이 빠졌다) 남의 공대다.
+        //  ② 포스의 마지막 구성 변경 뒤에 온 0x9200 이 포스에 없는 파티를 말한다 → 새 파티에 들었다. 20인 공대 안에서는
+        //     0x9200 의 key 가 늘 포스 파티 key 다(실측 205641 전 구간). 구성 변경보다 먼저 온 key 는 판단에 쓰지 않는다 —
+        //     공대에 들기 전 파티의 key 가 TTL 안에 남아 있을 수 있다.
+        ForceRosterParty? mine = force.PartyOf(IsSelf);
+        if (mine is null && self is not null)
+        {
+            return null;
+        }
+
+        bool keyIsNewer = inp.OwnPartyKey != 0 && inp.OwnPartyKeyAtMs >= force.MembershipAtMs;
+        if (keyIsNewer && force.Parties.All(p => p.PartyKey != inp.OwnPartyKey))
+        {
+            return null;
+        }
+
+        ForceRosterParty? own = mine
             ?? (inp.OwnPartyKey != 0 ? force.Parties.FirstOrDefault(p => p.PartyKey == inp.OwnPartyKey) : null);
         if (own is null)
         {

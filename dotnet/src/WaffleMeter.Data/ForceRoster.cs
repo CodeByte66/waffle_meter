@@ -17,6 +17,10 @@ public sealed record ForceRosterParty(long PartyKey, int Number, IReadOnlyList<F
 /// <param name="UpdatedAtMs">마지막으로 이 로스터를 건드린 포스 패킷의 시각(0x962C 상태 포함).</param>
 public sealed record ForceRosterView(long ForceKey, int LimitMember, long UpdatedAtMs, IReadOnlyList<ForceRosterParty> Parties)
 {
+    /// <summary>마지막으로 <b>구성</b>(누가 어느 파티에 있나)을 바꾼 포스 패킷의 시각 — 스냅샷·추가·파티 추가·이동·재접속·제거.
+    /// 0x962C 상태는 넣지 않는다. 표시 쪽이 "그 뒤에 온 0x9200 이 포스에 없는 파티를 말한다(공대를 떠났다)"를 가리는 데 쓴다.</summary>
+    public long MembershipAtMs { get; init; }
+
     /// <summary><paramref name="match"/> 를 만족하는 멤버가 든 파티. 없으면 null.</summary>
     public ForceRosterParty? PartyOf(Func<ForceRosterMember, bool> match) =>
         Parties.FirstOrDefault(p => p.Members.Any(match));
@@ -58,6 +62,8 @@ public sealed class ForceRoster
     private long _forceKey;
     private int _limitMember;
     private long _updatedAtMs;
+    private long _membershipAtMs;
+    private long _snapshotAtMs;
 
     /// <summary>0x9602 — 통째 교체.</summary>
     public void Apply(ForceSnapshot force, long nowMs)
@@ -73,7 +79,7 @@ public sealed class ForceRoster
                 PutPartyLocked(party, nowMs);
             }
 
-            _updatedAtMs = nowMs;
+            _updatedAtMs = _membershipAtMs = _snapshotAtMs = nowMs;
         }
     }
 
@@ -83,7 +89,7 @@ public sealed class ForceRoster
         lock (_gate)
         {
             UpsertLocked(member, partyKey, nowMs);
-            _updatedAtMs = nowMs;
+            _updatedAtMs = _membershipAtMs = nowMs;
         }
     }
 
@@ -93,7 +99,7 @@ public sealed class ForceRoster
         lock (_gate)
         {
             PutPartyLocked(party, nowMs);
-            _updatedAtMs = nowMs;
+            _updatedAtMs = _membershipAtMs = nowMs;
         }
     }
 
@@ -113,7 +119,7 @@ public sealed class ForceRoster
                 PutPartyLocked(party, nowMs);
             }
 
-            _updatedAtMs = nowMs;
+            _updatedAtMs = _membershipAtMs = nowMs;
         }
     }
 
@@ -128,7 +134,7 @@ public sealed class ForceRoster
             }
 
             UpsertLocked(member, existing.PartyKey, nowMs);
-            _updatedAtMs = nowMs;
+            _updatedAtMs = _membershipAtMs = nowMs;
         }
     }
 
@@ -139,7 +145,7 @@ public sealed class ForceRoster
         {
             if (_members.Remove(dbid))
             {
-                _updatedAtMs = nowMs;
+                _updatedAtMs = _membershipAtMs = nowMs;
             }
         }
     }
@@ -179,6 +185,22 @@ public sealed class ForceRoster
             _forceKey = 0;
             _limitMember = 0;
             _updatedAtMs = 0;
+            _membershipAtMs = 0;
+            _snapshotAtMs = 0;
+        }
+    }
+
+    /// <summary>캐릭터 전환 때 이 로스터를 남겨도 되는가 — 0x9602 스냅샷이 <paramref name="sinceMs"/> 이후에 왔고 그 안에
+    /// <paramref name="isIncoming"/>(새 캐릭터)가 들어 있을 때만 true. 존 로드에서 ForceInfo 는 본인 로드 0x3633 보다 약 7초
+    /// 먼저 오므로(실측 20261027-205641, 21:02:41.9 → 21:02:49.0 · 21:02:59.1 → 21:03:06.3), 전환을 알아챈 순간 들고 있는
+    /// 스냅샷은 대개 <b>새 캐릭터의 공대</b>다. 새 캐릭터가 그 안에 없으면 나가는 캐릭터의 공대이니 버린다.</summary>
+    public bool SnapshotHolds(Func<ForceRosterMember, bool> isIncoming, long sinceMs)
+    {
+        lock (_gate)
+        {
+            return _snapshotAtMs > 0 && _snapshotAtMs >= sinceMs
+                && _members.Values.Any(m => isIncoming(new ForceRosterMember(
+                    m.Dbid, m.PartyKey, m.Slot, m.EntityUid, m.Nickname, m.Server, m.PcId, m.Power, m.PowerAtMs)));
         }
     }
 
@@ -203,7 +225,7 @@ public sealed class ForceRoster
                         .ToList()))
                 .OrderBy(p => p.Number == 0 ? int.MaxValue : p.Number)
                 .ToList();
-            return new ForceRosterView(_forceKey, _limitMember, _updatedAtMs, parties);
+            return new ForceRosterView(_forceKey, _limitMember, _updatedAtMs, parties) { MembershipAtMs = _membershipAtMs };
         }
     }
 

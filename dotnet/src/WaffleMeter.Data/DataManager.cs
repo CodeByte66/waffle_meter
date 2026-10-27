@@ -238,6 +238,14 @@ public sealed class DataManager : ICaptureGameData
     private long _ownPartyKey;
     private long _ownPartyKeyAtMs;
 
+    // 그 0x9200 이 실어 온 멤버 (닉네임, 서버) — 캐릭터 전환 때 그 key 가 새 캐릭터의 파티인지 가린다. _memberProfiles 잠금.
+    private List<(string Nickname, int Server)> _ownPartyMembers = [];
+
+    /// <summary>캐릭터 전환을 알아챈 순간, 이보다 최근에 온 포스 스냅샷·0x9200 은 <b>새 캐릭터</b> 것일 수 있다. 존 로드에서 둘은
+    /// 본인 로드 0x3633 보다 약 7초 먼저 온다(실측 20261027-205641: 21:02:41.9 → 21:02:49.0, 21:02:59.1 → 21:03:06.3).
+    /// 오드 덤프의 <see cref="AetherHandoverGraceMs"/> 와 같은 폭이다. 창 안이어도 그 안에 새 캐릭터가 있어야 남긴다.</summary>
+    private const long RosterHandoverGraceMs = 15_000;
+
     // uid -> 그 User 의 전투력이 마지막으로 기입된 시각(SaveUserPower). 전투 전 프리뷰가 포스 로스터의 전투력과
     // '나중에 받은 쪽'을 고르는 데만 쓴다. 0 = 모름(그때는 포스 쪽이 있으면 포스 쪽이 이긴다).
     private readonly Dictionary<int, long> _userPowerAtMs = new();
@@ -1506,8 +1514,12 @@ public sealed class DataManager : ICaptureGameData
         _partyRosterSetAtMs = _partyRosterAtMs;
     }
 
-    /// <summary>로스터 상태를 통째로 버린다(캐릭터 전환·초기화).</summary>
-    private void ClearPartyRosterState()
+    /// <summary>로스터 상태를 통째로 버린다(캐릭터 전환·초기화).
+    /// <para><paramref name="incoming"/> 은 캐릭터 전환일 때만 준다(초기화는 무조건 버린다). 그때 포스 로스터와 내 파티 key 는
+    /// <see cref="RosterHandoverGraceMs"/> 안에 왔고 <b>새 캐릭터가 그 안에 있으면</b> 남긴다 — 존 로드 순서상 그건 새 캐릭터의
+    /// 공대다. 무조건 버리면 ForceInfo 는 다음 존 이동 때까지 다시 오지 않아(정원을 싣는 건 0x9602 뿐) 그동안 20인 공대 규칙이 꺼진다.
+    /// 0x9702 방 로스터는 종전대로 무조건 버린다.</para></summary>
+    private void ClearPartyRosterState(User? incoming = null, long identityAtMs = 0)
     {
         _partyRoster.Clear();
         _partyRosterBySlot.Clear();
@@ -1517,10 +1529,34 @@ public sealed class DataManager : ICaptureGameData
         _partyRosterAtMs = 0;
         // 포스 로스터도 같이 — 다른 캐릭터의 공대가 새 캐릭터 프리뷰에 남으면 안 되고, 초기화 뒤 낡은 공대가 다시
         // 뜨면 안 된다는 0x9702 와 같은 규칙이다. 존을 옮기면 ForceInfo(reason 5 Reconnect)가 다시 채운다.
-        _forceRoster.Clear();
-        Interlocked.Exchange(ref _ownPartyKey, 0);
-        Interlocked.Exchange(ref _ownPartyKeyAtMs, 0);
+        long since = identityAtMs - RosterHandoverGraceMs;
+        if (incoming is null || !_forceRoster.SnapshotHolds(m => IsCharacter(incoming, m.Nickname, m.Server), since))
+        {
+            _forceRoster.Clear();
+        }
+
+        bool keepOwnParty = false;
+        if (incoming is not null && Interlocked.Read(ref _ownPartyKeyAtMs) is long keyAt && keyAt > 0 && keyAt >= since)
+        {
+            lock (_memberProfiles)
+            {
+                keepOwnParty = _ownPartyMembers.Any(m => IsCharacter(incoming, m.Nickname, m.Server));
+            }
+        }
+
+        if (!keepOwnParty)
+        {
+            Interlocked.Exchange(ref _ownPartyKey, 0);
+            Interlocked.Exchange(ref _ownPartyKeyAtMs, 0);
+        }
     }
+
+    /// <summary>로스터 레코드 하나가 <paramref name="who"/> 캐릭터인가 — 닉네임+서버(서버를 모르면 닉네임만; 잘린 0x3633 은
+    /// Server=-1 을 남긴다). 엔티티 uid 로는 가리지 않는다: 존마다 새로 매기는 작은 수라 나가는 캐릭터의 공대에 같은 uid 가 있을 수 있다.</summary>
+    private static bool IsCharacter(User who, string nickname, int server) =>
+        !string.IsNullOrWhiteSpace(who.Nickname)
+        && string.Equals(nickname, who.Nickname, StringComparison.Ordinal)
+        && (who.Server <= 0 || server == who.Server);
 
     /// <summary>Known Users for the current party/raid roster — the 0x9702 snapshot matched to uids by
     /// name+server — executor first then power desc. Empty when no roster is known, or when the last
@@ -1677,6 +1713,14 @@ public sealed class DataManager : ICaptureGameData
             }
         }
 
+        if (partyKey != 0)
+        {
+            lock (_memberProfiles)
+            {
+                _ownPartyMembers = current.Keys.ToList();
+            }
+        }
+
         if (current.Count == 0)
         {
             return;
@@ -1761,6 +1805,9 @@ public sealed class DataManager : ICaptureGameData
         long key = Interlocked.Read(ref _ownPartyKey);
         return key != 0 && Clock() - Interlocked.Read(ref _ownPartyKeyAtMs) <= withinMs ? key : 0;
     }
+
+    /// <summary><see cref="OwnPartyKey"/> 가 도착한 시각(0 = 없음). 표시 쪽이 포스의 마지막 구성 변경과 앞뒤를 가린다.</summary>
+    public long OwnPartyKeyAtMs() => Interlocked.Read(ref _ownPartyKeyAtMs);
 
     /// <summary><paramref name="uid"/> 의 전투력이 <see cref="SaveUserPower"/> 로 마지막 기입된 시각. 0 = 모름.</summary>
     public long UserPowerObservedAtMs(int uid)
@@ -2149,7 +2196,7 @@ public sealed class DataManager : ICaptureGameData
 
             if (identityChanged)
             {
-                ClearPartyRosterState();
+                ClearPartyRosterState(newExec, identityAtMs);
 
                 // 오드 / 슈고 열쇠 ride the 0x610B login dump, which the comment above records as arriving ~4 s
                 // BEFORE this naming packet. So the newest reading at this instant is usually the INCOMING
