@@ -911,6 +911,7 @@ public partial class App : Application
                 services.Data.MemberProfileRoster(PreCombatPartyTtlMs));
             viewModel.SetRoster(partyRoster);
             viewModel.SetRosterResurface(true); // Feature 1: 라이브 idle 경로 — 파티(닉/서버) 변경 시 로스터 프리뷰 재노출 허용
+            viewModel.SetLiveFeed(true); // 라이브 리포트 — 어비스 필드보스 처치까지(HP 기울기)는 이 경로의 HP 로만 잰다
             viewModel.Update(report);
             _detailViewModel?.Refresh(report); // live-refresh the open detail window
             StatsOwnCharacter own = services.StatsBuilder.OwnCharacter();
@@ -1891,6 +1892,7 @@ public partial class App : Application
             _viewingHistory = true;
             _historyBaselineBattleStart = _lastReport?.BattleStart ?? 0;
             meterViewModel.SetRosterResurface(false); // Feature 1: 기록 재생은 라이브 로스터 불일치로 절대 비우지 않는다
+            meterViewModel.SetLiveFeed(false); // 저장 전투는 HP 한 점으로 얼어 있다 — HP 기울기 표본에 섞지 않는다
             meterViewModel.Update(report);
         };
 
