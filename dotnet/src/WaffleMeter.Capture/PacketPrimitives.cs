@@ -7,6 +7,10 @@ namespace WaffleMeter.Capture;
 /// </summary>
 public readonly record struct VarIntOutput(int Value, int Length);
 
+/// <summary>Result of <see cref="PacketPrimitives.ReadVarUInt64"/>. <c>(-1, -1)</c> = 실패(경계 밖·비정규 인코딩·
+/// <see cref="long.MaxValue"/> 초과).</summary>
+public readonly record struct VarLongOutput(long Value, int Length);
+
 /// <summary>
 /// Verbatim ports of the byte-reading primitives in Kotlin <c>StreamProcessor</c>
 /// (readVarInt / parseUInt16le / parseUInt32le / readUInt32leAsLong / readUInt64le / toHex).
@@ -44,6 +48,53 @@ public static class PacketPrimitives
             if (shift >= 32)
             {
                 return new VarIntOutput(-1, -1);   // 32-bit overflow
+            }
+        }
+    }
+
+    /// <summary>64비트 varint(LEB128). <see cref="ReadVarInt"/>는 Kotlin 패리티 때문에 32비트에서 끊는데, 스폰
+    /// 패킷(0x3641)의 <c>_hp</c>/<c>_hp_max</c>는 32비트를 넘는다(실측 감시자 카이라 145.8억 = 5바이트).
+    /// <para>실패 조건: 경계 밖, 10바이트 초과, 비정규 인코딩(여러 바이트인데 마지막 바이트가 0x00 — 정상
+    /// 인코더는 절대 만들지 않으므로 오프셋이 어긋났다는 신호다), 결과가 <see cref="long.MaxValue"/> 초과.
+    /// 실패하면 <c>(-1, -1)</c>을 돌려준다.</para></summary>
+    public static VarLongOutput ReadVarUInt64(byte[] bytes, int offset = 0)
+    {
+        ulong value = 0;
+        int shift = 0;
+        int count = 0;
+
+        while (true)
+        {
+            if (count >= 10 || offset + count >= bytes.Length)
+            {
+                return new VarLongOutput(-1, -1);
+            }
+
+            int byteVal = bytes[offset + count] & 0xff;
+            count++;
+
+            // 10번째 바이트(shift 63)에는 1비트만 남는다. 그 이상이면 64비트를 넘친다.
+            if (shift == 63 && (byteVal & 0x7E) != 0)
+            {
+                return new VarLongOutput(-1, -1);
+            }
+
+            value |= (ulong)(byteVal & 0x7F) << shift;
+
+            if ((byteVal & 0x80) == 0)
+            {
+                if (count > 1 && byteVal == 0)
+                {
+                    return new VarLongOutput(-1, -1); // 비정규 인코딩
+                }
+
+                return value > long.MaxValue ? new VarLongOutput(-1, -1) : new VarLongOutput((long)value, count);
+            }
+
+            shift += 7;
+            if (shift > 63)
+            {
+                return new VarLongOutput(-1, -1);
             }
         }
     }

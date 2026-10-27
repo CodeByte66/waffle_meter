@@ -41,6 +41,17 @@ public interface ICaptureGameData
     /// <para>HP는 <c>long</c>이다 — 실측 최대가 27억대라 int로는 21.47억에서 포화한다.</para></summary>
     void SaveMobMaxHp(int instanceId, long maxHp) { }
 
+    /// <summary>어비스 필드보스의 스폰(0x3641)이 실어 온 현재/최대 HP. 최대 HP는 <b>권위값</b>이다 — 군중전
+    /// 필드보스는 0x8D00 에 statId 7 을 한 번도 싣지 않아(실측 감시자 카이라 577건 중 0건) 이것이 유일한 정본이다.
+    /// 재진입 스폰은 시야 밖에 있던 동안의 현재 HP 도 함께 싣는다. 파서는 usmap 스키마 순서로 필드를 걷고
+    /// 실패하면 부르지 않는다(fail-closed). 보스 여부·전투 영향은 데이터 계층이 판정한다. 기본 no-op.</summary>
+    void SaveMobSpawnVitals(int instanceId, int live, long hp, long maxHp, bool inCombat) { }
+
+    /// <summary>엔티티 시야 이탈/소멸(0x3642 NpcDisappear_NT). 게이팅 <b>상태</b>로만 쓴다 — 이것만으로 전투를
+    /// 닫지 않고, 활동으로도 치지 않는다. 사유 바이트는 일부러 넘기지 않는다(게이트가 사유를 읽지 않게).
+    /// 기본 no-op.</summary>
+    void SaveMobDisappear(int instanceId) { }
+
     /// <summary>스폰(0x3641) 유실로 mobCode가 등록되지 않은 던전 보스를 HP 휴리스틱으로 되살린다 —
     /// 0x8D00이 미등록 엔티티에 대해 보스급 HP를 실어 오고, 그 엔티티가 교전 토글(0x8D21)을 쏜 적이 있으면
     /// 합성 '미상 보스'로 승격해 소급 집계한다. 데이터 계층이 게이트를 판정한다. 기본 no-op(캡처 전용 모드).</summary>
