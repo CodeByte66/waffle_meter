@@ -334,8 +334,20 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
 
     private string _targetEtaText = string.Empty;
 
-    /// <summary>처치까지 남은 시간("M:SS"). 남은 HP ÷ 현재 파티 DPS.</summary>
+    /// <summary>처치까지 남은 시간("M:SS"). 남은 HP ÷ 현재 파티 DPS — 어비스 필드보스만 보스 HP 기울기
+    /// (<see cref="KillEtaEstimator"/>).</summary>
     public string TargetEtaText { get => _targetEtaText; private set => Set(ref _targetEtaText, value); }
+
+    // 처치까지 추정기. 어비스 필드보스의 HP 기울기 표본을 틱 사이에 들고 있어야 해서 VM 이 한 인스턴스를 든다.
+    private readonly KillEtaEstimator _killEta = new();
+
+    // 지금 Update 로 들어오는 리포트가 라이브 경로인지(App 이 SetLiveFeed 로 알린다). 기록 재생 중에는 false 라
+    // 얼어 있는 저장 전투가 HP 기울기 표본으로 섞이지 않는다. 기본값 false = 설정창 미리보기 VM 도 안전하다.
+    private bool _liveFeed;
+
+    /// <summary>다음 <see cref="Update"/> 들이 라이브 리포트인지(true) 기록 재생인지(false). 테마·스킨 리페인트는
+    /// 마지막 값을 그대로 쓴다.</summary>
+    public void SetLiveFeed(bool live) => _liveFeed = live;
 
     private Visibility _targetEtaVisibility = Visibility.Collapsed;
     public Visibility TargetEtaVisibility { get => _targetEtaVisibility; private set => Set(ref _targetEtaVisibility, value); }
@@ -793,13 +805,11 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
             TargetHpAmountText = FormatTargetHpAmount(tgt.RemainHp, tgt.MaxHp, _settings.TargetInfoDisplayMode);
             TargetHpVisibility = hasTarget ? Visibility.Visible : Visibility.Collapsed;
 
-            // 처치까지 = 남은 HP ÷ 지금 파티 DPS. 미터만 낼 수 있는 숫자다.
-            // ⚠️ 보스 최대 HP 가 틀리면(포화·미측정) 이 값도 같이 틀린다 — 그래서 남은 HP 를 모르는
-            //    상황에서는 아예 감춘다. 틀린 값을 자신 있게 보여주는 것보다 안 보여주는 게 낫다.
-            double partyDps = report.Information.Values.Sum(i => i.Dps);
-            bool etaSane = partyDps > 0 && tgt.RemainHp > 0;
-            TargetEtaText = etaSane ? FormatDuration((long)(tgt.RemainHp / partyDps * 1000.0)) : string.Empty;
-            TargetEtaVisibility = etaSane ? Visibility.Visible : Visibility.Collapsed;
+            // 처치까지 = 남은 HP ÷ 지금 파티 DPS. 미터만 낼 수 있는 숫자다. 어비스 필드보스만 보스 HP 기울기로
+            // 잰다(군중전은 남의 직접타가 안 와서 파티 DPS 가 실제 속도의 일부다) — 규칙은 App.Core KillEtaEstimator.
+            long? etaMs = _killEta.Estimate(report, _liveFeed, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            TargetEtaText = etaMs is { } etaValue ? FormatDuration(etaValue) : string.Empty;
+            TargetEtaVisibility = etaMs is not null ? Visibility.Visible : Visibility.Collapsed;
         }
         else
         {
@@ -873,7 +883,8 @@ public sealed class OverlayViewModel : INotifyPropertyChanged
         // over the placeholder). Self-coloring uses the frozen report.ExecutorId, else the live _selfId.
         IReadOnlyList<OverlayRowBuilder.Row> display = OverlayRowBuilder.Build(
             report, _roster, _selfId, total, _settings.ShowPreCombatRoster, out bool hasCombatRows,
-            topN: _settings.DisplayRowCap, // 사용자가 고른 인원의 1.5배 여유 (파티원·본인은 추가로 상한 면제)
+            // 사용자가 고른 인원의 1.5배 여유, 어비스 필드보스만 고른 인원(최대 10) 그대로 (파티원·본인은 추가로 상한 면제)
+            topN: CrowdFightPolicy.RowCap(report, _settings),
             selfNickname: _selfNickname, selfServer: _selfServer, selfJob: _selfJob, selfPower: _selfPower,
             authoritativeParty: _authoritativeParty,
             metricOverride: metricOverride,
