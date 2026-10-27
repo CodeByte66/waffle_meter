@@ -236,14 +236,33 @@ public sealed class MobIdRepository
         public int Code { get; } = code;
         // long이다 — 실측 최대 HP가 27억대(델트라스)라 int로는 21.47억에서 포화한다.
         public long MaxHp { get; set; } = maxHp;
+
+        /// <summary>최대 HP 가 스폰(0x3641)이 실어 온 <b>권위값</b>이다. 서 있으면 관측 현재 HP 로 미는 단조 증가
+        /// 래치(<see cref="SaveMaxHp"/>)가 더는 이 값을 건드리지 못한다.</summary>
+        public bool MaxHpAuthoritative { get; set; }
     }
 
     private readonly Dictionary<int, MobInstance> _storage = new();
 
     public void Save(int key, int code)
     {
-        long maxHp = _storage.TryGetValue(key, out MobInstance? existing) && existing.Code == code ? existing.MaxHp : 0;
-        _storage[key] = new MobInstance(code, maxHp);
+        // 같은 코드로 다시 등록되면 최대 HP 와 그 출처를 그대로 이어 간다. 코드가 바뀌면(엔티티 id 재발급) 둘 다 버린다.
+        bool same = _storage.TryGetValue(key, out MobInstance? existing) && existing.Code == code;
+        _storage[key] = new MobInstance(code, same ? existing!.MaxHp : 0) { MaxHpAuthoritative = same && existing!.MaxHpAuthoritative };
+    }
+
+    /// <summary>스폰이 실어 온 최대 HP 로 <b>덮어쓴다</b>(낮아져도). 그 전에 관측 현재 HP 로 래치된 추정치는
+    /// 진짜 최대가 아니라 '처음 받아들인 현재 HP'였을 수 있다(2026-10-27 카이라: 99.98억 래치, 실제 145.8억).</summary>
+    public bool SaveMaxHpFromSpawn(int key, long maxHp)
+    {
+        if (maxHp <= 0 || !_storage.TryGetValue(key, out MobInstance? instance))
+        {
+            return false;
+        }
+
+        instance.MaxHp = maxHp;
+        instance.MaxHpAuthoritative = true;
+        return true;
     }
 
     public bool SaveMaxHp(int key, long maxHp)
@@ -251,6 +270,11 @@ public sealed class MobIdRepository
         if (!_storage.TryGetValue(key, out MobInstance? instance))
         {
             return false;
+        }
+
+        if (instance.MaxHpAuthoritative)
+        {
+            return true; // 권위값이 이미 있다 — 추정 래치는 끼어들지 않는다
         }
 
         if (maxHp > instance.MaxHp)
