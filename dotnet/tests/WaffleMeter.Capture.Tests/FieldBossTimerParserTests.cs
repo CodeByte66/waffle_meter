@@ -207,9 +207,10 @@ public class FieldBossTimerParserTests
             FieldBossTimerParser.ParseTable(Hex(RealAbyssLowerBody), 0, AbyssArrivedAt).Timers
                 .Concat(FieldBossTimerParser.ParseTable(Hex(RealAbyssMiddleBody), 0, AbyssArrivedAt).Timers)
                 .Where(t => FieldBossFixedSchedule.HasFixedSchedule(t.Code))
+                .Where(t => !FieldBossFixedSchedule.IsDaily(t.Code)) // 정령왕 아그로: per-kill in this pre-10-28 capture
                 .ToList();
 
-        Assert.Equal(11, timers.Count); // 13 records − 정령왕 아그로(per-kill) − 감시자 카이라(zeroed)
+        Assert.Equal(11, timers.Count); // 13 records − 정령왕 아그로(per-kill then) − 감시자 카이라(zeroed)
         Assert.All(timers, t => Assert.Equal(
             FieldBossFixedSchedule.IsArtifactWarTied(t.Code) ? DayOfWeek.Wednesday : DayOfWeek.Friday,
             DateTimeOffset.FromUnixTimeMilliseconds(t.TargetMs).ToOffset(kst).DayOfWeek));
@@ -272,6 +273,27 @@ public class FieldBossTimerParserTests
         (int Code, long TargetMs) nahma = Assert.Single(r.Timers, t => t.Code == 2600084);
         Assert.True(FieldBossFixedSchedule.TryNextSpawn(2600084, MorheimArrivedAt, out long expected));
         Assert.Equal(expected, nahma.TargetMs);
+    }
+
+    /// <summary>정령왕 아그로(wire 2001) became a daily 09·21시 spawn on 2026-10-28, so a record with no usable time
+    /// (the boss is up: position block + a past time) gets the next slot — and a server-sent time still wins.</summary>
+    [Fact]
+    public void The_daily_agro_falls_back_to_its_next_slot_and_a_server_time_still_wins()
+    {
+        var kst = TimeSpan.FromHours(9);
+        long arrived = new DateTimeOffset(2026, 10, 28, 21, 7, 0, kst).ToUnixTimeMilliseconds();
+        long nextMorning = new DateTimeOffset(2026, 10, 29, 9, 0, 0, kst).ToUnixTimeMilliseconds();
+
+        (int Code, long TargetMs) fallback = Assert.Single(
+            FieldBossTimerParser.ParseTable(Body(FieldBossCatalog.AbyssLowerMapId, (2001, 0)), 0, arrived).Timers,
+            t => t.Code == 2600068);
+        Assert.Equal(nextMorning, fallback.TargetMs);
+
+        long sent = arrived + 3 * 60 * 60_000L; // not a slot — the wire is what counts
+        (int Code, long TargetMs) server = Assert.Single(
+            FieldBossTimerParser.ParseTable(Body(FieldBossCatalog.AbyssLowerMapId, (2001, sent)), 0, arrived).Timers,
+            t => t.Code == 2600068);
+        Assert.Equal(sent, server.TargetMs);
     }
 
     /// <summary>The 수·토 아티쟁 bosses (하층 slots 2006-2008, 중층 2203-2205) get NO fallback any more: their spawn

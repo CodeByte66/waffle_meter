@@ -1062,12 +1062,20 @@ public partial class App : Application
             // The 0x9101 table, plus the 아티쟁 bosses' spawn derived from the current character's server war
             // time (R + ArtifactWarSchedule.BossSpawnMinutesAfterWarStart) wherever the server has not timed them
             // itself — a server time always wins, and with no R on file there is simply no alarm. Same server
-            // lookup as FlushPendingAbyssArtifacts.
-            fieldBossTimers: () => _artifactWarBosses.Merge(
-                services.Data.CurrentFieldBossTimers,
-                AbyssArtifactStore.Parse(_settings!.AbyssArtifacts),
-                services.Data.User(services.Data.ExecutorId())?.Server ?? 0,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+            // lookup as FlushPendingAbyssArtifacts. On top, the daily fixed-spawn bosses (정령왕 아그로 09·21시) get
+            // their next slot from the clock so they ring without the abyss having been visited — again only
+            // where the server has not timed them (DailyFieldBossTimers).
+            fieldBossTimers: () =>
+            {
+                long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                return DailyFieldBossTimers.Merge(
+                    _artifactWarBosses.Merge(
+                        services.Data.CurrentFieldBossTimers,
+                        AbyssArtifactStore.Parse(_settings!.AbyssArtifacts),
+                        services.Data.User(services.Data.ExecutorId())?.Server ?? 0,
+                        nowMs),
+                    nowMs);
+            },
             onFieldBoss: due => Dispatcher.Invoke(() => ShowFieldBossAlarm(due)),
             combatActive: () => _combatActive,
             onKaira: (lead, spawn) => Dispatcher.Invoke(() => ShowKairaAlarm(lead, spawn)));

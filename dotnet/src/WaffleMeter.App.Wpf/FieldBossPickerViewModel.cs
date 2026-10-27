@@ -9,7 +9,8 @@ namespace WaffleMeter.App.Wpf;
 /// an alert on/off toggle. Unchecked bosses go into the persisted disabled set, which the reminder skips.
 /// The timer broadcast is map-scoped, so a region's alarms only ever fire while you are in that region —
 /// the tabs are there so every region can be pre-configured. (The 수·토 아티쟁 bosses are the exception: their
-/// spawn is derived from the server's war time, so they can fire without the abyss having been visited.)</summary>
+/// spawn is derived from the server's war time, so they can fire without the abyss having been visited. So is
+/// the daily 정령왕 아그로, whose next 09·21시 slot comes from the clock — <see cref="DailyFieldBossTimers"/>.)</summary>
 public sealed class FieldBossPickerViewModel
 {
     private readonly MeterSettings _settings;
@@ -113,7 +114,7 @@ public sealed class FieldBossItem : INotifyPropertyChanged
 
     public string Name { get; }
 
-    /// <summary>Fixed-spawn hint ("금·일 22:05" / "수·토 아티쟁 종료 후") for the 어비스 fortress bosses, null for a
+    /// <summary>Fixed-spawn hint ("금·일 22:05" / "수·토 아티쟁 종료 후" / "매일 09:00·21:00") for the 어비스 fixed-spawn bosses, null for a
     /// normal respawn timer. Rows that share a mob name (수호신장 나흐마 ×3 하층, 분노한 수호신장 나흐마 ×2 중층)
     /// share the badge too — one boss name on several spawn slots, listed in slot order; the badge does not tell
     /// them apart and is not meant to.</summary>
