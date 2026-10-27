@@ -86,7 +86,7 @@
                    Foreground="{DynamicResource Skin.Fg}" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4"/>
         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,12"
                    Foreground="{DynamicResource Skin.MutedFg}" FontSize="11"
-                   Text="체크된 보스만 리스폰 알림을 표시합니다. 리젠 시간은 지금 있는 지역의 월드맵(M)을 열 때 인식되므로, 알림도 그 지역에 있을 때 울립니다. 수·토 아티쟁 보스는 그 서버의 아티쟁 시각을 알고 있으면 지역과 무관하게 울립니다."/>
+                   Text="체크된 보스만 리스폰 알림을 표시합니다. 리젠 시간은 지금 있는 지역의 월드맵(M)을 열 때 인식되므로, 알림도 그 지역에 있을 때 울립니다. 수·토 아티쟁 보스는 그 서버의 아티쟁 시각을 알고 있으면, 정령왕 아그로는 고정 출현 시각에 맞춰 지역과 무관하게 울립니다."/>
 
         <Button DockPanel.Dock="Bottom" Content="닫기" HorizontalAlignment="Right" MinWidth="82" Margin="0,12,0,0"
                 Click="OnClose"/>

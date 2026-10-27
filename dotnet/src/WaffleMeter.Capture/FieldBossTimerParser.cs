@@ -100,7 +100,8 @@ public static class FieldBossTimerParser
                 continue;
             }
 
-            // No timestamp on this record: a 금·일 fortress boss (어비스 요새) still gets its next spawn. The
+            // No timestamp on this record: a 금·일 fortress boss (어비스 요새) or the daily 정령왕 아그로 still gets
+            // its next spawn. The
             // 수·토 아티쟁 group deliberately does NOT — its time hangs off the server's own war start, which this
             // layer cannot see, so TryNextSpawn refuses it and App.Core derives it (ArtifactWarSchedule). This is
             // also the path an ALIVE boss's record takes (position block + a past time), which is where the old

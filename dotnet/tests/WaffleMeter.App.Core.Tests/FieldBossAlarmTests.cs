@@ -404,4 +404,38 @@ public class FieldBossAlarmTests
         Assert.True(FieldBossFixedSchedule.IsArtifactWarTied(2600520));   // 처형관 드라모스 — 슬롯 2203, 아티쟁 연동
         Assert.False(FieldBossFixedSchedule.IsArtifactWarTied(2600479));  // 분노한 수호신장 나흐마 — 금·일
     }
+
+    /// <summary>정령왕 아그로 (2026-10-28 패치) — 매일 KST 09:00·21:00. Pinned with literal times, not values derived
+    /// from <see cref="FieldBossFixedSchedule.DailySpawnHoursKst"/>: the 감시자 카이라 grid stayed green for three weeks
+    /// with the wrong anchor because its test only re-read the constant.</summary>
+    [Theory]
+    [InlineData(10, 28, 0, 30, 10, 28, 9)]   // 자정 뒤 → 같은 날 09시
+    [InlineData(10, 28, 8, 59, 10, 28, 9)]
+    [InlineData(10, 28, 9, 0, 10, 28, 9)]    // 정각 그 자체는 아직 그 슬롯
+    [InlineData(10, 28, 9, 1, 10, 28, 21)]
+    [InlineData(10, 28, 20, 59, 10, 28, 21)]
+    [InlineData(10, 28, 21, 1, 10, 29, 9)]   // 21시 뒤 → 이튿날 09시
+    [InlineData(10, 31, 23, 59, 11, 1, 9)]   // 달이 넘어가도
+    public void The_daily_agro_spawns_at_nine_and_twenty_one_kst(int mo, int d, int h, int mi, int eMo, int eD, int eH)
+    {
+        var kst = TimeSpan.FromHours(9);
+        long from = new DateTimeOffset(2026, mo, d, h, mi, 0, kst).ToUnixTimeMilliseconds();
+
+        Assert.True(FieldBossFixedSchedule.TryNextSpawn(2600068, from, out long target));
+        Assert.Equal(new DateTimeOffset(2026, eMo, eD, eH, 0, 0, kst).ToUnixTimeMilliseconds(), target);
+    }
+
+    [Fact]
+    public void The_daily_agro_is_a_fixed_schedule_of_its_own()
+    {
+        Assert.True(FieldBossFixedSchedule.HasFixedSchedule(2600068));
+        Assert.True(FieldBossFixedSchedule.IsDaily(2600068));
+        Assert.False(FieldBossFixedSchedule.IsArtifactWarTied(2600068));
+        Assert.Equal("매일 09:00·21:00", FieldBossFixedSchedule.Describe(2600068));
+        Assert.Equal([2600068], FieldBossFixedSchedule.DailyCodes);
+
+        // 집행자 아그로(2600097, 슬롯 2007)는 이름만 닮은 다른 보스 — 여전히 아티쟁 그룹이다.
+        Assert.False(FieldBossFixedSchedule.IsDaily(2600097));
+        Assert.True(FieldBossFixedSchedule.IsArtifactWarTied(2600097));
+    }
 }
