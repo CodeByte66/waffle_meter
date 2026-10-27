@@ -117,6 +117,11 @@ public sealed class DataManager : ICaptureGameData
     /// 평범한 필드로 둔다.</para></summary>
     private long _lastBossActivityMs;
 
+    /// <summary>보스 엔티티 → 사망 브로드캐스트(0x8D04) 시각. 한 번도 열린 적 없는 어비스 필드보스의 처치 직후
+    /// 시체 토글(0→1)을 막는 데 쓴다(<see cref="StartBattleAt"/>).</summary>
+    private readonly Dictionary<int, long> _bossDeathAtMs = new();
+    private const int BossDeathCap = 64;
+
     /// <summary>타깃을 가리지 않고 마지막으로 데미지를 본 시각(<see cref="AnyCombatQuietMs"/> 판정용).
     /// 기믹 중 쫄 딜이 여기에 찍혀 "전투가 아직 살아 있다"를 증명한다.</summary>
     private long _lastAnyDamageMs;
@@ -2341,6 +2346,8 @@ public sealed class DataManager : ICaptureGameData
 
     public void SaveEntityDeath(int entityId, long arrivedAt)
     {
+        MarkBossDead(entityId);
+
         // 마킹만 먼저. 아래 executor 게이트는 버프 오버레이를 비우는 별개 관심사이고, 파티원 사망은
         // 거기서 걸러지지만 회색 표시에는 필요하다.
         if (_userRepository.Exist(entityId))
@@ -2364,6 +2371,40 @@ public sealed class DataManager : ICaptureGameData
     }
 
     private long _ownerBuffClearRevision;
+
+    /// <summary>보스의 사망 브로드캐스트(0x8D04)는 곧 HP 0 이다 — 시체 가드와 primary-lock 이 둘 다 <c>MobHp</c> 를
+    /// 읽는데, 종전에는 이 신호가 HP 를 바꾸지 않았다.
+    /// <para>2026-10-27 21:01:46 감시자 카이라 실측 순서: 사망 +0ms / 종료 토글 +1 / <b>시체 시작 토글 +46</b> /
+    /// HP 0 프레임 +46. 군중전에서는 HP 0 프레임이 시체 토글보다 늦게 와서, HP==0 만 보던 시체 가드가 새고 처치된
+    /// 보스로 유령 전투가 열렸다(35초짜리 중복 기록 + 저장 시점 본인 uid → self=MISSING). 사망을 HP 0 으로 쓰면
+    /// 현 타깃은 전투 최저 HP 가 0 이 돼 킬이 확정되고, 시체 토글은 기존 가드가 pending 으로 삼킨다. 같은 엔티티가
+    /// 나중에 HP&gt;0 을 보고하면(페이즈 부활) <see cref="MobHp(int, long)"/> 가 pending 을 재생해 저절로 회복된다.</para>
+    /// <para>재사용된 플레이어 uid 는 건너뛴다 — 그 id 가 지금 플레이어로 알려져 있고 현 타깃도 아니라면 죽은 건
+    /// 옛 보스가 아니라 그 플레이어다.</para></summary>
+    private void MarkBossDead(int entityId)
+    {
+        if (entityId <= 0 || GetMobId(entityId) is not { } code || Mob(code) is not { Boss: true, IsDummy: false })
+        {
+            return;
+        }
+
+        if (_userRepository.Exist(entityId) && entityId != CurrentTarget())
+        {
+            return;
+        }
+
+        long now = Clock();
+        if (_bossDeathAtMs.Count >= BossDeathCap)
+        {
+            foreach (int stale in _bossDeathAtMs.Where(kv => now - kv.Value > EndedBattleStartIgnoreMs).Select(kv => kv.Key).ToList())
+            {
+                _bossDeathAtMs.Remove(stale);
+            }
+        }
+
+        _bossDeathAtMs[entityId] = now;
+        MobHp(entityId, 0);
+    }
 
     /// <summary>사망으로 버프 스토어가 비워질 때마다 증가. 오버레이 틱이 값 변화를 보고 종료 음성을 건너뛴다.</summary>
     public long OwnerBuffClearRevision
@@ -3774,6 +3815,20 @@ public sealed class DataManager : ICaptureGameData
             return;
         }
 
+        // 어비스 필드보스 한정: 한 번도 열린 적 없는 보스(primary-lock 에 거부됐던 B)가 방금 죽었다. 위 시체 가드는
+        // '끝난 전투'가 있어야 걸리므로 이 보스의 처치 직후 시체 토글(0→1)이 그대로 유령 전투를 연다. 사망 직후
+        // 3초만 같은 방식(pending)으로 삼킨다.
+        // ⚠️ 3초 제한을 빼지 마라 — 같은 엔티티의 정상 재풀까지 막아 재풀 테스트(DataManagerRepullTests)가 깨진다.
+        if (mobId != CurrentTarget()
+            && mobCode is { } deadCode && FieldBossCatalog.IsAbyss(deadCode)
+            && MobHp(mobId) == 0
+            && _bossDeathAtMs.TryGetValue(mobId, out long diedAt)
+            && now - diedAt <= EndedBattleStartIgnoreMs)
+        {
+            _pendingStart = (mobId, mobCode, now);
+            return;
+        }
+
         if (CurrentTarget() == mobId
             && CurrentBattleStart() > 0L
             && CurrentBattleEnd() == 0L
@@ -3974,7 +4029,11 @@ public sealed class DataManager : ICaptureGameData
             Information = data.Information.ToDictionary(kv => kv.Key, kv => CopyInfo(kv.Value)),
             Target = data.Target is { } t ? new MobInfo(t.Id, t.Mob, t.RemainHp, t.MaxHp) : null,
             Packets = null,
-            ExecutorId = ExecutorId(),     // freeze the 본인 uid so a history replay self-colors the own row (CopyUser froze IsExecutor — usually false)
+            // freeze the 본인 uid so a history replay self-colors the own row (CopyUser froze IsExecutor — usually false).
+            // 리포트가 그 전투 안의 본인을 들고 오면 그걸 쓴다 — 저장은 유휴 종료로 한참 뒤에 일어날 수 있고, 그사이
+            // 존 이동으로 본인 uid 가 바뀌면 저장 시점 값은 이 전투의 참가자가 아니다(2026-10-27 self=MISSING).
+            // 0 이면 종전대로 라이브 값.
+            ExecutorId = data.ExecutorId != 0 ? data.ExecutorId : ExecutorId(),
             // 기록 재생에서도 로스터 구제의 '파티 씬' 증거가 살아 있어야 구제된 파티원 행이 안 사라진다.
             // ⚠️ 이 한 줄만으로는 부족했다 — `RefreshRecentReportFromCache`의 초기화 목록이 종료 틱에 이 값을
             // 떨어뜨리고 있어서 여기서 복사해 봐야 false 였다. 그쪽을 먼저 고쳤기에 이제 의미가 있다.
@@ -4063,6 +4122,7 @@ public sealed class DataManager : ICaptureGameData
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
         _battleLowHp.Clear();
+        _bossDeathAtMs.Clear();
         ClearPartyRosterState();
         ClearAetherStatus();
         ClearShugoKey();
@@ -4093,6 +4153,7 @@ public sealed class DataManager : ICaptureGameData
         _selfDamageStreak.Clear(); // Feature 2
         _bossEngageAtMs.Clear();
         _battleLowHp.Clear();
+        _bossDeathAtMs.Clear();
         // drop the 0x9702 party snapshot — a stale party (e.g. after leaving the dungeon and returning
         // to town) must not preview on reset; it re-fills on party formation
         ClearPartyRosterState();
