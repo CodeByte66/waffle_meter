@@ -69,6 +69,45 @@ public interface ICaptureGameData
     /// 0x9702 로스터가 유실됐을 때의 폴백이자, 타인 닉(0x3645)이 유실돼 무명인 전투행을 uid로 곧장 명명하는
     /// 소스다. uid 재사용 위험 때문에 신원 저장소가 아니라 TTL 있는 표시-전용 맵에만 담는다. 기본 no-op.</summary>
     void SaveMemberProfile(int uid, string nickname, int server) { }
+
+    /// <summary>스키마 워크로 읽은 0x9200 PartyInfo_NT 의 <b>본인 파티 전원</b> — 다른 존에 있어 엔티티 uid 가 0 인 멤버까지
+    /// 포함한다. 0x9200 은 매번 파티 전체를 싣으므로 이 목록에 없는 사람은 파티를 떠난 것이다.
+    /// <para>uid 가 있는 멤버는 이 호출 전에 <see cref="SaveMemberProfile"/> 로 따로 들어온다(종전 경로 그대로).
+    /// 이 호출은 그 위에 ① uid 0 멤버를 (닉네임, 서버) 행으로 남기고 ② 떠난 멤버의 프로필을 지우는 일만 한다.
+    /// 구세대 프레임(바이트스캔 폴백)에서는 부르지 않는다. 기본 no-op.</para>
+    /// <para><paramref name="partyKey"/> = 그 파티의 서버 key(<c>_key</c>). 20인 공대에서는 포스 안 본인 서브파티의 key 와
+    /// 같다(실측) — 본인 uid 를 아직 모를 때도 "어느 파티가 내 파티인가"를 알려 주는 유일한 값이다.</para></summary>
+    void SaveMemberProfileSnapshot(long partyKey, IReadOnlyList<WireRosterMember> members) { }
+
+    /// <summary>0x920D PartyAddMember_NT — 본인 파티에 한 명이 들어왔다. uid 가 있으면 <see cref="SaveMemberProfile"/> 도
+    /// 따로 들어온다. 이 호출은 uid 0(다른 존) 멤버를 (닉네임, 서버) 행으로 남기는 데 쓴다. 기본 no-op.</summary>
+    void AddMemberProfile(WireRosterMember member) { }
+
+    // ---- 포스(20인 공대) 로스터 — 0x96xx. 전부 멱등이어야 한다(IdentityReplayOpcodes). 기본 no-op. ----
+    // 사람을 지목하는 키는 dbid 다. 엔티티 uid 는 존마다 바뀌고 다른 존에 있으면 0 이다.
+    // ⚠️ 표시 전용이다. 통계 업로드(rosterSize·파티 슬롯)는 0x9702 만 읽는다 — 웹은 8/10인 공대만 받는다.
+
+    /// <summary>0x9602 ForceInfo_NT — 포스 전체 스냅샷. 통째로 교체한다.</summary>
+    void SaveForceInfo(ForceSnapshot force) { }
+
+    /// <summary>0x960A ForceAddMember_NT — <paramref name="partyKey"/> 파티에 한 명 추가(dbid 로 upsert).</summary>
+    void AddForceMember(long partyKey, WireRosterMember member) { }
+
+    /// <summary>0x961D ForceAddParty_NT — 파티 하나가 생겼다(멤버 포함 upsert).</summary>
+    void AddForceParty(ForceParty party) { }
+
+    /// <summary>0x961E ForceMoveMember_NT — 실린 파티들의 멤버 목록을 통째로 갈아끼운다.</summary>
+    void MoveForceMembers(IReadOnlyList<ForceParty> changes) { }
+
+    /// <summary>0x961B ForceReconnectMember_NT — 멤버의 새 엔티티 uid(다른 존이면 0)·전투력 갱신.</summary>
+    void ReconnectForceMember(WireRosterMember member) { }
+
+    /// <summary>0x9622 ForceRemoveMember_NT — dbid 로 지운다. 없는 dbid 면 아무것도 안 한다.</summary>
+    void RemoveForceMember(long memberDbid, long partyKey) { }
+
+    /// <summary>0x962C ForceUpdateMemberStatus_NT — 이미 있는 멤버의 직업·전투력만 갱신한다(사람을 새로 만들지 않는다).</summary>
+    void UpdateForceMemberStatus(ForceMemberStatus status) { }
+
     void SaveUseBuff(int uid, int skillCode, long buffStart, long buffEnd, long duration, int actorId);
 
     /// <summary>버프 적용 + <paramref name="level"/>(어노멀 레벨, 0 = 모름). 서로 중복 적용되지 않는 버프 쌍에서

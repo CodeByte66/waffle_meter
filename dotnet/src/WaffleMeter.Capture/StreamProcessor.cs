@@ -142,8 +142,22 @@ public sealed class StreamProcessor
     //   0x971F = 멤버 한 명 레코드(0x9702 멤버와 **같은 11바이트 헤더**). 표본 85건 중 83건이 이미 있는
     //            멤버의 갱신이고 슬롯이 바뀐 사례는 0건 — 즉 여기 실린 슬롯이 권위다.
     //   0x9622 = 제거. key 하나만 싣는다(표본 18건 중 13건이 '직전 스냅샷에 있다가 이후 사라짐').
+    //            정체는 usmap 의 ForceRemoveMember_NT{_member_dbid i64, _party_key i64, _reason} 다 — 10인 공대도
+    //            두 파티짜리 포스라서 그 방에서도 왔고, 로스터 key 가 dbid 의 하위 32비트라 종전 해석이 맞아떨어졌다.
+    //            그래서 한 프레임이 두 상태를 같이 고친다: 0x9702 방 로스터(key) + 포스 로스터(dbid).
     private const int PartyMemberUpdateKey = 0x1F | (0x97 << 8);  // 0x971F
     private const int PartyMemberRemoveKey = 0x22 | (0x96 << 8);  // 0x9622
+    // 포스(20인 공대 = 4파티 × 5) 로스터. 0x9702(던전 매칭방)는 이 공대에서 한 번도 안 오고, 0x9200 은 본인 서브파티만
+    // 싣는다 — 그래서 20인 공대의 나머지 파티와 다른 존 멤버는 이 계열에만 있다. 번호는 usmap 0x96 블록 선언 순서
+    // (ForceCreate_RQ = 0x9600)이고, 레이아웃은 RosterRecordParser 가 스키마대로 걷는다(로그 1,330프레임 정확 소진).
+    private const int ForceInfoKey = 0x02 | (0x96 << 8);            // 0x9602 ForceInfo_NT
+    private const int ForceAddMemberKey = 0x0A | (0x96 << 8);       // 0x960A ForceAddMember_NT
+    private const int ForceReconnectMemberKey = 0x1B | (0x96 << 8); // 0x961B ForceReconnectMember_NT
+    private const int ForceAddPartyKey = 0x1D | (0x96 << 8);        // 0x961D ForceAddParty_NT
+    private const int ForceMoveMemberKey = 0x1E | (0x96 << 8);      // 0x961E ForceMoveMember_NT
+    private const int ForceMemberStatusKey = 0x2C | (0x96 << 8);    // 0x962C ForceUpdateMemberStatus_NT
+    // 0x920D PartyAddMember_NT — 본인 파티에 한 명 추가. 0x9200 과 같은 PartyMemberInfo 레코드 하나다.
+    private const int PartyAddMemberKey = 0x0D | (0x92 << 8);       // 0x920D
     // 0x9200 — 파티/공대 멤버 상세 프로필. 0x9702 로스터와 달리 레코드마다 엔티티 uid를 함께 싣는 유일한
     // 브로드캐스트라, 본인 로드 패킷(0x3633)이 오지 않은 재인스턴스에서 본인을 새 uid에 묶는 근거가 된다.
     private const int MemberProfileKey = 0x00 | (0x92 << 8);   // 0x9200
@@ -267,6 +281,11 @@ public sealed class StreamProcessor
         // (갱신은 그 슬롯을 덮어쓰고, 제거는 이미 없는 key 면 아무것도 안 한다). 증분만 빠지면
         // 중복 스트림 환경에서 로스터가 부분 스냅샷에서 멈춰 버린다.
         PartyMemberUpdateKey, PartyMemberRemoveKey,
+        // 포스 로스터와 0x920D(2026-10-28)도 같은 이유다. 존을 옮긴 직후의 ForceInfo 는 실측으로 **새 서버 연결**
+        // (.44 → .103 → .68)을 타고 오는데, 그 순간이 두 번째 연결이 억제 쪽에 서 있을 가능성이 가장 높다. 전부 멱등이다 —
+        // 스냅샷은 통째 교체, 추가·재접속·상태는 dbid upsert, 이동은 실린 파티의 목록 교체, 제거는 없는 dbid 면 no-op.
+        ForceInfoKey, ForceAddMemberKey, ForceReconnectMemberKey, ForceAddPartyKey, ForceMoveMemberKey,
+        ForceMemberStatusKey, PartyAddMemberKey,
         AetherKeyA, AetherKeyB,
         // The 어비스 아티팩트 broadcast joins for the same reason the 0x610x family did: it is an ABSOLUTE state
         // (who holds each artifact right now), so replaying it cannot inflate anything, and it arrives at login
@@ -317,6 +336,16 @@ public sealed class StreamProcessor
         [Key(0x1F, 0x97)] = "PartyMemberUpdate",
         [Key(0x22, 0x96)] = "PartyMemberRemove",
         [MemberProfileKey] = "MemberProfile",
+        // ⚠️ 여기 넣는 순간 LooksLikeGamePacket 이 이 opcode 들도 '게임 프레임'으로 센다(이 딕셔너리가 그 판정 기준이다).
+        // 감내 가능하다고 본 이유: 노이즈 가드 면제는 이제 0x3600 서버 시계 자격이나 텍스트 아닌 히트 3건 이상을 요구하므로
+        // (2026-10-27), 평문 노이즈가 우연히 이 다섯 바이트 쌍 하나를 만든다고 게임 스트림으로 승격되지 않는다.
+        [PartyAddMemberKey] = "PartyAddMember",
+        [ForceInfoKey] = "ForceInfo",
+        [ForceAddMemberKey] = "ForceAddMember",
+        [ForceReconnectMemberKey] = "ForceReconnectMember",
+        [ForceAddPartyKey] = "ForceAddParty",
+        [ForceMoveMemberKey] = "ForceMoveMember",
+        [ForceMemberStatusKey] = "ForceMemberStatus",
         [PartyMemberHpMpKey] = "PartyMemberVitals",
         [ForceMemberHpMpKey] = "ForceMemberVitals",
         [AetherKeyA] = "AetherStatus",
@@ -626,6 +655,17 @@ public sealed class StreamProcessor
                     break;
                 case MemberProfileKey:
                     ParseMemberProfile(packet, lengthInfo, extraFlag);
+                    break;
+                case PartyAddMemberKey:
+                    ParsePartyAddMember(packet, opcodeOffset + 2);
+                    break;
+                case ForceInfoKey:
+                case ForceAddMemberKey:
+                case ForceReconnectMemberKey:
+                case ForceAddPartyKey:
+                case ForceMoveMemberKey:
+                case ForceMemberStatusKey:
+                    ParseForceRoster(opcodeKey, packet, opcodeOffset + 2);
                     break;
                 case PartyMemberHpMpKey:
                 case ForceMemberHpMpKey:
@@ -1721,6 +1761,13 @@ public sealed class StreamProcessor
             return;
         }
 
+        // 포스 로스터 쪽: 스키마(ForceRemoveMember_NT) 그대로 정확히 17바이트일 때만 dbid 로 지운다. 방 로스터 쪽 아래
+        // 경로는 종전 그대로 둔다 — 그쪽은 이 길이 검사 없이 받아 왔고, 10인 방의 제거를 지금 와서 좁힐 근거가 없다.
+        if (RosterRecordParser.TryReadForceRemoveMember(packet, offset + 2, out ForceMemberRemoval removal))
+        {
+            _data.RemoveForceMember(removal.MemberDbid, removal.PartyKey);
+        }
+
         int key = (int)PacketPrimitives.ReadUInt32LeAsLong(packet, offset + 2);
         if (key <= 0)
         {
@@ -1729,6 +1776,101 @@ public sealed class StreamProcessor
 
         _sink.Meta("party_member_remove", ("key", key));
         _data.RemovePartyMemberByKey(key);
+    }
+
+    /// <summary>0x96xx 포스 로스터 계열. 스키마 워크(<see cref="RosterRecordParser"/>)가 프레임을 정확히 소진할 때만
+    /// 데이터 계층에 넘기고, 아니면 흔적만 남긴다(fail-closed — 모르는 마스크·잘린 프레임을 추측하지 않는다).
+    /// 0x962C(상태)는 초당 수 건이라 meta 를 남기지 않는다.</summary>
+    private void ParseForceRoster(int opcodeKey, byte[] packet, int body)
+    {
+        bool ok;
+        switch (opcodeKey)
+        {
+            case ForceInfoKey:
+                ok = RosterRecordParser.TryReadForceInfo(packet, body, out ForceSnapshot? force);
+                if (ok)
+                {
+                    _data.SaveForceInfo(force!);
+                    _sink.Meta("force_info",
+                        ("limit", force!.LimitMember),
+                        ("parties", force.Parties.Count),
+                        ("members", force.Parties.Sum(p => p.Members.Count)),
+                        ("reason", force.Reason));
+                }
+
+                break;
+            case ForceAddMemberKey:
+                ok = RosterRecordParser.TryReadForceAddMember(packet, body, out long partyKey, out WireRosterMember added);
+                if (ok)
+                {
+                    _data.AddForceMember(partyKey, added);
+                    _sink.Meta("force_add_member", ("slot", added.Slot), ("nickname", added.Nickname), ("server", added.Server));
+                }
+
+                break;
+            case ForceAddPartyKey:
+                ok = RosterRecordParser.TryReadForceAddParty(packet, body, out ForceParty? party);
+                if (ok)
+                {
+                    _data.AddForceParty(party!);
+                    _sink.Meta("force_add_party", ("number", party!.Number), ("members", party.Members.Count));
+                }
+
+                break;
+            case ForceMoveMemberKey:
+                ok = RosterRecordParser.TryReadForceMoveMember(packet, body, out IReadOnlyList<ForceParty> changes);
+                if (ok)
+                {
+                    _data.MoveForceMembers(changes);
+                    _sink.Meta("force_move_member", ("parties", changes.Count));
+                }
+
+                break;
+            case ForceReconnectMemberKey:
+                ok = RosterRecordParser.TryReadForceReconnectMember(packet, body, out WireRosterMember back);
+                if (ok)
+                {
+                    _data.ReconnectForceMember(back);
+                    _sink.Meta("force_reconnect_member", ("nickname", back.Nickname), ("server", back.Server), ("uid", back.EntityUid));
+                }
+
+                break;
+            case ForceMemberStatusKey:
+                ok = RosterRecordParser.TryReadForceMemberStatus(packet, body, out ForceMemberStatus status);
+                if (ok)
+                {
+                    _data.UpdateForceMemberStatus(status);
+                }
+
+                break;
+            default:
+                return;
+        }
+
+        if (!ok)
+        {
+            _sink.Meta("force_roster_unparsed", ("opcode", opcodeKey), ("len", packet.Length));
+        }
+    }
+
+    /// <summary>0x920D PartyAddMember_NT — 본인 파티에 한 명이 들어왔다(PartyMemberInfo 하나). 0x9200 레코드와 같은
+    /// 처리를 한다: uid 가 있으면 이름 앵커 + 프로필, 없으면(다른 존) (닉네임, 서버) 행으로만 남긴다.</summary>
+    private void ParsePartyAddMember(byte[] packet, int body)
+    {
+        if (!RosterRecordParser.TryReadPartyAddMember(packet, body, out WireRosterMember m))
+        {
+            _sink.Meta("party_add_member_unparsed", ("len", packet.Length));
+            return;
+        }
+
+        if (m.EntityUid > 0)
+        {
+            _data.TryBindExecutorByIdentity(m.EntityUid, m.Nickname, m.Server);
+            _data.SaveMemberProfile(m.EntityUid, m.Nickname, m.Server);
+        }
+
+        _data.AddMemberProfile(m);
+        _sink.Meta("party_add_member", ("nickname", m.Nickname), ("server", m.Server), ("uid", m.EntityUid));
     }
 
     /// <summary>0x9200 멤버 프로필 스냅샷. 파티/공대 멤버마다 한 레코드씩 싣는데, <b>엔티티 uid를 이름과 같은
@@ -1753,6 +1895,38 @@ public sealed class StreamProcessor
 
         var sb = new StringBuilder();
         int found = 0;
+
+        // 현행 클라: 스키마 워크(PartyInfo_NT). 아래 바이트스캔과 같은 레코드에서 같은 (uid, 이름, 서버)를 내되, 두 가지가
+        // 다르다 — ① 다른 존에 있는 멤버(uid 0)도 버리지 않고 ② born 서버 ≠ 캐릭터 서버인 타서버 파티원을 떨구지 않는다
+        // (스캔은 born == dbid 서버를 구조 검증으로 썼는데, 실측 20인 포스는 전원이 born 2003 이고 dbid 서버는 2001·2016·2020
+        // 이 섞여 있었다). 워크가 실패하는 구세대 프레임(멤버 끝 latency 필드 없음)은 종전 스캔이 그대로 읽는다.
+        if (RosterRecordParser.TryReadPartyInfo(packet, offset + 2, out PartySnapshot? party))
+        {
+            foreach (WireRosterMember m in party!.Members)
+            {
+                if (m.EntityUid > 0)
+                {
+                    _data.TryBindExecutorByIdentity(m.EntityUid, m.Nickname, m.Server);
+                    _data.SaveMemberProfile(m.EntityUid, m.Nickname, m.Server);
+                }
+
+                if (sb.Length > 0)
+                {
+                    sb.Append(',');
+                }
+
+                sb.Append(m.Nickname).Append('[').Append(m.Server).Append("]#").Append(m.EntityUid);
+            }
+
+            _data.SaveMemberProfileSnapshot(party.PartyKey, party.Members);
+            if (party.Members.Count > 0)
+            {
+                _sink.Meta("member_profile", ("count", party.Members.Count), ("members", sb.ToString()));
+            }
+
+            return;
+        }
+
         for (int n = offset + 2; n + 3 < packet.Length; n++)
         {
             if (n < 51)
